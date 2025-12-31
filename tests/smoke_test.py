@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import threading
 import time
-import urllib.request
 from http.client import HTTPConnection
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from novel_proofer.server import Handler
 from http.server import ThreadingHTTPServer
@@ -25,7 +27,13 @@ def _start_server(port: int) -> ThreadingHTTPServer:
 
 
 def _request_health(port: int) -> bytes:
-    return urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3).read()
+    conn = HTTPConnection("127.0.0.1", port, timeout=3)
+    conn.request("GET", "/health")
+    resp = conn.getresponse()
+    data = resp.read()
+    if resp.status != 200:
+        raise RuntimeError(f"HTTP {resp.status}: {data!r}")
+    return data
 
 
 def _multipart_body(boundary: str, fields: dict[str, str], file_field: str, filename: str, content: bytes) -> bytes:

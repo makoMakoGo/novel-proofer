@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from collections.abc import Callable
 
 from novel_proofer.llm.config import LLMConfig
 from novel_proofer.llm.think_filter import ThinkTagFilter
@@ -16,6 +19,26 @@ class LLMError(RuntimeError):
 
 
 _RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    if not host:
+        return False
+    h = host.strip().lower()
+    if h == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def _urlopen(req: urllib.request.Request, timeout: float):
+    host = urllib.parse.urlparse(req.full_url).hostname
+    if _is_loopback_host(host):
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        return opener.open(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)
 
 
 def _parse_sse_line(line: str) -> str | None:
@@ -56,7 +79,7 @@ def _stream_request(url: str, payload: dict, headers: dict[str, str], timeout: f
     )
     
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen(req, timeout=timeout) as resp:
             content_parts = []
             buffer = ""
             
@@ -129,7 +152,7 @@ def _http_post_json(url: str, payload: dict, headers: dict[str, str], timeout: f
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             return json.loads(raw)
     except urllib.error.HTTPError as e:
@@ -182,7 +205,12 @@ def call_llm_text_resilient(cfg: LLMConfig, input_text: str) -> str:
     raise LLMError(str(last_error))
 
 
-def call_llm_text_resilient_with_meta(cfg: LLMConfig, input_text: str) -> tuple[str, int, int | None, str | None]:
+def call_llm_text_resilient_with_meta(
+    cfg: LLMConfig,
+    input_text: str,
+    *,
+    on_retry: Callable[[int, int | None, str | None], None] | None = None,
+) -> tuple[str, int, int | None, str | None]:
     """Like call_llm_text_resilient, but returns (text, retries, last_code, last_message)."""
 
     attempts = max(0, int(cfg.max_retries)) + 1
@@ -201,6 +229,8 @@ def call_llm_text_resilient_with_meta(cfg: LLMConfig, input_text: str) -> tuple[
             last_msg = str(e)
 
         if i < attempts - 1:
+            if on_retry is not None:
+                on_retry(i + 1, last_code, last_msg)
             time.sleep(max(0.0, float(cfg.retry_backoff_seconds)) * (2**i))
 
     raise LLMError(last_msg or "LLM failed", status_code=last_code)

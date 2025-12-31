@@ -50,6 +50,27 @@
 - **THEN** 系统不再启动后续 chunk 的 LLM 调用
 - **AND** 任务状态最终为 `cancelled`
 
+### Requirement: User can retry failed chunks
+当任务因部分 chunk 失败而进入 `error` 状态时，系统 SHALL 支持用户仅重试失败 chunk：
+- UI 在 `error` 状态时提供“重试失败部分”按钮
+- 用户可先修改 LLM 配置（如 Base URL/Model/API Key），再触发重试
+- 重试 SHALL 仅处理失败 chunk，并保留已完成 chunk 的结果
+- **只有当全部 chunk 成功后**，系统才会生成最终输出文件到 `output/`
+
+#### Scenario: User retries failed chunks with a new LLM config
+- **GIVEN** 任务状态为 `error`
+- **AND** 存在 chunk 状态为 `error`
+- **WHEN** 用户点击“重试失败部分”
+- **THEN** 系统仅对失败 chunk 重新发起 LLM 调用
+- **AND** 已完成 chunk 不会被重复处理
+- **AND** 若全部 chunk 成功，任务状态变为 `done` 并生成最终输出文件
+
+#### Scenario: Retry still has failures
+- **GIVEN** 用户已触发一次“重试失败部分”
+- **WHEN** 重试后仍有 chunk 失败
+- **THEN** 任务状态保持为 `error`
+- **AND** UI 仍可继续重试失败部分
+
 ### Requirement: Debug info displayed in separate tab
 系统 SHALL 采用 Tab 切换方式组织页面内容：
 - 提供"进度"和"调试信息"两个 Tab
@@ -121,4 +142,3 @@
 - **GIVEN** 用户当前在"调试信息" Tab
 - **WHEN** 用户刷新页面
 - **THEN** 页面自动恢复到"调试信息" Tab
-

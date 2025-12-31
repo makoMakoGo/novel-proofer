@@ -29,7 +29,7 @@ from typing import Iterable
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.config import LLMConfig
-from novel_proofer.runner import run_job
+from novel_proofer.runner import retry_failed_chunks, run_job
 
 # Note: some editors may not resolve local imports; runtime is OK.
 
@@ -39,6 +39,8 @@ TEMPLATES_DIR = WORKDIR / "templates"
 
 OUTPUT_DIR = WORKDIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
+JOBS_DIR = OUTPUT_DIR / ".jobs"
+JOBS_DIR.mkdir(exist_ok=True)
 
 
 def _read_template(name: str) -> str:
@@ -140,6 +142,15 @@ def _parse_int(value: str | None, default_value: int) -> int:
         return default_value
     try:
         return int(str(value).strip())
+    except Exception:
+        return default_value
+
+
+def _parse_float(value: str | None, default_value: float) -> float:
+    if value is None:
+        return default_value
+    try:
+        return float(str(value).strip())
     except Exception:
         return default_value
 
@@ -261,7 +272,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if path not in {"/format", "/api/jobs/create", "/api/jobs/cancel"}:
+        if path not in {"/format", "/api/jobs/create", "/api/jobs/cancel", "/api/jobs/retry_failed"}:
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
             return
 
@@ -275,6 +286,46 @@ class Handler(BaseHTTPRequestHandler):
             job_id = str(payload.get("job_id") or "")
             ok = GLOBAL_JOBS.cancel(job_id)
             self._send_json({"ok": ok})
+            return
+
+        if path == "/api/jobs/retry_failed":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            body = self.rfile.read(length) if length > 0 else b""
+            try:
+                payload = json.loads(body.decode("utf-8", errors="replace") or "{}")
+            except Exception:
+                payload = {}
+
+            job_id = str(payload.get("job_id") or "")
+            st = GLOBAL_JOBS.get(job_id)
+            if st is None:
+                self._send_json({"error": "job not found"}, status=404)
+                return
+            if st.state == "running":
+                self._send_json({"error": "job is running"}, status=409)
+                return
+            if st.state == "cancelled":
+                self._send_json({"error": "job is cancelled"}, status=409)
+                return
+
+            llm = LLMConfig(
+                enabled=True,
+                provider=str(payload.get("llm_provider") or "openai_compatible").strip(),
+                base_url=str(payload.get("llm_base_url") or "").strip(),
+                api_key=str(payload.get("llm_api_key") or "").strip(),
+                model=str(payload.get("llm_model") or "").strip(),
+                temperature=_parse_float(payload.get("llm_temperature"), 0.0),
+                timeout_seconds=_parse_float(payload.get("llm_timeout_seconds"), 180.0),
+                max_concurrency=_parse_int(str(payload.get("llm_max_concurrency") or ""), 20),
+            )
+
+            t = threading.Thread(
+                target=retry_failed_chunks,
+                args=(job_id, llm),
+                daemon=True,
+            )
+            t.start()
+            self._send_json({"ok": True})
             return
 
         content_type = self.headers.get("Content-Type", "")
@@ -333,10 +384,12 @@ class Handler(BaseHTTPRequestHandler):
             # Avoid accidental overwrite.
             if output_path.exists():
                 output_path = OUTPUT_DIR / f"{job.job_id}_{out_name}"
+            work_dir = JOBS_DIR / job.job_id
+            GLOBAL_JOBS.update(job.job_id, output_path=str(output_path), work_dir=str(work_dir))
 
             t = threading.Thread(
                 target=run_job,
-                args=(job.job_id, input_text, output_path, cfg, llm),
+                args=(job.job_id, input_text, cfg, llm),
                 daemon=True,
             )
             t.start()

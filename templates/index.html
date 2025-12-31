@@ -154,6 +154,7 @@
         <div class="btns">
           <button type="submit" id="btnStart">开始校对</button>
           <button type="button" class="ghost" id="btnCancel" style="display:none" disabled>取消/暂停</button>
+          <button type="button" class="ghost" id="btnRetry" style="display:none" disabled>重试失败部分</button>
         </div>
 
         <div class="progress" id="progress" style="display:none">
@@ -170,6 +171,7 @@
 
         <div class="hint">
           <div>默认启用 LLM；会按“分片大小”分片并发处理，可看到进度。</div>
+          <div>如果部分分片失败，可修改 LLM 配置后点击“重试失败部分”。</div>
           <div>完成后结果会写入项目 <code>output/</code> 目录。</div>
         </div>
         </form>
@@ -224,6 +226,7 @@
     const metaRight = document.getElementById('metaRight');
     const btnStart = document.getElementById('btnStart');
     const btnCancel = document.getElementById('btnCancel');
+    const btnRetry = document.getElementById('btnRetry');
 
     // Debug tab elements
     const chunksBody = document.getElementById('chunksBody');
@@ -235,6 +238,7 @@
     const statRetrying = document.getElementById('statRetrying');
 
     let currentJobId = null;
+    let currentJobState = null;
     let currentFilter = 'all';
     let chunksData = [];
 
@@ -347,6 +351,15 @@
       btnStart.disabled = busy;
       btnCancel.style.display = busy ? 'inline-block' : 'none';
       btnCancel.disabled = !busy;
+      if (busy) {
+        btnRetry.style.display = 'none';
+        btnRetry.disabled = true;
+      }
+    }
+
+    function setRetryVisible(visible) {
+      btnRetry.style.display = visible ? 'inline-block' : 'none';
+      btnRetry.disabled = !visible;
     }
 
     async function requestCancel(jobId) {
@@ -364,10 +377,57 @@
       const jobId = currentJobId;
       if (!jobId) return;
       currentJobId = null;
+      currentJobState = null;
       setProgress(0, 0, 'cancelled');
       show('已取消。');
       setBusy(false);
+      setRetryVisible(false);
       await requestCancel(jobId);
+    });
+
+    async function requestRetryFailed(jobId) {
+      if (!jobId) return { ok: false, error: 'missing job_id' };
+
+      const fd = new FormData(form);
+      const payload = {
+        job_id: jobId,
+        llm_provider: fd.get('llm_provider') || 'openai_compatible',
+        llm_base_url: fd.get('llm_base_url') || '',
+        llm_api_key: fd.get('llm_api_key') || '',
+        llm_model: fd.get('llm_model') || '',
+        llm_temperature: Number(fd.get('llm_temperature') || 0),
+        llm_timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
+        llm_max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
+      };
+
+      try {
+        const res = await fetch('api/jobs/retry_failed', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) return { ok: false, error: data };
+        return { ok: true, data };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }
+
+    btnRetry.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      show('准备重试失败分片…');
+      setBusy(true);
+      setRetryVisible(false);
+      const r = await requestRetryFailed(jobId);
+      if (!r.ok) {
+        show(r.error);
+        setBusy(false);
+        setRetryVisible(true);
+        return;
+      }
+      await poll(jobId);
     });
 
     async function poll(jobId) {
@@ -378,6 +438,7 @@
         const data = await res.json();
         if (!res.ok) throw new Error(JSON.stringify(data));
 
+        currentJobState = data.state;
         setProgress(data.done_chunks || 0, data.total_chunks || 0, data.state);
         showChunks(data);
 
@@ -385,6 +446,8 @@
           show(data.output_path ? `完成。已输出到：${data.output_path}` : '完成。已输出到项目 output/ 目录。');
           setBusy(false);
           currentJobId = null;
+          currentJobState = null;
+          setRetryVisible(false);
           return;
         }
 
@@ -392,13 +455,15 @@
           show('已取消。');
           setBusy(false);
           currentJobId = null;
+          currentJobState = null;
+          setRetryVisible(false);
           return;
         }
 
         if (data.state === 'error') {
-          show(data);
+          show(data.error || data);
           setBusy(false);
-          currentJobId = null;
+          setRetryVisible(true);
           return;
         }
 
@@ -408,7 +473,10 @@
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (currentJobId) return;
+      if (currentJobId && (currentJobState === 'queued' || currentJobState === 'running')) return;
+      currentJobId = null;
+      currentJobState = null;
+      setRetryVisible(false);
 
       const fd = new FormData(form);
       show('已提交，准备开始…');
@@ -424,6 +492,7 @@
       }
 
       currentJobId = data.job_id;
+      currentJobState = 'queued';
       await poll(data.job_id);
     });
   </script>

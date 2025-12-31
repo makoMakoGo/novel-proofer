@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
-import threading
+import os
 import time
 from pathlib import Path
 
@@ -17,6 +17,30 @@ from novel_proofer.llm.config import LLMConfig
 def _merge_stats(dst: dict[str, int], src: dict[str, int]) -> None:
     for k, v in src.items():
         dst[k] = dst.get(k, 0) + v
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
+
+
+def _chunk_pre_path(work_dir: Path, index: int) -> Path:
+    return work_dir / "pre" / f"{index:06d}.txt"
+
+
+def _chunk_out_path(work_dir: Path, index: int) -> Path:
+    return work_dir / "out" / f"{index:06d}.txt"
+
+
+def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> None:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_suffix(out_path.suffix + f".{os.getpid()}.tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as f:
+        for i in range(total_chunks):
+            f.write(_chunk_out_path(work_dir, i).read_text(encoding="utf-8"))
+    tmp.replace(out_path)
 
 
 def _split_text_in_half(text: str) -> tuple[str, str]:
@@ -55,10 +79,20 @@ def _llm_process_chunk(cfg: LLMConfig, chunk: str, *, job_id: str | None = None,
         if not piece:
             continue
 
+        retry_count = 0
+
+        def on_retry(_retry_index: int, last_code: int | None, last_msg: str | None) -> None:
+            nonlocal retry_count
+            if job_id is None or chunk_index is None:
+                return
+            retry_count += 1
+            GLOBAL_JOBS.update_chunk(job_id, chunk_index, state="retrying")
+            GLOBAL_JOBS.add_retry(job_id, chunk_index, 1, last_code, last_msg)
+
         try:
-            out, retries, last_code, last_msg = call_llm_text_resilient_with_meta(cfg, piece)
-            if job_id is not None and chunk_index is not None and retries:
-                GLOBAL_JOBS.add_retry(job_id, chunk_index, retries, last_code, last_msg)
+            out, retries, last_code, last_msg = call_llm_text_resilient_with_meta(cfg, piece, on_retry=on_retry)
+            if job_id is not None and chunk_index is not None and retries > retry_count:
+                GLOBAL_JOBS.add_retry(job_id, chunk_index, retries - retry_count, last_code, last_msg)
 
             if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
                 return ""
@@ -66,9 +100,6 @@ def _llm_process_chunk(cfg: LLMConfig, chunk: str, *, job_id: str | None = None,
             out_parts.append(out)
             continue
         except LLMError as e:
-            if job_id is not None and chunk_index is not None:
-                GLOBAL_JOBS.add_retry(job_id, chunk_index, 1, e.status_code, str(e))
-
             if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
                 return ""
 
@@ -96,39 +127,108 @@ def _llm_process_chunk(cfg: LLMConfig, chunk: str, *, job_id: str | None = None,
     return "".join(out_parts)
 
 
-def run_job(
-    job_id: str,
-    input_text: str,
-    output_path: Path,
-    fmt: FormatConfig,
-    llm: LLMConfig,
-) -> None:
+def _count_done_chunks(job_id: str) -> int:
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        return 0
+    return sum(1 for c in st.chunk_statuses if c.state == "done")
+
+
+def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None:
+    if GLOBAL_JOBS.is_cancelled(job_id):
+        return
+
+    GLOBAL_JOBS.update_chunk(
+        job_id,
+        index,
+        state="processing",
+        started_at=time.time(),
+        finished_at=None,
+        last_error_code=None,
+        last_error_message=None,
+    )
+
+    try:
+        pre = _chunk_pre_path(work_dir, index).read_text(encoding="utf-8")
+        out = _llm_process_chunk(llm, pre, job_id=job_id, chunk_index=index)
+        if GLOBAL_JOBS.is_cancelled(job_id):
+            return
+
+        _atomic_write_text(_chunk_out_path(work_dir, index), out)
+        GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time())
+        GLOBAL_JOBS.add_stat(job_id, "llm_chunks", 1)
+    except LLMError as e:
+        if GLOBAL_JOBS.is_cancelled(job_id):
+            return
+        GLOBAL_JOBS.update_chunk(
+            job_id,
+            index,
+            state="error",
+            finished_at=time.time(),
+            last_error_code=e.status_code,
+            last_error_message=str(e),
+        )
+    except Exception as e:
+        if GLOBAL_JOBS.is_cancelled(job_id):
+            return
+        GLOBAL_JOBS.update_chunk(
+            job_id,
+            index,
+            state="error",
+            finished_at=time.time(),
+            last_error_message=str(e),
+        )
+
+
+def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: LLMConfig) -> None:
+    max_workers = max(1, int(llm.max_concurrency))
+    GLOBAL_JOBS.update(job_id, state="running", started_at=time.time(), finished_at=None, error=None)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(_llm_worker, job_id, i, work_dir, llm): i for i in indices}
+        for f in concurrent.futures.as_completed(futures):
+            if GLOBAL_JOBS.is_cancelled(job_id):
+                break
+            try:
+                f.result()
+            except Exception:
+                # Worker is responsible for updating chunk status.
+                pass
+            GLOBAL_JOBS.update(job_id, done_chunks=_count_done_chunks(job_id))
+
+
+def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> None:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         return
-
     if st.state == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
         return
+    if not st.work_dir or not st.output_path:
+        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job missing work_dir/output_path")
+        return
 
-    GLOBAL_JOBS.update(job_id, state="running", started_at=time.time())
+    work_dir = Path(st.work_dir)
+    out_path = Path(st.output_path)
+    (work_dir / "pre").mkdir(parents=True, exist_ok=True)
+    (work_dir / "out").mkdir(parents=True, exist_ok=True)
+
+    GLOBAL_JOBS.update(job_id, state="running", started_at=time.time(), finished_at=None, error=None)
 
     try:
         chunks = chunk_by_lines(input_text, max_chars=max(2_000, int(fmt.max_chunk_chars)))
-        GLOBAL_JOBS.init_chunks(job_id, total_chunks=len(chunks))
+        total = len(chunks)
+        GLOBAL_JOBS.init_chunks(job_id, total_chunks=total)
 
-        # 先跑本地规则（轻量，保守）
-        pre_chunks: list[str] = []
         local_stats: dict[str, int] = {}
-        for c in chunks:
+        for i, c in enumerate(chunks):
             if GLOBAL_JOBS.is_cancelled(job_id):
                 GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
                 return
 
             fixed, s = apply_rules(c, fmt)
-            pre_chunks.append(fixed)
+            _atomic_write_text(_chunk_pre_path(work_dir, i), fixed)
             _merge_stats(local_stats, s)
 
-        # Put local stats into job stats early.
         for k, v in local_stats.items():
             GLOBAL_JOBS.add_stat(job_id, k, v)
 
@@ -137,111 +237,115 @@ def run_job(
             return
 
         if llm.enabled:
-            max_workers = max(1, int(llm.max_concurrency))
-            out_chunks: list[str] = [""] * len(pre_chunks)
-
-            done_count = 0
-
-            def worker(idx: int, text: str) -> bool:
-                if GLOBAL_JOBS.is_cancelled(job_id):
-                    return False
-
-                GLOBAL_JOBS.update_chunk(job_id, idx, state="running", started_at=time.time())
-                try:
-                    out = _llm_process_chunk(llm, text, job_id=job_id, chunk_index=idx)
-                    if GLOBAL_JOBS.is_cancelled(job_id):
-                        return False
-
-                    out_chunks[idx] = out
-                    GLOBAL_JOBS.update_chunk(job_id, idx, state="done", finished_at=time.time())
-                    GLOBAL_JOBS.add_stat(job_id, "llm_chunks", 1)
-                    return True
-                except Exception as e:
-                    if GLOBAL_JOBS.is_cancelled(job_id):
-                        return False
-                    GLOBAL_JOBS.update_chunk(
-                        job_id,
-                        idx,
-                        state="error",
-                        finished_at=time.time(),
-                        last_error_message=str(e),
-                    )
-                    raise
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-                next_idx = 0
-                futures: dict[concurrent.futures.Future[bool], int] = {}
-
-                def submit_one(i: int) -> None:
-                    futures[ex.submit(worker, i, pre_chunks[i])] = i
-
-                while next_idx < len(pre_chunks) and len(futures) < max_workers and not GLOBAL_JOBS.is_cancelled(job_id):
-                    submit_one(next_idx)
-                    next_idx += 1
-
-                while futures:
-                    done, _ = concurrent.futures.wait(
-                        futures,
-                        return_when=concurrent.futures.FIRST_COMPLETED,
-                    )
-
-                    for f in done:
-                        idx = futures.pop(f)
-                        try:
-                            ok = f.result()
-                        except Exception:
-                            if GLOBAL_JOBS.is_cancelled(job_id):
-                                ok = False
-                            else:
-                                raise
-
-                        if ok:
-                            done_count += 1
-                            GLOBAL_JOBS.update(job_id, done_chunks=done_count)
-
-                        if GLOBAL_JOBS.is_cancelled(job_id):
-                            for pending in futures:
-                                pending.cancel()
-                            break
-
-                        if next_idx < len(pre_chunks):
-                            submit_one(next_idx)
-                            next_idx += 1
-
-                    if GLOBAL_JOBS.is_cancelled(job_id):
-                        break
-
-            if GLOBAL_JOBS.is_cancelled(job_id):
-                GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time(), done_chunks=done_count)
-                return
-
-            final_text = "".join(out_chunks)
+            _run_llm_for_indices(job_id, list(range(total)), work_dir, llm)
         else:
-            final_text = "".join(pre_chunks)
-
-        if GLOBAL_JOBS.is_cancelled(job_id):
-            GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
-            return
-
-        output_path.write_text(final_text, encoding="utf-8")
+            # Pure local mode: treat local output as final chunk output.
+            for i in range(total):
+                if GLOBAL_JOBS.is_cancelled(job_id):
+                    GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+                    return
+                pre = _chunk_pre_path(work_dir, i).read_text(encoding="utf-8")
+                _atomic_write_text(_chunk_out_path(work_dir, i), pre)
+                GLOBAL_JOBS.update_chunk(job_id, i, state="done", finished_at=time.time())
+            GLOBAL_JOBS.update(job_id, done_chunks=total)
 
         if GLOBAL_JOBS.is_cancelled(job_id):
             GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
             return
 
         cur = GLOBAL_JOBS.get(job_id)
-        final_stats = dict(cur.stats) if cur is not None else dict(local_stats)
+        if cur is None:
+            return
 
+        has_error = any(c.state == "error" for c in cur.chunk_statuses)
+        if has_error:
+            GLOBAL_JOBS.update(
+                job_id,
+                state="error",
+                finished_at=time.time(),
+                error="some chunks failed; update LLM config and retry failed chunks",
+                done_chunks=_count_done_chunks(job_id),
+            )
+            return
+
+        _merge_chunk_outputs(work_dir, total, out_path)
+
+        final_stats = dict(cur.stats)
         GLOBAL_JOBS.update(
             job_id,
             state="done",
             finished_at=time.time(),
-            output_path=str(output_path),
             stats=final_stats,
-            done_chunks=len(chunks),
+            done_chunks=total,
         )
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
             return
         GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error=str(e))
+
+
+def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        return
+    if st.state == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+        return
+    if not st.work_dir or not st.output_path:
+        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job missing work_dir/output_path")
+        return
+
+    work_dir = Path(st.work_dir)
+    out_path = Path(st.output_path)
+
+    if not st.chunk_statuses:
+        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job has no chunk statuses")
+        return
+
+    total = len(st.chunk_statuses)
+    failed = [c.index for c in st.chunk_statuses if c.state == "error"]
+    if not failed:
+        has_output = out_path.exists()
+        if has_output:
+            GLOBAL_JOBS.update(job_id, state="done", finished_at=time.time(), done_chunks=total)
+        return
+
+    for i in failed:
+        GLOBAL_JOBS.update_chunk(
+            job_id,
+            i,
+            state="pending",
+            started_at=None,
+            finished_at=None,
+            last_error_code=None,
+            last_error_message=None,
+        )
+
+    _run_llm_for_indices(job_id, failed, work_dir, llm)
+
+    if GLOBAL_JOBS.is_cancelled(job_id):
+        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+        return
+
+    cur = GLOBAL_JOBS.get(job_id)
+    if cur is None:
+        return
+
+    has_error = any(c.state == "error" for c in cur.chunk_statuses)
+    if has_error:
+        GLOBAL_JOBS.update(
+            job_id,
+            state="error",
+            finished_at=time.time(),
+            error="some chunks still failed; update LLM config and retry again",
+            done_chunks=_count_done_chunks(job_id),
+        )
+        return
+
+    _merge_chunk_outputs(work_dir, total, out_path)
+    GLOBAL_JOBS.update(
+        job_id,
+        state="done",
+        finished_at=time.time(),
+        done_chunks=total,
+    )

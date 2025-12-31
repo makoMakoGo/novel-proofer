@@ -7,11 +7,14 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 import threading
 import time
-import urllib.request
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from novel_proofer.server import Handler
 
@@ -83,8 +86,10 @@ def _cancel_job(port: int, job_id: str) -> None:
 
 
 def _get_status(port: int, job_id: str) -> dict:
-    url = f"http://127.0.0.1:{port}/api/jobs/status?job_id={job_id}"
-    raw = urllib.request.urlopen(url, timeout=3).read().decode("utf-8", errors="replace")
+    conn = HTTPConnection("127.0.0.1", port, timeout=3)
+    conn.request("GET", f"/api/jobs/status?job_id={job_id}")
+    resp = conn.getresponse()
+    raw = resp.read().decode("utf-8", errors="replace")
     return json.loads(raw)
 
 

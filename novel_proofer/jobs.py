@@ -9,7 +9,8 @@ from dataclasses import dataclass, field
 @dataclass
 class ChunkStatus:
     index: int
-    state: str  # queued|running|done|error
+    # UI contract: pending|processing|retrying|done|error
+    state: str
     started_at: float | None = None
     finished_at: float | None = None
     retries: int = 0
@@ -21,7 +22,8 @@ class ChunkStatus:
 @dataclass
 class JobStatus:
     job_id: str
-    state: str  # queued|running|done|error|cancelled
+    # queued|running|done|error|cancelled
+    state: str
     created_at: float
     started_at: float | None
     finished_at: float | None
@@ -40,6 +42,7 @@ class JobStatus:
 
     error: str | None = None
     output_path: str | None = None
+    work_dir: str | None = None
 
 
 class JobStore:
@@ -74,10 +77,9 @@ class JobStore:
             st = self._jobs.get(job_id)
             if st is None:
                 return
+            if st.state == "cancelled":
+                return
             for k, v in kwargs.items():
-                # Once cancelled, do not let other code paths flip state back.
-                if k == "state" and st.state == "cancelled":
-                    continue
                 setattr(st, k, v)
 
     def init_chunks(self, job_id: str, total_chunks: int) -> None:
@@ -87,7 +89,7 @@ class JobStore:
                 return
             st.total_chunks = total_chunks
             st.done_chunks = 0
-            st.chunk_statuses = [ChunkStatus(index=i, state="queued") for i in range(total_chunks)]
+            st.chunk_statuses = [ChunkStatus(index=i, state="pending") for i in range(total_chunks)]
 
     def update_chunk(self, job_id: str, index: int, **kwargs) -> None:
         with self._lock:

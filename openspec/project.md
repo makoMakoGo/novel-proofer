@@ -42,12 +42,14 @@
     - `POST /api/jobs/create`：创建异步任务（后台线程执行）
     - `GET /api/jobs/status?job_id=...`：轮询任务状态/分片状态
     - `POST /api/jobs/cancel`：取消任务
+    - `POST /api/jobs/retry_failed`：仅重试失败分片（允许用户先更新 LLM 配置）
     - `POST /format`：遗留同步路径（兼容用；可返回 stats/json/下载）
     - `GET /api/jobs/download`：当前被禁用（返回 410），输出文件改为写入 `output/`
 - 任务与状态：`novel_proofer/jobs.py`
   - `JobStore` 为内存态任务存储（线程锁保护），用于进度、错误与统计信息
 - 执行器：`novel_proofer/runner.py`
-  - `run_job()`：按行分片→本地规则→（可选）LLM 并发处理→合并写文件
+  - `run_job()`：按行分片→本地规则→（可选）LLM 并发处理→全部成功后合并写最终输出
+  - `retry_failed_chunks()`：当存在失败分片时，仅对失败分片继续 LLM 处理；全部成功后再合并输出
   - LLM 失败处理：对可重试/超时/5xx 等错误做重试与自动二分拆分（降低 504 风险）
 - 排版规则：`novel_proofer/formatting/`
   - `chunking.py`：优先按空行（段落边界）拆分
@@ -59,7 +61,8 @@
 
 数据与文件：
 - 上传 TXT：服务端会尝试 `utf-8-sig/utf-8/gb18030/gbk` 解码（`novel_proofer/server.py:_decode_text`）
-- 输出：统一写 `utf-8` 到 `output/`；文件名会做安全清洗（`_safe_filename`）
+- 分片工作区：每个 job 会在 `output/.jobs/<job_id>/` 下落盘保存分片中间结果（`pre/` 与 `out/`）
+- 最终输出：仅当全部分片成功时，才会将合并结果写入 `output/`（统一为 `utf-8`；文件名会做安全清洗 `_safe_filename`）
 
 ### Testing Strategy
 当前采用 smoke scripts，并且必须在项目虚拟环境中运行：
@@ -86,7 +89,6 @@
 - 分支策略：默认直接在 `main`/`master` 上提交；只有“风险较高/改动较大”时才临时开分支（例如 `feat/*`、`fix/*`），完成后合回并删除
 - 合并方式：不强制 PR；如果用了分支，建议 `--ff-only` 或 squash，按你偏好保持历史清晰
 - 发布/里程碑（可选）：用 git tag 记录可用版本（例如 `v0.1.0`），重要改动在 commit message 里体现
-- 备注：当前工作区环境显示 **不是 git 仓库**（`is directory a git repo: no`），接入 git 后以上为默认约定
 
 ## Domain Context
 - 目标文本：中文小说 TXT（常见包含“第X章/序/番外”等标题行）
