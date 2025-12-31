@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>小说排版校对器（TXT）</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans CJK SC", "Microsoft YaHei", Arial; margin: 24px; }
+    .wrap { max-width: 880px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 20px; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; }
+    label { display: block; font-size: 13px; color: #333; margin: 14px 0 6px; }
+    input[type="text"], input[type="number"] { width: 260px; padding: 8px 10px; border: 1px solid #ccc; border-radius: 8px; }
+    input[type="file"] { width: 100%; }
+    .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 10px; }
+    .checks label { margin: 0; display: flex; gap: 8px; align-items: center; }
+    button { margin-top: 16px; padding: 10px 14px; border: 0; border-radius: 10px; background: #111; color: #fff; cursor: pointer; }
+    .hint { color: #666; font-size: 12px; margin-top: 14px; line-height: 1.6; }
+    .out { margin-top: 14px; padding: 12px; background: #fafafa; border: 1px solid #eee; border-radius: 10px; }
+    .out pre { white-space: pre-wrap; margin: 0; font-size: 12px; }
+    .btns { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+    .ghost { background: #fff; color: #111; border: 1px solid #111; }
+    .progress { height: 10px; background: #eee; border-radius: 999px; overflow: hidden; margin-top: 16px; }
+    .bar { height: 100%; width: 0%; background: #111; transition: width .2s; }
+    .meta { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: #444; margin-top: 10px; }
+    code { background: #f6f6f6; padding: 1px 6px; border-radius: 6px; }
+
+    /* Tab styles */
+    .tabs { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 2px solid #eee; }
+    .tab-btn { padding: 10px 20px; border: none; background: none; cursor: pointer; font-size: 14px; color: #666; position: relative; transition: color .2s; }
+    .tab-btn:hover { color: #111; }
+    .tab-btn.active { color: #111; font-weight: 500; }
+    .tab-btn.active::after { content: ''; position: absolute; bottom: -2px; left: 0; right: 0; height: 2px; background: #111; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Chunk status styles */
+    .stats-bar { display: flex; gap: 16px; padding: 12px 16px; background: #f8f9fa; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+    .stats-bar .stat { display: flex; align-items: center; gap: 6px; }
+    .stats-bar .stat-label { color: #666; }
+    .stats-bar .stat-value { font-weight: 600; }
+
+    .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+    .filter-btn { padding: 6px 14px; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; font-size: 12px; transition: all .2s; }
+    .filter-btn:hover { border-color: #999; }
+    .filter-btn.active { background: #111; color: #fff; border-color: #111; }
+
+    .chunks-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .chunks-table th { text-align: left; padding: 10px 12px; background: #f8f9fa; border-bottom: 1px solid #eee; font-weight: 500; color: #666; }
+    .chunks-table td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+    .chunks-table tr:hover { background: #fafafa; }
+
+    .status-badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .status-pending { background: #f0f0f0; color: #666; }
+    .status-processing { background: #e3f2fd; color: #1976d2; }
+    .status-done { background: #e8f5e9; color: #388e3c; }
+    .status-error { background: #ffebee; color: #d32f2f; }
+    .status-retrying { background: #fff3e0; color: #f57c00; }
+
+    .error-msg { color: #d32f2f; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    @media (max-width: 600px) {
+      body { margin: 12px; }
+      .card { padding: 14px; }
+      .row { flex-direction: column; gap: 0; }
+      input[type="text"], input[type="number"] { width: 100%; }
+      .stats-bar { flex-wrap: wrap; gap: 10px; }
+      .chunks-table { font-size: 11px; }
+      .chunks-table th, .chunks-table td { padding: 8px 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>小说排版校对器（TXT）</h1>
+    <div class="card">
+      <!-- Tab Navigation -->
+      <div class="tabs">
+        <button type="button" class="tab-btn active" data-tab="progress">进度</button>
+        <button type="button" class="tab-btn" data-tab="debug">调试信息</button>
+      </div>
+
+      <!-- Progress Tab -->
+      <div id="tab-progress" class="tab-content active">
+        <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
+          <label>上传 TXT</label>
+        <input name="file" type="file" accept=".txt,text/plain" required />
+
+        <div class="row">
+          <div>
+            <label>输出后缀</label>
+            <input name="suffix" type="text" value="_rev" />
+          </div>
+          <div>
+            <label>分片大小（字符数）</label>
+            <input name="max_chunk_chars" type="number" min="2000" step="2000" value="2000" />
+          </div>
+        </div>
+
+        <label>规则开关</label>
+        <div class="checks">
+          <label><input type="checkbox" name="paragraph_indent" value="1" checked />段首统一缩进</label>
+          <label><input type="checkbox" name="indent_with_fullwidth_space" value="1" checked />缩进用全角空格（\u3000）</label>
+          <label><input type="checkbox" name="normalize_blank_lines" value="1" checked />过多空行压缩</label>
+          <label><input type="checkbox" name="trim_trailing_spaces" value="1" checked />去掉行尾空格</label>
+          <label><input type="checkbox" name="normalize_ellipsis" value="1" checked />省略号统一为“……”</label>
+          <label><input type="checkbox" name="normalize_em_dash" value="1" checked />破折号统一为“——”</label>
+          <label><input type="checkbox" name="normalize_cjk_punctuation" value="1" checked />中英文标点统一（CJK 场景）</label>
+          <label><input type="checkbox" name="fix_cjk_punct_spacing" value="1" checked />标点与汉字间去空格</label>
+          <label><input type="checkbox" name="normalize_quotes" value="1" />引号统一为中文引号（谨慎）</label>
+        </div>
+
+        <label>LLM（可选，用于更复杂的对话/标点处理）</label>
+        <div class="row">
+          <div>
+            <input type="hidden" name="llm_enabled" value="0" />
+            <label><input type="checkbox" name="llm_enabled" value="1" checked />启用 LLM（默认）</label>
+          </div>
+          <div>
+            <label>提供商</label>
+            <input name="llm_provider" type="text" value="openai_compatible" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Base URL</label>
+            <input name="llm_base_url" type="text" value="https://juya.owl.ci" />
+          </div>
+          <div>
+            <label>Model</label>
+            <input name="llm_model" type="text" value="DeepSeek-V3.2-Exp" />
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>API Key（可留空）</label>
+            <input name="llm_api_key" type="text" placeholder="sk-..." />
+          </div>
+          <div>
+            <label>Temperature</label>
+            <input name="llm_temperature" type="number" step="0.1" value="0" />
+          </div>
+          <div>
+            <label>超时（秒）</label>
+            <input name="llm_timeout_seconds" type="number" step="1" value="180" />
+          </div>
+          <div>
+            <label>并发（LLM）</label>
+            <input name="llm_max_concurrency" type="number" min="1" step="1" value="20" />
+          </div>
+        </div>
+
+        <div class="btns">
+          <button type="submit" id="btnStart">开始校对</button>
+          <button type="button" class="ghost" id="btnCancel" style="display:none" disabled>取消/暂停</button>
+        </div>
+
+        <div class="progress" id="progress" style="display:none">
+          <div class="bar" id="bar"></div>
+        </div>
+        <div class="meta" id="meta" style="display:none">
+          <div id="metaLeft">准备中</div>
+          <div id="metaRight">0%</div>
+        </div>
+
+        <div class="out" id="out" style="display:none">
+          <pre id="outText"></pre>
+        </div>
+
+        <div class="hint">
+          <div>默认启用 LLM；会按“分片大小”分片并发处理，可看到进度。</div>
+          <div>完成后结果会写入项目 <code>output/</code> 目录。</div>
+        </div>
+        </form>
+      </div>
+
+      <!-- Debug Tab -->
+      <div id="tab-debug" class="tab-content">
+        <div class="stats-bar" id="statsBar">
+          <div class="stat"><span class="stat-label">总计:</span> <span class="stat-value" id="statTotal">0</span></div>
+          <div class="stat"><span class="stat-label">完成:</span> <span class="stat-value" id="statDone">0</span></div>
+          <div class="stat"><span class="stat-label">错误:</span> <span class="stat-value" id="statError">0</span></div>
+          <div class="stat"><span class="stat-label">重试:</span> <span class="stat-value" id="statRetrying">0</span></div>
+        </div>
+
+        <div class="filter-bar">
+          <button type="button" class="filter-btn active" data-filter="all">全部</button>
+          <button type="button" class="filter-btn" data-filter="error">仅错误</button>
+          <button type="button" class="filter-btn" data-filter="retrying">仅重试</button>
+        </div>
+
+        <div id="chunksTableWrap">
+          <table class="chunks-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>状态</th>
+                <th>重试</th>
+                <th>拆分</th>
+                <th>错误信息</th>
+              </tr>
+            </thead>
+            <tbody id="chunksBody"></tbody>
+          </table>
+        </div>
+
+        <div id="noChunksHint" style="color:#999; font-size:13px; text-align:center; padding:40px 0;">
+          暂无分片数据，请先开始校对任务。
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // DOM Elements
+    const form = document.getElementById('mainForm');
+    const out = document.getElementById('out');
+    const outText = document.getElementById('outText');
+    const progress = document.getElementById('progress');
+    const bar = document.getElementById('bar');
+    const meta = document.getElementById('meta');
+    const metaLeft = document.getElementById('metaLeft');
+    const metaRight = document.getElementById('metaRight');
+    const btnStart = document.getElementById('btnStart');
+    const btnCancel = document.getElementById('btnCancel');
+
+    // Debug tab elements
+    const chunksBody = document.getElementById('chunksBody');
+    const noChunksHint = document.getElementById('noChunksHint');
+    const chunksTableWrap = document.getElementById('chunksTableWrap');
+    const statTotal = document.getElementById('statTotal');
+    const statDone = document.getElementById('statDone');
+    const statError = document.getElementById('statError');
+    const statRetrying = document.getElementById('statRetrying');
+
+    let currentJobId = null;
+    let currentFilter = 'all';
+    let chunksData = [];
+
+    // Tab switching
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+
+    function switchTab(tabName) {
+      tabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabName));
+      tabContents.forEach(content => content.classList.toggle('active', content.id === 'tab-' + tabName));
+      localStorage.setItem('activeTab', tabName);
+    }
+
+    tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
+
+    // Restore tab from localStorage
+    const savedTab = localStorage.getItem('activeTab');
+    if (savedTab) switchTab(savedTab);
+
+    // Filter buttons
+    const filterBtns = document.querySelectorAll('.filter-btn');
+    filterBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        currentFilter = btn.dataset.filter;
+        filterBtns.forEach(b => b.classList.toggle('active', b === btn));
+        renderChunksTable();
+      });
+    });
+
+    function getStatusBadge(state) {
+      const icons = { pending: '[ ]', processing: '[~]', done: '[v]', error: '[!]', retrying: '[*]' };
+      const labels = { pending: '待处理', processing: '处理中', done: '完成', error: '错误', retrying: '重试中' };
+      const icon = icons[state] || '[ ]';
+      const label = labels[state] || state;
+      return `<span class="status-badge status-${state}">${icon} ${label}</span>`;
+    }
+
+    function renderChunksTable() {
+      if (!chunksData || chunksData.length === 0) {
+        noChunksHint.style.display = 'block';
+        chunksTableWrap.style.display = 'none';
+        return;
+      }
+
+      noChunksHint.style.display = 'none';
+      chunksTableWrap.style.display = 'block';
+
+      let filtered = chunksData;
+      if (currentFilter === 'error') {
+        filtered = chunksData.filter(c => c.state === 'error');
+      } else if (currentFilter === 'retrying') {
+        filtered = chunksData.filter(c => c.state === 'retrying');
+      }
+
+      const rows = filtered.slice(0, 500).map(c => {
+        const errMsg = c.last_error_message ? `<span class="error-msg" title="${String(c.last_error_message).replace(/"/g, '&quot;')}">${String(c.last_error_message).slice(0, 60)}</span>` : '-';
+        return `<tr>
+          <td>${c.index}</td>
+          <td>${getStatusBadge(c.state)}</td>
+          <td>${c.retries}</td>
+          <td>${c.splits}</td>
+          <td>${errMsg}</td>
+        </tr>`;
+      }).join('');
+
+      chunksBody.innerHTML = rows;
+    }
+
+    function updateStats() {
+      if (!chunksData || chunksData.length === 0) {
+        statTotal.textContent = '0';
+        statDone.textContent = '0';
+        statError.textContent = '0';
+        statRetrying.textContent = '0';
+        return;
+      }
+      statTotal.textContent = chunksData.length;
+      statDone.textContent = chunksData.filter(c => c.state === 'done').length;
+      statError.textContent = chunksData.filter(c => c.state === 'error').length;
+      statRetrying.textContent = chunksData.filter(c => c.state === 'retrying').length;
+    }
+
+    function showChunks(data) {
+      if (!data || !Array.isArray(data.chunks)) {
+        chunksData = [];
+      } else {
+        chunksData = data.chunks;
+      }
+      updateStats();
+      renderChunksTable();
+    }
+
+    function show(obj) {
+      out.style.display = 'block';
+      outText.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+    }
+
+    function setProgress(done, total, state) {
+      progress.style.display = 'block';
+      meta.style.display = 'flex';
+      const pct = total > 0 ? Math.floor((done / total) * 100) : (state === 'done' ? 100 : 0);
+      bar.style.width = pct + '%';
+      metaLeft.textContent = `${state}  ${done}/${total}`;
+      metaRight.textContent = pct + '%';
+    }
+
+    function setBusy(busy) {
+      btnStart.disabled = busy;
+      btnCancel.style.display = busy ? 'inline-block' : 'none';
+      btnCancel.disabled = !busy;
+    }
+
+    async function requestCancel(jobId) {
+      if (!jobId) return;
+      try {
+        await fetch('api/jobs/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_id: jobId }),
+        });
+      } catch (e) {}
+    }
+
+    btnCancel.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      currentJobId = null;
+      setProgress(0, 0, 'cancelled');
+      show('已取消。');
+      setBusy(false);
+      await requestCancel(jobId);
+    });
+
+    async function poll(jobId) {
+      while (true) {
+        if (!currentJobId || currentJobId !== jobId) return;
+
+        const res = await fetch(`api/jobs/status?job_id=${encodeURIComponent(jobId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(JSON.stringify(data));
+
+        setProgress(data.done_chunks || 0, data.total_chunks || 0, data.state);
+        showChunks(data);
+
+        if (data.state === 'done') {
+          show(data.output_path ? `完成。已输出到：${data.output_path}` : '完成。已输出到项目 output/ 目录。');
+          setBusy(false);
+          currentJobId = null;
+          return;
+        }
+
+        if (data.state === 'cancelled') {
+          show('已取消。');
+          setBusy(false);
+          currentJobId = null;
+          return;
+        }
+
+        if (data.state === 'error') {
+          show(data);
+          setBusy(false);
+          currentJobId = null;
+          return;
+        }
+
+        await new Promise(r => setTimeout(r, 800));
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (currentJobId) return;
+
+      const fd = new FormData(form);
+      show('已提交，准备开始…');
+      setProgress(0, 0, 'queued');
+      setBusy(true);
+
+      const res = await fetch('api/jobs/create', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        show(data);
+        setBusy(false);
+        return;
+      }
+
+      currentJobId = data.job_id;
+      await poll(data.job_id);
+    });
+  </script>
+</body>
+</html>

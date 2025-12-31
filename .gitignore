@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Virtual environments
+.venv/
+
+# App outputs
+output/
+
+# Editor / tooling
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
