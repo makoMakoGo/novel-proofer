@@ -106,7 +106,7 @@ def _finalize_job(job_id: str, work_dir: Path, out_path: Path, total: int, error
             state="error",
             finished_at=time.time(),
             error=error_msg,
-            done_chunks=_count_done_chunks(job_id),
+            done_chunks=cur.done_chunks,
         )
         return False
 
@@ -150,13 +150,6 @@ def _validate_llm_output(input_text: str, output_text: str) -> None:
                 "possible repetition / hallucination",
                 status_code=None,
             )
-
-
-def _count_done_chunks(job_id: str) -> int:
-    st = GLOBAL_JOBS.get(job_id)
-    if st is None:
-        return 0
-    return sum(1 for c in st.chunk_statuses if c.state == "done")
 
 
 def _llm_request_snapshot(cfg: LLMConfig, input_text: str) -> dict:
@@ -403,19 +396,16 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
                 except Exception:
                     # Worker is responsible for updating chunk status.
                     pass
-                GLOBAL_JOBS.update(job_id, done_chunks=_count_done_chunks(job_id))
 
         # If cancelled, do not keep queued chunks as 'processing'.
         if GLOBAL_JOBS.is_cancelled(job_id):
             for i in pending_indices:
                 GLOBAL_JOBS.update_chunk(job_id, i, state="pending")
-            GLOBAL_JOBS.update(job_id, done_chunks=_count_done_chunks(job_id))
             return "cancelled"
 
         if GLOBAL_JOBS.is_paused(job_id) and pending_indices:
             for i in pending_indices:
                 GLOBAL_JOBS.update_chunk(job_id, i, state="pending")
-            GLOBAL_JOBS.update(job_id, done_chunks=_count_done_chunks(job_id))
             return "paused"
 
     return "done"

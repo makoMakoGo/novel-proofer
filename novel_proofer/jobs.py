@@ -56,6 +56,40 @@ class JobStore:
         self._cancelled: set[str] = set()
         self._paused: set[str] = set()
 
+    def _snapshot_chunk(self, cs: ChunkStatus) -> ChunkStatus:
+        return ChunkStatus(
+            index=cs.index,
+            state=cs.state,
+            started_at=cs.started_at,
+            finished_at=cs.finished_at,
+            retries=cs.retries,
+            last_error_code=cs.last_error_code,
+            last_error_message=cs.last_error_message,
+            input_chars=cs.input_chars,
+            output_chars=cs.output_chars,
+        )
+
+    def _snapshot_job(self, st: JobStatus) -> JobStatus:
+        return JobStatus(
+            job_id=st.job_id,
+            state=st.state,
+            created_at=st.created_at,
+            started_at=st.started_at,
+            finished_at=st.finished_at,
+            input_filename=st.input_filename,
+            output_filename=st.output_filename,
+            output_path=st.output_path,
+            total_chunks=st.total_chunks,
+            done_chunks=st.done_chunks,
+            last_error_code=st.last_error_code,
+            last_retry_count=st.last_retry_count,
+            stats=dict(st.stats),
+            chunk_statuses=[self._snapshot_chunk(c) for c in st.chunk_statuses],
+            error=st.error,
+            work_dir=st.work_dir,
+            cleanup_debug_dir=st.cleanup_debug_dir,
+        )
+
     def create(self, input_filename: str, output_filename: str, total_chunks: int) -> JobStatus:
         job_id = uuid.uuid4().hex
         status = JobStatus(
@@ -71,11 +105,14 @@ class JobStore:
         )
         with self._lock:
             self._jobs[job_id] = status
-        return status
+            return self._snapshot_job(status)
 
     def get(self, job_id: str) -> JobStatus | None:
         with self._lock:
-            return self._jobs.get(job_id)
+            st = self._jobs.get(job_id)
+            if st is None:
+                return None
+            return self._snapshot_job(st)
 
     def update(self, job_id: str, **kwargs) -> None:
         with self._lock:
@@ -85,6 +122,8 @@ class JobStore:
             if st.state == "cancelled":
                 return
             for k, v in kwargs.items():
+                if k == "started_at" and st.started_at is not None and v is not None:
+                    continue
                 if k == "state" and st.state == "paused" and v in {"queued", "running"}:
                     continue
                 if k == "state" and v in {"done", "error", "cancelled"}:
@@ -105,11 +144,19 @@ class JobStore:
             st = self._jobs.get(job_id)
             if st is None:
                 return
+            if st.state == "cancelled" or job_id in self._cancelled:
+                return
             if index < 0 or index >= len(st.chunk_statuses):
                 return
             cs = st.chunk_statuses[index]
+            prev_state = cs.state
             for k, v in kwargs.items():
                 setattr(cs, k, v)
+            if "state" in kwargs and cs.state != prev_state:
+                if prev_state == "done" and st.done_chunks > 0:
+                    st.done_chunks -= 1
+                if cs.state == "done":
+                    st.done_chunks += 1
 
     def add_retry(self, job_id: str, index: int, inc: int, last_error_code: int | None, last_error_message: str | None) -> None:
         with self._lock:
@@ -139,13 +186,21 @@ class JobStore:
             if st is None:
                 return False
 
+            now = time.time()
             self._cancelled.add(job_id)
             self._paused.discard(job_id)
 
             # Update visible state immediately so clients can stop polling.
             if st.state not in {"done", "error"}:
                 st.state = "cancelled"
-                st.finished_at = time.time()
+                st.finished_at = now
+
+            for cs in st.chunk_statuses:
+                if cs.state in {"processing", "retrying"}:
+                    cs.state = "pending"
+                    cs.started_at = None
+                    cs.finished_at = None
+                    cs.last_error_message = cs.last_error_message or "cancelled"
 
             return True
 
