@@ -90,10 +90,7 @@
     .status-done { background: #f0fdf4; color: #22c55e; }
     .status-error { background: #fef2f2; color: #ef4444; }
     .status-retrying { background: #fffbeb; color: #f59e0b; }
-    .error-msg { color: #ef4444; font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .error-details { font-size: 12px; }
-    .error-summary { cursor: pointer; color: #ef4444; }
-    .error-full { color: #ef4444; white-space: pre-wrap; word-break: break-word; margin-top: 6px; }
+    .error-brief { color: #ef4444; font-size: 12px; display: inline-block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 
     @media (max-width: 600px) {
@@ -207,7 +204,8 @@
 
         <div class="btns">
           <button type="submit" id="btnStart">开始校对</button>
-          <button type="button" class="ghost" id="btnCancel" style="display:none" disabled>取消/暂停</button>
+          <button type="button" class="ghost" id="btnPause" style="display:none" disabled>暂停</button>
+          <button type="button" class="ghost" id="btnCancel" style="display:none" disabled>取消</button>
           <button type="button" class="ghost" id="btnRetry" style="display:none" disabled>重试失败部分</button>
           <button type="button" class="ghost" id="btnCleanup" style="display:none" disabled>清理中间文件</button>
         </div>
@@ -282,6 +280,7 @@
     const metaLeft = document.getElementById('metaLeft');
     const metaRight = document.getElementById('metaRight');
     const btnStart = document.getElementById('btnStart');
+    const btnPause = document.getElementById('btnPause');
     const btnCancel = document.getElementById('btnCancel');
     const btnRetry = document.getElementById('btnRetry');
     const btnCleanup = document.getElementById('btnCleanup');
@@ -351,6 +350,32 @@
       return `<span class="status-badge status-${state}">${icon} ${label}</span>`;
     }
 
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function formatErrorBrief(code, message) {
+      const codeStr = (code == null || code === '') ? '' : String(code);
+      const msg = (message == null) ? '' : String(message).trim();
+
+      let reason = msg;
+      if (/LLM output empty/i.test(msg)) reason = 'LLM output empty';
+      else if (/LLM output too short/i.test(msg)) reason = 'LLM output too short';
+      else if (/LLM output too long/i.test(msg)) reason = 'LLM output too long';
+      else if (/^HTTP\s+\d+\s+from\s+LLM:/i.test(msg)) reason = msg.replace(/^HTTP\s+\d+\s+from\s+LLM:\s*/i, '').trim();
+
+      let out = '';
+      if (codeStr) out = `HTTP ${codeStr}`;
+      if (reason) out = out ? `${out} · ${reason}` : reason;
+      if (out.length > 90) out = out.slice(0, 90) + '…';
+      return out;
+    }
+
     function renderChunksTable() {
       if (!chunksData || chunksData.length === 0) {
         noChunksHint.style.display = 'block';
@@ -374,9 +399,14 @@
          let inOut = '-';
          if (c.input_chars != null && c.output_chars != null) inOut = `${c.input_chars}/${c.output_chars}`;
          else if (c.input_chars != null) inOut = `${c.input_chars}/-`;
+
+         const errCode = (c.last_error_code != null) ? String(c.last_error_code) : '';
          const errFull = c.last_error_message ? String(c.last_error_message) : '';
-         const errTitle = errFull.replace(/"/g, '&quot;');
-         const errMsg = errFull ? `<details class="error-details"><summary class="error-summary">${errFull.slice(0, 60)}</summary><div class="error-full">${errTitle}</div></details>` : '-';
+         const brief = formatErrorBrief(errCode, errFull);
+         const errMsg = brief
+           ? `<span class="error-brief" title="${escapeHtml(errFull || brief)}">${escapeHtml(brief)}</span>`
+           : '-';
+
          return `<tr>
            <td>${c.index}</td>
            <td>${getStatusBadge(c.state)}</td>
@@ -448,6 +478,7 @@
       const stateLabels = {
         queued: '已提交，准备开始…',
         running: '正在处理中…',
+        paused: '已暂停',
         done: '处理完成',
         cancelled: '已取消',
         error: '处理出错'
@@ -460,6 +491,9 @@
 
     function setBusy(busy) {
       btnStart.disabled = busy;
+      btnPause.style.display = busy ? 'inline-block' : 'none';
+      btnPause.disabled = !busy;
+      btnPause.textContent = '暂停';
       btnCancel.style.display = busy ? 'inline-block' : 'none';
       btnCancel.disabled = !busy;
       if (busy) {
@@ -468,6 +502,19 @@
         btnCleanup.style.display = 'none';
         btnCleanup.disabled = true;
       }
+    }
+
+    function setPaused(paused) {
+      btnStart.disabled = false;
+      btnPause.style.display = paused ? 'inline-block' : 'none';
+      btnPause.disabled = !paused;
+      btnPause.textContent = '继续';
+      btnCancel.style.display = paused ? 'inline-block' : 'none';
+      btnCancel.disabled = !paused;
+      btnRetry.style.display = 'none';
+      btnRetry.disabled = true;
+      btnCleanup.style.display = 'none';
+      btnCleanup.disabled = true;
     }
 
     function setRetryVisible(visible) {
@@ -504,6 +551,87 @@
         });
       } catch (e) {}
     }
+
+    async function requestPause(jobId) {
+      if (!jobId) return { ok: false, error: 'missing job_id' };
+      try {
+        const res = await fetch('api/jobs/pause', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_id: jobId }),
+        });
+        const data = await res.json();
+        if (!res.ok) return { ok: false, error: data };
+        return { ok: true, data };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }
+
+    async function requestResume(jobId) {
+      if (!jobId) return { ok: false, error: 'missing job_id' };
+
+      const fd = new FormData(form);
+      const extra = parseExtraParamsFromFormData(fd);
+      if (!extra.ok) return { ok: false, error: extra.error };
+      const filterThinkTags = !!document.querySelector('input[type="checkbox"][name="llm_filter_think_tags"]')?.checked;
+
+      const payload = {
+        job_id: jobId,
+        llm_provider: fd.get('llm_provider') || 'openai_compatible',
+        llm_base_url: fd.get('llm_base_url') || '',
+        llm_api_key: fd.get('llm_api_key') || '',
+        llm_model: fd.get('llm_model') || '',
+        llm_temperature: Number(fd.get('llm_temperature') || 0),
+        llm_timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
+        llm_max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
+        llm_filter_think_tags: filterThinkTags,
+        llm_extra_params: extra.value,
+      };
+
+      try {
+        const res = await fetch('api/jobs/resume', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) return { ok: false, error: data };
+        return { ok: true, data };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }
+
+    btnPause.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+
+      // Resume when paused; otherwise pause.
+      if (currentJobState === 'paused') {
+        show('继续分析…');
+        setBusy(true);
+        setRetryVisible(false);
+        setCleanupVisible(false);
+        const r = await requestResume(jobId);
+        if (!r.ok) {
+          show(r.error);
+          setPaused(true);
+          return;
+        }
+        currentJobState = 'running';
+        await poll(jobId);
+        return;
+      }
+
+      btnPause.disabled = true;
+      show('正在暂停…');
+      const r = await requestPause(jobId);
+      if (!r.ok) {
+        show(r.error);
+        btnPause.disabled = false;
+      }
+    });
 
     btnCancel.addEventListener('click', async () => {
       const jobId = currentJobId;
@@ -654,6 +782,15 @@
           return;
         }
 
+        if (data.state === 'paused') {
+          show('已暂停。');
+          setBusy(false);
+          setPaused(true);
+          setRetryVisible(false);
+          setCleanupVisible(false);
+          return;
+        }
+
         if (data.state === 'error') {
           show(data.error || data);
           setBusy(false);
@@ -668,7 +805,7 @@
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (currentJobId && (currentJobState === 'queued' || currentJobState === 'running')) return;
+      if (currentJobId && (currentJobState === 'queued' || currentJobState === 'running' || currentJobState === 'paused')) return;
       currentJobId = null;
       currentJobState = null;
       setRetryVisible(false);

@@ -25,7 +25,7 @@ class ChunkStatus:
 @dataclass
 class JobStatus:
     job_id: str
-    # queued|running|done|error|cancelled
+    # queued|running|paused|done|error|cancelled
     state: str
     created_at: float
     started_at: float | None
@@ -54,6 +54,7 @@ class JobStore:
         self._lock = threading.Lock()
         self._jobs: dict[str, JobStatus] = {}
         self._cancelled: set[str] = set()
+        self._paused: set[str] = set()
 
     def create(self, input_filename: str, output_filename: str, total_chunks: int) -> JobStatus:
         job_id = uuid.uuid4().hex
@@ -84,6 +85,10 @@ class JobStore:
             if st.state == "cancelled":
                 return
             for k, v in kwargs.items():
+                if k == "state" and st.state == "paused" and v in {"queued", "running"}:
+                    continue
+                if k == "state" and v in {"done", "error", "cancelled"}:
+                    self._paused.discard(job_id)
                 setattr(st, k, v)
 
     def init_chunks(self, job_id: str, total_chunks: int) -> None:
@@ -135,6 +140,7 @@ class JobStore:
                 return False
 
             self._cancelled.add(job_id)
+            self._paused.discard(job_id)
 
             # Update visible state immediately so clients can stop polling.
             if st.state not in {"done", "error"}:
@@ -143,16 +149,48 @@ class JobStore:
 
             return True
 
+    def pause(self, job_id: str) -> bool:
+        with self._lock:
+            st = self._jobs.get(job_id)
+            if st is None:
+                return False
+            if st.state not in {"queued", "running"}:
+                return False
+
+            self._paused.add(job_id)
+            st.state = "paused"
+            st.finished_at = None
+            return True
+
+    def resume(self, job_id: str) -> bool:
+        with self._lock:
+            st = self._jobs.get(job_id)
+            if st is None:
+                return False
+            if st.state != "paused" and job_id not in self._paused:
+                return False
+
+            self._paused.discard(job_id)
+            if st.state == "paused":
+                st.state = "queued"
+                st.finished_at = None
+            return True
+
     def delete(self, job_id: str) -> bool:
         with self._lock:
             existed = job_id in self._jobs
             self._jobs.pop(job_id, None)
             self._cancelled.discard(job_id)
+            self._paused.discard(job_id)
             return existed
 
     def is_cancelled(self, job_id: str) -> bool:
         with self._lock:
             return job_id in self._cancelled
+
+    def is_paused(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._paused
 
 
 GLOBAL_JOBS = JobStore()

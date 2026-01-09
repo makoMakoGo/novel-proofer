@@ -8,6 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from novel_proofer.llm.config import LLMConfig
 from novel_proofer.llm.think_filter import ThinkTagFilter
@@ -17,6 +18,13 @@ class LLMError(RuntimeError):
     def __init__(self, message: str, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+@dataclass(frozen=True)
+class LLMTextResult:
+    text: str
+    raw_text: str
+    stream_debug: str = ""
 
 
 _RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
@@ -91,6 +99,103 @@ def _extract_content_from_sse_json(data: str, content_parts: list[str]) -> None:
         pass
 
 
+def _stream_request_impl(
+    url: str,
+    payload: dict,
+    headers: dict[str, str],
+    timeout: float,
+    *,
+    should_stop: Callable[[], bool] | None = None,
+    collect_debug: bool,
+) -> tuple[str, str]:
+    """Streaming HTTP POST request, returning (content, stream_debug).
+
+    stream_debug is a truncated raw SSE capture to help debug cases where the
+    parsed content is empty or malformed.
+    """
+
+    debug_head = ""
+    debug_tail = ""
+
+    def add_debug(s: str) -> None:
+        nonlocal debug_head, debug_tail
+        if not collect_debug or not s:
+            return
+        head_limit = 8_000
+        tail_limit = 12_000
+        if len(debug_head) < head_limit:
+            debug_head += s[: head_limit - len(debug_head)]
+        debug_tail = (debug_tail + s)[-tail_limit:]
+
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "Accept": "text/event-stream", **headers},
+        method="POST",
+    )
+
+    try:
+        with _urlopen(req, timeout=timeout) as resp:
+            content_parts: list[str] = []
+            buffer = ""
+            done = False
+
+            while True:
+                if should_stop is not None and should_stop():
+                    raise _cancelled_error()
+
+                chunk = resp.read(4096)
+                if not chunk:
+                    break
+
+                decoded = chunk.decode("utf-8", errors="replace")
+                add_debug(decoded)
+
+                buffer += decoded
+                lines = buffer.split("\n")
+                buffer = lines[-1]  # Keep incomplete line in buffer
+
+                for line in lines[:-1]:
+                    parsed = _parse_sse_line(line)
+                    if parsed is None:
+                        continue
+                    kind, data_line = parsed
+                    if kind == "done":
+                        done = True
+                        break
+                    _extract_content_from_sse_json(data_line, content_parts)
+
+                if done:
+                    break
+
+            # Process remaining buffer
+            if buffer.strip():
+                parsed = _parse_sse_line(buffer)
+                if parsed is not None:
+                    kind, data_line = parsed
+                    if kind != "done":
+                        _extract_content_from_sse_json(data_line, content_parts)
+
+            content = "".join(content_parts)
+
+            if not collect_debug:
+                return content, ""
+
+            if debug_head and len(debug_head) < 8_000:
+                return content, debug_head
+
+            if debug_head:
+                return content, debug_head + "\n...[truncated]...\n" + debug_tail
+            return content, debug_tail
+
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
+        raise LLMError(f"HTTP {e.code} from LLM: {body}", status_code=int(e.code)) from e
+    except urllib.error.URLError as e:
+        raise LLMError(f"LLM request failed: {e}") from e
+
+
 def _stream_request(
     url: str,
     payload: dict,
@@ -114,60 +219,33 @@ def _stream_request(
     Raises:
         LLMError: On HTTP or parsing errors
     """
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
+    content, _debug = _stream_request_impl(
         url,
-        data=data,
-        headers={"Content-Type": "application/json", "Accept": "text/event-stream", **headers},
-        method="POST",
+        payload,
+        headers,
+        timeout,
+        should_stop=should_stop,
+        collect_debug=False,
     )
-    
-    try:
-        with _urlopen(req, timeout=timeout) as resp:
-            content_parts = []
-            buffer = ""
-            done = False
-            
-            while True:
-                if should_stop is not None and should_stop():
-                    raise _cancelled_error()
+    return content
 
-                chunk = resp.read(4096)
-                if not chunk:
-                    break
 
-                buffer += chunk.decode("utf-8", errors="replace")
-                lines = buffer.split("\n")
-                buffer = lines[-1]  # Keep incomplete line in buffer
-                
-                for line in lines[:-1]:
-                    parsed = _parse_sse_line(line)
-                    if parsed is None:
-                        continue
-                    kind, data = parsed
-                    if kind == "done":
-                        done = True
-                        break
-                    _extract_content_from_sse_json(data, content_parts)
-
-                if done:
-                    break
-            
-            # Process remaining buffer
-            if buffer.strip():
-                parsed = _parse_sse_line(buffer)
-                if parsed is not None:
-                    kind, data = parsed
-                    if kind != "done":
-                        _extract_content_from_sse_json(data, content_parts)
-
-            return "".join(content_parts)
-            
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
-        raise LLMError(f"HTTP {e.code} from LLM: {body}", status_code=int(e.code)) from e
-    except urllib.error.URLError as e:
-        raise LLMError(f"LLM request failed: {e}") from e
+def _stream_request_with_debug(
+    url: str,
+    payload: dict,
+    headers: dict[str, str],
+    timeout: float,
+    *,
+    should_stop: Callable[[], bool] | None = None,
+) -> tuple[str, str]:
+    return _stream_request_impl(
+        url,
+        payload,
+        headers,
+        timeout,
+        should_stop=should_stop,
+        collect_debug=True,
+    )
 
 
 def _http_post_json(url: str, payload: dict, headers: dict[str, str], timeout: float) -> dict:
@@ -204,6 +282,19 @@ def call_llm_text(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], 
         return _call_gemini(cfg, input_text, should_stop=should_stop)
 
     return _call_openai_compatible(cfg, input_text, should_stop=should_stop)
+
+
+def call_llm_text_with_raw(
+    cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None
+) -> LLMTextResult:
+    if not cfg.enabled:
+        return LLMTextResult(text=input_text, raw_text=input_text, stream_debug="")
+
+    provider = (cfg.provider or "").strip().lower()
+    if provider == "gemini":
+        return _call_gemini_with_raw(cfg, input_text, should_stop=should_stop)
+
+    return _call_openai_compatible_with_raw(cfg, input_text, should_stop=should_stop)
 
 
 def call_llm_text_resilient(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None) -> str:
@@ -255,6 +346,42 @@ def call_llm_text_resilient_with_meta(
             raise _cancelled_error()
         try:
             return call_llm_text(cfg, input_text, should_stop=should_stop), i, last_code, last_msg
+        except LLMError as e:
+            last_code = e.status_code
+            last_msg = str(e)
+            if e.status_code is not None and e.status_code not in _RETRYABLE_STATUS:
+                raise
+        except Exception as e:
+            last_msg = str(e)
+
+        if i < attempts - 1:
+            if should_stop is not None and should_stop():
+                raise _cancelled_error()
+            if on_retry is not None:
+                on_retry(i + 1, last_code, last_msg)
+            time.sleep(max(0.0, float(_DEFAULT_RETRY_BACKOFF_SECONDS)) * (2**i))
+
+    raise LLMError(last_msg or "LLM failed", status_code=last_code)
+
+
+def call_llm_text_resilient_with_meta_and_raw(
+    cfg: LLMConfig,
+    input_text: str,
+    *,
+    should_stop: Callable[[], bool] | None = None,
+    on_retry: Callable[[int, int | None, str | None], None] | None = None,
+) -> tuple[LLMTextResult, int, int | None, str | None]:
+    """Like call_llm_text_resilient_with_meta, but also returns raw output and stream debug."""
+
+    attempts = max(0, int(_DEFAULT_MAX_RETRIES)) + 1
+    last_code: int | None = None
+    last_msg: str | None = None
+
+    for i in range(attempts):
+        if should_stop is not None and should_stop():
+            raise _cancelled_error()
+        try:
+            return call_llm_text_with_raw(cfg, input_text, should_stop=should_stop), i, last_code, last_msg
         except LLMError as e:
             last_code = e.status_code
             last_msg = str(e)
@@ -333,6 +460,12 @@ def _maybe_filter_think_tags(cfg: LLMConfig, raw_content: str, *, input_text: st
 def _call_openai_compatible(
     cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None
 ) -> str:
+    return _call_openai_compatible_with_raw(cfg, input_text, should_stop=should_stop).text
+
+
+def _call_openai_compatible_with_raw(
+    cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None
+) -> LLMTextResult:
     if not cfg.base_url:
         raise LLMError("LLM base_url is empty")
     if not cfg.model:
@@ -354,14 +487,22 @@ def _call_openai_compatible(
     if cfg.extra_params:
         payload.update(cfg.extra_params)
 
-    raw_content = _stream_request(
+    raw_content, stream_debug = _stream_request_with_debug(
         url, payload, headers=_headers(cfg), timeout=cfg.timeout_seconds, should_stop=should_stop
     )
 
-    return _maybe_filter_think_tags(cfg, raw_content, input_text=input_text)
+    return LLMTextResult(
+        text=_maybe_filter_think_tags(cfg, raw_content, input_text=input_text),
+        raw_text=raw_content,
+        stream_debug=stream_debug,
+    )
 
 
 def _call_gemini(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None) -> str:
+    return _call_gemini_with_raw(cfg, input_text, should_stop=should_stop).text
+
+
+def _call_gemini_with_raw(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None) -> LLMTextResult:
     if not cfg.base_url:
         raise LLMError("LLM base_url is empty")
     if not cfg.model:
@@ -386,8 +527,12 @@ def _call_gemini(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], b
     if cfg.extra_params:
         payload.update(cfg.extra_params)
 
-    raw_content = _stream_request(
+    raw_content, stream_debug = _stream_request_with_debug(
         url, payload, headers=_headers(cfg), timeout=cfg.timeout_seconds, should_stop=should_stop
     )
 
-    return _maybe_filter_think_tags(cfg, raw_content, input_text=input_text)
+    return LLMTextResult(
+        text=_maybe_filter_think_tags(cfg, raw_content, input_text=input_text),
+        raw_text=raw_content,
+        stream_debug=stream_debug,
+    )

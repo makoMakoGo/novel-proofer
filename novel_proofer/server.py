@@ -29,7 +29,7 @@ from pathlib import Path
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.config import LLMConfig
-from novel_proofer.runner import retry_failed_chunks, run_job
+from novel_proofer.runner import resume_paused_job, retry_failed_chunks, run_job
 
 # Note: some editors may not resolve local imports; runtime is OK.
 
@@ -370,7 +370,15 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if path not in {"/format", "/api/jobs/create", "/api/jobs/cancel", "/api/jobs/retry_failed", "/api/jobs/cleanup"}:
+        if path not in {
+            "/format",
+            "/api/jobs/create",
+            "/api/jobs/cancel",
+            "/api/jobs/pause",
+            "/api/jobs/resume",
+            "/api/jobs/retry_failed",
+            "/api/jobs/cleanup",
+        }:
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
             return
 
@@ -379,6 +387,63 @@ class Handler(BaseHTTPRequestHandler):
             job_id = str(payload.get("job_id") or "")
             ok = GLOBAL_JOBS.cancel(job_id)
             self._send_json({"ok": ok})
+            return
+
+        if path == "/api/jobs/pause":
+            payload = _read_json_body(self)
+            job_id = str(payload.get("job_id") or "")
+            ok = GLOBAL_JOBS.pause(job_id)
+            self._send_json({"ok": ok})
+            return
+
+        if path == "/api/jobs/resume":
+            payload = _read_json_body(self)
+
+            job_id = str(payload.get("job_id") or "")
+            st = GLOBAL_JOBS.get(job_id)
+            if st is None:
+                self._send_json({"error": "job not found"}, status=404)
+                return
+            if st.state == "running":
+                self._send_json({"error": "job is running"}, status=409)
+                return
+            if st.state == "cancelled":
+                self._send_json({"error": "job is cancelled"}, status=409)
+                return
+            if st.state != "paused":
+                self._send_json({"error": "job is not paused"}, status=409)
+                return
+
+            if not GLOBAL_JOBS.resume(job_id):
+                self._send_json({"error": "failed to resume job"}, status=409)
+                return
+
+            try:
+                extra_params = _parse_json_object(payload.get("llm_extra_params"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, status=400)
+                return
+
+            llm = LLMConfig(
+                enabled=True,
+                provider=str(payload.get("llm_provider") or "openai_compatible").strip(),
+                base_url=str(payload.get("llm_base_url") or "").strip(),
+                api_key=str(payload.get("llm_api_key") or "").strip(),
+                model=str(payload.get("llm_model") or "").strip(),
+                temperature=_parse_float(payload.get("llm_temperature"), 0.0),
+                timeout_seconds=_parse_float(payload.get("llm_timeout_seconds"), 180.0),
+                max_concurrency=_parse_int(str(payload.get("llm_max_concurrency") or ""), 20),
+                extra_params=extra_params,
+                filter_think_tags=_parse_bool(payload.get("llm_filter_think_tags"), True),
+            )
+
+            t = threading.Thread(
+                target=resume_paused_job,
+                args=(job_id, llm),
+                daemon=True,
+            )
+            t.start()
+            self._send_json({"ok": True})
             return
 
         if path == "/api/jobs/retry_failed":

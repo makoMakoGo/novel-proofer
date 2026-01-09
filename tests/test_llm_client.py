@@ -90,15 +90,17 @@ def test_call_llm_text_routes_to_gemini(monkeypatch: pytest.MonkeyPatch):
 def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch: pytest.MonkeyPatch):
     captured: dict = {}
 
-    def fake_stream_request(url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None) -> str:  # noqa: ANN001
+    def fake_stream_request_with_debug(  # noqa: ANN001
+        url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None
+    ) -> tuple[str, str]:
         captured["url"] = url
         captured["payload"] = payload
         captured["headers"] = headers
         captured["timeout"] = timeout
         captured["should_stop"] = should_stop
-        return "RAW"
+        return "RAW", "DBG"
 
-    monkeypatch.setattr(llm_client, "_stream_request", fake_stream_request)
+    monkeypatch.setattr(llm_client, "_stream_request_with_debug", fake_stream_request_with_debug)
 
     cfg = LLMConfig(
         enabled=True,
@@ -125,11 +127,13 @@ def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch
 def test_call_openai_compatible_merges_extra_params(monkeypatch: pytest.MonkeyPatch):
     captured: dict = {}
 
-    def fake_stream_request(url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None) -> str:  # noqa: ANN001
+    def fake_stream_request_with_debug(  # noqa: ANN001
+        url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None
+    ) -> tuple[str, str]:
         captured["payload"] = payload
-        return "RAW"
+        return "RAW", "DBG"
 
-    monkeypatch.setattr(llm_client, "_stream_request", fake_stream_request)
+    monkeypatch.setattr(llm_client, "_stream_request_with_debug", fake_stream_request_with_debug)
 
     cfg = LLMConfig(
         enabled=True,
@@ -147,13 +151,15 @@ def test_call_openai_compatible_merges_extra_params(monkeypatch: pytest.MonkeyPa
 def test_call_gemini_payload_and_merge_extra_params(monkeypatch: pytest.MonkeyPatch):
     captured: dict = {}
 
-    def fake_stream_request(url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None) -> str:  # noqa: ANN001
+    def fake_stream_request_with_debug(  # noqa: ANN001
+        url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None
+    ) -> tuple[str, str]:
         captured["url"] = url
         captured["payload"] = payload
         captured["should_stop"] = should_stop
-        return "RAW"
+        return "RAW", "DBG"
 
-    monkeypatch.setattr(llm_client, "_stream_request", fake_stream_request)
+    monkeypatch.setattr(llm_client, "_stream_request_with_debug", fake_stream_request_with_debug)
 
     cfg = LLMConfig(
         enabled=True,

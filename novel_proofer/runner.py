@@ -12,8 +12,31 @@ from novel_proofer.formatting.chunking import chunk_by_lines
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.formatting.rules import apply_rules
 from novel_proofer.jobs import GLOBAL_JOBS
-from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta
+from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
 from novel_proofer.llm.config import LLMConfig
+
+
+_JOB_DEBUG_README = """\
+本目录为 novel-proofer 的单次任务调试产物，用于排查与重试。
+
+目录说明：
+- pre/   : 本地规则处理后的分片输入（发送给 LLM 的输入），文件名为分片 index（固定覆盖）。
+- out/   : 分片最终输出（通过校验，参与合并），文件名为分片 index（固定覆盖）。
+- req/   : 每次请求 LLM 的请求快照 JSON（含 provider/url/payload），文件名带时间戳（不会覆盖）。
+- resp/  : LLM 响应留档（原始 raw / 过滤后 filtered），文件名带时间戳（不会覆盖）。
+- error/ : 结构化错误详情 JSON（含 traceback 与关联文件名），文件名带时间戳（不会覆盖）。
+
+文件命名：
+- pre/{index}.txt、out/{index}.txt 会被覆盖（以当前最新为准）。
+- req/resp/error 目录下文件名包含 {index}_{timestamp}，用于保留多次尝试历史。
+"""
+
+
+def _ensure_job_debug_readme(work_dir: Path) -> None:
+    p = work_dir / "README.txt"
+    if p.exists():
+        return
+    _atomic_write_text(p, _JOB_DEBUG_README)
 
 
 def _merge_stats(dst: dict[str, int], src: dict[str, int]) -> None:
@@ -104,45 +127,10 @@ def _finalize_job(job_id: str, work_dir: Path, out_path: Path, total: int, error
     return True
 
 
-def _llm_process_chunk(cfg: LLMConfig, chunk: str, *, job_id: str | None = None, chunk_index: int | None = None) -> str:
-    if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
-        return ""
-    if not chunk:
-        return ""
-
-    retry_count = 0
-
-    def on_retry(_retry_index: int, last_code: int | None, last_msg: str | None) -> None:
-        nonlocal retry_count
-        if job_id is None or chunk_index is None:
-            return
-        retry_count += 1
-        GLOBAL_JOBS.update_chunk(job_id, chunk_index, state="retrying")
-        GLOBAL_JOBS.add_retry(job_id, chunk_index, 1, last_code, last_msg)
-
-    should_stop_fn = None
-    if job_id is not None:
-
-        def _should_stop() -> bool:
-            return GLOBAL_JOBS.is_cancelled(job_id)
-
-        should_stop_fn = _should_stop
-
-    out, retries, last_code, last_msg = call_llm_text_resilient_with_meta(
-        cfg,
-        chunk,
-        should_stop=should_stop_fn,
-        on_retry=on_retry,
-    )
-    if job_id is not None and chunk_index is not None and retries > retry_count:
-        GLOBAL_JOBS.add_retry(job_id, chunk_index, retries - retry_count, last_code, last_msg)
-
-    if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
-        return ""
-
-    in_len = len(chunk)
-    out_len = len(out)
-    out_trim = len(out.strip())
+def _validate_llm_output(input_text: str, output_text: str) -> None:
+    in_len = len(input_text)
+    out_len = len(output_text)
+    out_trim = len(output_text.strip())
     if in_len > 0 and out_trim == 0:
         raise LLMError(
             "LLM output empty; likely token-limit/stream-parse/think-filter issue",
@@ -162,8 +150,6 @@ def _llm_process_chunk(cfg: LLMConfig, chunk: str, *, job_id: str | None = None,
                 "possible repetition / hallucination",
                 status_code=None,
             )
-
-    return out
 
 
 def _count_done_chunks(job_id: str) -> int:
@@ -224,8 +210,16 @@ def _chunk_req_path(work_dir: Path, index: int, ts_ms: int) -> Path:
     return work_dir / "req" / f"{index:06d}_{ts_ms}.json"
 
 
-def _chunk_resp_path(work_dir: Path, index: int, ts_ms: int) -> Path:
-    return work_dir / "resp" / f"{index:06d}_{ts_ms}.txt"
+def _chunk_resp_raw_path(work_dir: Path, index: int, ts_ms: int) -> Path:
+    return work_dir / "resp" / f"{index:06d}_{ts_ms}_raw.txt"
+
+
+def _chunk_resp_filtered_path(work_dir: Path, index: int, ts_ms: int) -> Path:
+    return work_dir / "resp" / f"{index:06d}_{ts_ms}_filtered.txt"
+
+
+def _chunk_resp_stream_path(work_dir: Path, index: int, ts_ms: int) -> Path:
+    return work_dir / "resp" / f"{index:06d}_{ts_ms}_stream.txt"
 
 
 def _chunk_err_path(work_dir: Path, index: int, ts_ms: int) -> Path:
@@ -250,26 +244,65 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
     ts_ms = int(time.time() * 1000)
 
+    raw_text: str | None = None
+    filtered_text: str | None = None
+    stream_debug: str | None = None
+
     try:
         pre = _chunk_pre_path(work_dir, index).read_text(encoding="utf-8")
-        _atomic_write_text(
-            _chunk_req_path(work_dir, index, ts_ms),
-            json.dumps(_llm_request_snapshot(llm, pre), ensure_ascii=False, indent=2) + "\n",
-        )
+        req_path = _chunk_req_path(work_dir, index, ts_ms)
+        _atomic_write_text(req_path, json.dumps(_llm_request_snapshot(llm, pre), ensure_ascii=False, indent=2) + "\n")
         GLOBAL_JOBS.update_chunk(job_id, index, input_chars=len(pre), output_chars=None)
-        out = _llm_process_chunk(llm, pre, job_id=job_id, chunk_index=index)
+
+        retry_count = 0
+
+        def on_retry(_retry_index: int, last_code: int | None, last_msg: str | None) -> None:
+            nonlocal retry_count
+            retry_count += 1
+            GLOBAL_JOBS.update_chunk(job_id, index, state="retrying")
+            GLOBAL_JOBS.add_retry(job_id, index, 1, last_code, last_msg)
+
+        def _should_stop() -> bool:
+            return GLOBAL_JOBS.is_cancelled(job_id)
+
+        result, retries, last_code, last_msg = call_llm_text_resilient_with_meta_and_raw(
+            llm,
+            pre,
+            should_stop=_should_stop,
+            on_retry=on_retry,
+        )
+        raw_text = result.raw_text
+        filtered_text = result.text
+        stream_debug = result.stream_debug
+
+        if retries > retry_count:
+            GLOBAL_JOBS.add_retry(job_id, index, retries - retry_count, last_code, last_msg)
+
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
 
-        GLOBAL_JOBS.update_chunk(job_id, index, output_chars=len(out))
+        assert filtered_text is not None
+        GLOBAL_JOBS.update_chunk(job_id, index, output_chars=len(filtered_text))
 
-        _atomic_write_text(_chunk_resp_path(work_dir, index, ts_ms), out)
-        _atomic_write_text(_chunk_out_path(work_dir, index), out)
+        _atomic_write_text(_chunk_resp_raw_path(work_dir, index, ts_ms), raw_text or "")
+        _atomic_write_text(_chunk_resp_filtered_path(work_dir, index, ts_ms), filtered_text)
+        if (raw_text or "").strip() == "" and stream_debug:
+            _atomic_write_text(_chunk_resp_stream_path(work_dir, index, ts_ms), stream_debug)
+
+        _validate_llm_output(pre, filtered_text)
+
+        _atomic_write_text(_chunk_out_path(work_dir, index), filtered_text)
         GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time())
         GLOBAL_JOBS.add_stat(job_id, "llm_chunks", 1)
     except LLMError as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
+        req_rel = str(_chunk_req_path(work_dir, index, ts_ms).relative_to(work_dir)).replace("\\", "/")
+        pre_rel = str(_chunk_pre_path(work_dir, index).relative_to(work_dir)).replace("\\", "/")
+        resp_raw_rel = str(_chunk_resp_raw_path(work_dir, index, ts_ms).relative_to(work_dir)).replace("\\", "/")
+        resp_filtered_rel = str(_chunk_resp_filtered_path(work_dir, index, ts_ms).relative_to(work_dir)).replace("\\", "/")
+        resp_stream_rel = str(_chunk_resp_stream_path(work_dir, index, ts_ms).relative_to(work_dir)).replace("\\", "/")
+        out_rel = str(_chunk_out_path(work_dir, index).relative_to(work_dir)).replace("\\", "/")
         _atomic_write_text(
             _chunk_err_path(work_dir, index, ts_ms),
             json.dumps(
@@ -279,6 +312,16 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
                     "chunk_index": index,
                     "status_code": e.status_code,
                     "message": str(e),
+                    "files": {
+                        "pre": pre_rel,
+                        "req": req_rel,
+                        "resp_raw": resp_raw_rel,
+                        "resp_filtered": resp_filtered_rel,
+                        "resp_stream": resp_stream_rel,
+                        "out": out_rel,
+                    },
+                    "raw_excerpt": (raw_text or "")[:400],
+                    "filtered_excerpt": (filtered_text or "")[:400],
                     "traceback": traceback.format_exc(),
                 },
                 ensure_ascii=False,
@@ -321,7 +364,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         )
 
 
-def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: LLMConfig) -> None:
+def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: LLMConfig) -> str:
     max_workers = max(1, int(llm.max_concurrency))
     GLOBAL_JOBS.update(job_id, state="running", started_at=time.time(), finished_at=None, error=None)
 
@@ -333,12 +376,21 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
         while pending_indices or in_flight:
             if GLOBAL_JOBS.is_cancelled(job_id):
                 break
+            paused = GLOBAL_JOBS.is_paused(job_id)
+            if paused and not in_flight:
+                break
 
-            # Fill up the worker pool.
-            while pending_indices and len(in_flight) < max_workers and not GLOBAL_JOBS.is_cancelled(job_id):
-                i = pending_indices.pop(0)
-                fut = ex.submit(_llm_worker, job_id, i, work_dir, llm)
-                in_flight[fut] = i
+            if not paused:
+                # Fill up the worker pool.
+                while (
+                    pending_indices
+                    and len(in_flight) < max_workers
+                    and not GLOBAL_JOBS.is_cancelled(job_id)
+                    and not GLOBAL_JOBS.is_paused(job_id)
+                ):
+                    i = pending_indices.pop(0)
+                    fut = ex.submit(_llm_worker, job_id, i, work_dir, llm)
+                    in_flight[fut] = i
 
             if not in_flight:
                 break
@@ -358,6 +410,15 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
             for i in pending_indices:
                 GLOBAL_JOBS.update_chunk(job_id, i, state="pending")
             GLOBAL_JOBS.update(job_id, done_chunks=_count_done_chunks(job_id))
+            return "cancelled"
+
+        if GLOBAL_JOBS.is_paused(job_id) and pending_indices:
+            for i in pending_indices:
+                GLOBAL_JOBS.update_chunk(job_id, i, state="pending")
+            GLOBAL_JOBS.update(job_id, done_chunks=_count_done_chunks(job_id))
+            return "paused"
+
+    return "done"
 
 
 def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> None:
@@ -374,6 +435,7 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
     out_path = Path(st.output_path)
     (work_dir / "pre").mkdir(parents=True, exist_ok=True)
     (work_dir / "out").mkdir(parents=True, exist_ok=True)
+    _ensure_job_debug_readme(work_dir)
 
     GLOBAL_JOBS.update(job_id, state="running", started_at=time.time(), finished_at=None, error=None)
 
@@ -400,7 +462,13 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
             return
 
         if llm.enabled:
-            _run_llm_for_indices(job_id, list(range(total)), work_dir, llm)
+            outcome = _run_llm_for_indices(job_id, list(range(total)), work_dir, llm)
+            if outcome == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+                GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+                return
+            if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
+                GLOBAL_JOBS.update(job_id, state="paused", finished_at=None)
+                return
         else:
             # Pure local mode: treat local output as final chunk output.
             for i in range(total):
@@ -432,6 +500,7 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
 
     work_dir = Path(st.work_dir)
     out_path = Path(st.output_path)
+    _ensure_job_debug_readme(work_dir)
 
     if not st.chunk_statuses:
         GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job has no chunk statuses")
@@ -457,5 +526,54 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
             output_chars=None,
         )
 
-    _run_llm_for_indices(job_id, failed, work_dir, llm)
+    outcome = _run_llm_for_indices(job_id, failed, work_dir, llm)
+    if outcome == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+        return
+    if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
+        GLOBAL_JOBS.update(job_id, state="paused", finished_at=None)
+        return
     _finalize_job(job_id, work_dir, out_path, total, "some chunks still failed; update LLM config and retry again")
+
+
+def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        return
+    if st.state == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+        return
+    if not st.work_dir or not st.output_path:
+        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job missing work_dir/output_path")
+        return
+    if not st.chunk_statuses:
+        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job has no chunk statuses")
+        return
+
+    work_dir = Path(st.work_dir)
+    out_path = Path(st.output_path)
+    _ensure_job_debug_readme(work_dir)
+
+    total = len(st.chunk_statuses)
+    pending = [c.index for c in st.chunk_statuses if c.state not in {"done", "error"}]
+    if not pending:
+        _finalize_job(job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks")
+        return
+
+    for i in pending:
+        GLOBAL_JOBS.update_chunk(
+            job_id,
+            i,
+            state="pending",
+            started_at=None,
+            finished_at=None,
+        )
+
+    outcome = _run_llm_for_indices(job_id, pending, work_dir, llm)
+    if outcome == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+        return
+    if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
+        GLOBAL_JOBS.update(job_id, state="paused", finished_at=None)
+        return
+
+    _finalize_job(job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks")

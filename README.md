@@ -118,9 +118,9 @@ Think 标签过滤：部分模型（如 DeepSeek）会输出 `<think>...</think>
 ```
 output/.jobs/{job_id}/
 ├── pre/          # 本地规则处理后的分片输入
-├── out/          # LLM 处理后的分片输出
+├── out/          # 分片最终输出（通过校验，参与合并）
 ├── req/          # 发送给 LLM 的请求 JSON
-├── resp/         # LLM 原始响应
+├── resp/         # LLM 响应留档（raw / filtered，带时间戳）
 └── error/        # 错误详情 JSON
 ```
 
