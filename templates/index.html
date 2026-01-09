@@ -192,6 +192,14 @@
             <label><input type="checkbox" name="llm_filter_think_tags" value="1" checked />过滤 &lt;think&gt;…&lt;/think&gt;（默认）</label>
           </div>
         </div>
+
+        <label>调试</label>
+        <div class="row">
+          <div>
+            <input type="hidden" name="cleanup_debug_dir" value="0" />
+            <label><input type="checkbox" name="cleanup_debug_dir" value="1" checked />完成后删除调试中间文件（默认）</label>
+          </div>
+        </div>
         <div>
           <label>额外参数（JSON，可选，透传给 LLM）</label>
           <textarea name="llm_extra_params" placeholder='例如：{"max_tokens": 4096}'></textarea>
@@ -220,6 +228,7 @@
           <div>默认启用 LLM；会按“分片大小”分片并发处理（并发表示同时在飞请求数，不是一次处理总字数）。</div>
           <div>如果部分分片失败，可修改 LLM 配置后点击“重试失败部分”。</div>
           <div>如遇到 token limit / 输出过短，可在“额外参数”里尝试设置输出上限（例如 <code>{"max_tokens": 4096}</code>；不同服务参数名可能不同）。</div>
+          <div>如需排查中间结果，可取消勾选“完成后删除调试中间文件”；中间文件位于 <code>output/.jobs/</code>。</div>
           <div>完成后结果会写入项目 <code>output/</code> 目录。</div>
         </div>
         </form>

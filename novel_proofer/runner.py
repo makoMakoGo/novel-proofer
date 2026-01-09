@@ -40,6 +40,13 @@ def _best_effort_cleanup_work_dir(job_id: str, work_dir: Path) -> None:
         GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_error", 1)
 
 
+def _should_cleanup_debug_dir(job_id: str) -> bool:
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        return True
+    return bool(getattr(st, "cleanup_debug_dir", True))
+
+
 def _chunk_pre_path(work_dir: Path, index: int) -> Path:
     return work_dir / "pre" / f"{index:06d}.txt"
 
@@ -395,7 +402,10 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
             stats=final_stats,
             done_chunks=total,
         )
-        _best_effort_cleanup_work_dir(job_id, work_dir)
+        if _should_cleanup_debug_dir(job_id):
+            _best_effort_cleanup_work_dir(job_id, work_dir)
+        else:
+            GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_skipped", 1)
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
@@ -469,4 +479,7 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
         finished_at=time.time(),
         done_chunks=total,
     )
-    _best_effort_cleanup_work_dir(job_id, work_dir)
+    if _should_cleanup_debug_dir(job_id):
+        _best_effort_cleanup_work_dir(job_id, work_dir)
+    else:
+        GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_skipped", 1)

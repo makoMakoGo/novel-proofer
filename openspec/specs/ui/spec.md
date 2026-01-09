@@ -20,6 +20,16 @@
 - **THEN** UI 显示完成状态
 - **AND** UI 明确提示输出位置为 `output/`（或具体 `output_path`）
 
+### Requirement: User can choose debug artifact cleanup
+参数设置页 SHALL 提供“完成后删除调试中间文件”选项：
+- 默认勾选（任务成功后自动清理调试中间文件）
+- 用户可取消勾选，以便在任务成功后仍能检查中间结果
+
+#### Scenario: User keeps debug artifacts for inspection
+- **GIVEN** 用户取消勾选“完成后删除调试中间文件”
+- **WHEN** 任务成功完成
+- **THEN** 调试中间文件仍然保留可供检查
+
 ### Requirement: UI does not expose backend API details
 界面提示与文案 SHALL 不包含后端 API 路径或接口名（例如 `/api/...`）。
 

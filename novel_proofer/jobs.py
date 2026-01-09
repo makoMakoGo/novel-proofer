@@ -46,6 +46,7 @@ class JobStatus:
     error: str | None = None
     output_path: str | None = None
     work_dir: str | None = None
+    cleanup_debug_dir: bool = True
 
 
 class JobStore:

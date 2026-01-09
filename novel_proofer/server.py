@@ -518,6 +518,8 @@ class Handler(BaseHTTPRequestHandler):
             filter_think_tags=_parse_bool(fields.get("llm_filter_think_tags"), True),
         )
 
+        cleanup_debug_dir = _parse_bool(fields.get("cleanup_debug_dir"), True)
+
         out_name = _derive_output_filename(uploaded.filename, fields.get("suffix") or "_rev")
 
         if path == "/api/jobs/create":
@@ -530,6 +532,7 @@ class Handler(BaseHTTPRequestHandler):
                 output_filename=output_path.name,
                 output_path=str(output_path),
                 work_dir=str(work_dir),
+                cleanup_debug_dir=cleanup_debug_dir,
             )
 
             t = threading.Thread(

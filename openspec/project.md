@@ -62,7 +62,7 @@
 
 数据与文件：
 - 上传 TXT：服务端会尝试 `utf-8-sig/utf-8/gb18030/gbk` 解码（`novel_proofer/server.py:_decode_text`）
-- 分片工作区：每个 job 会在 `output/.jobs/<job_id>/` 下落盘保存分片中间结果（`pre/` 与 `out/`）
+- 分片工作区：每个 job 会在 `output/.jobs/<job_id>/` 下落盘保存分片中间结果（`pre/` 与 `out/` 等）；默认任务成功后自动清理，可在 UI 取消勾选“完成后删除调试中间文件”来保留
 - 最终输出：仅当全部分片成功时，才会将合并结果写入 `output/`（统一为 `utf-8`；文件名会做安全清洗 `_safe_filename`）
 
 ### Testing Strategy
@@ -74,6 +74,7 @@
 - `tests/smoke_test.py`：启动内存内 HTTPServer，调用 `/health` 与 `/format`（stats）做基本自检
 - `tests/smoke_status_chunks.py`：验证 status 接口在缺失 job 时返回 404
 - `tests/smoke_cancel_job.py`：验证创建 job → cancel → 状态为 `cancelled`
+- `tests/smoke_debug_dir_retention.py`：验证任务成功后调试目录默认清理；取消清理开关则保留
 - `tests/test_think_filter.py`：ThinkTagFilter 单元测试（pytest）
 
 建议测试约定：
