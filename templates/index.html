@@ -113,8 +113,8 @@
     <div class="card">
       <!-- Tab Navigation -->
       <div class="tabs">
-        <button type="button" class="tab-btn active" data-tab="progress">进度</button>
-        <button type="button" class="tab-btn" data-tab="debug">调试信息</button>
+        <button type="button" class="tab-btn active" data-tab="progress">参数设置</button>
+        <button type="button" class="tab-btn" data-tab="debug">分析进度</button>
       </div>
 
       <!-- Progress Tab -->
@@ -437,6 +437,18 @@
       bar.style.width = pct + '%';
       metaLeft.textContent = `${state}  ${done}/${total}`;
       metaRight.textContent = pct + '%';
+      // Update status text based on state
+      const stateLabels = {
+        queued: '已提交，准备开始…',
+        running: '正在处理中…',
+        done: '处理完成',
+        cancelled: '已取消',
+        error: '处理出错'
+      };
+      if (stateLabels[state]) {
+        out.style.display = 'block';
+        outText.textContent = stateLabels[state];
+      }
     }
 
     function setBusy(busy) {
