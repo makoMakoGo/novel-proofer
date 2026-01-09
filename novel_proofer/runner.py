@@ -52,6 +52,38 @@ def _atomic_write_text(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
+def _normalize_newlines(text: str) -> str:
+    if "\r" not in text:
+        return text
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _count_trailing_newlines(text: str) -> int:
+    n = 0
+    for ch in reversed(text):
+        if ch != "\n":
+            break
+        n += 1
+    return n
+
+
+def _align_trailing_newlines(reference: str, text: str, *, max_newlines: int = 3) -> str:
+    """Align trailing newlines in `text` to match `reference` (up to max_newlines).
+
+    This helps keep paragraph/chapter boundaries stable when LLM output omits
+    trailing blank lines/newlines at chunk boundaries.
+    """
+
+    ref = _normalize_newlines(reference)
+    out = _normalize_newlines(text)
+    want = min(_count_trailing_newlines(ref), max_newlines)
+    have = _count_trailing_newlines(out)
+    if have == want:
+        return out
+    base = out.rstrip("\n")
+    return base + ("\n" * want)
+
+
 def _best_effort_cleanup_work_dir(job_id: str, work_dir: Path) -> None:
     try:
         if work_dir.exists():
@@ -284,7 +316,11 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
         _validate_llm_output(pre, filtered_text)
 
-        _atomic_write_text(_chunk_out_path(work_dir, index), filtered_text)
+        final_text = _align_trailing_newlines(pre, filtered_text)
+        if final_text != filtered_text:
+            GLOBAL_JOBS.update_chunk(job_id, index, output_chars=len(final_text))
+
+        _atomic_write_text(_chunk_out_path(work_dir, index), final_text)
         GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time())
         GLOBAL_JOBS.add_stat(job_id, "llm_chunks", 1)
     except LLMError as e:
