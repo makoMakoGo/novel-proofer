@@ -16,7 +16,6 @@ class ChunkStatus:
     retries: int = 0
     last_error_code: int | None = None
     last_error_message: str | None = None
-    splits: int = 0
 
     # Diagnostics (optional)
     input_chars: int | None = None
@@ -119,14 +118,6 @@ class JobStore:
                 cs.retries += inc
                 cs.last_error_code = last_error_code
                 cs.last_error_message = last_error_message
-
-    def add_split(self, job_id: str, index: int, inc: int = 1) -> None:
-        with self._lock:
-            st = self._jobs.get(job_id)
-            if st is None:
-                return
-            if 0 <= index < len(st.chunk_statuses):
-                st.chunk_statuses[index].splits += inc
 
     def add_stat(self, job_id: str, key: str, inc: int = 1) -> None:
         with self._lock:

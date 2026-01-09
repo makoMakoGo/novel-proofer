@@ -6,7 +6,7 @@
 - **默认目标是“只做排版与标点统一，不做内容改写”**，尽量保持原意、措辞、段落结构与行数稳定（见 `novel_proofer/llm/config.py` 的 `LLMConfig.system_prompt`）
 - 支持两条处理路径：
   - 本地规则（纯 stdlib、确定性、保守）
-  - 可选 LLM（用于更复杂的对话/标点处理；有并发、重试与自动拆分）
+  - 可选 LLM（用于更复杂的对话/标点处理；有并发与重试）
 
 运行形态：
 - 本地启动 HTTP 服务并打开页面上传 TXT（页面模板：`templates/index.html`）
@@ -50,7 +50,8 @@
 - 执行器：`novel_proofer/runner.py`
   - `run_job()`：按行分片→本地规则→（可选）LLM 并发处理→全部成功后合并写最终输出
   - `retry_failed_chunks()`：当存在失败分片时，仅对失败分片继续 LLM 处理；全部成功后再合并输出
-  - LLM 失败处理：对可重试/超时/5xx 等错误做重试与自动二分拆分（降低 504 风险）
+  - LLM 失败处理：对可重试/超时/5xx 等错误做重试（不再自动二分拆分）
+  - LLM 输出校验：当输入切片较大（>=200 字符）时，输出长度需在输入的 85%~115% 之间；否则该分片标记为 `error`，可换模型/配置后手动重试失败分片
 - 排版规则：`novel_proofer/formatting/`
   - `chunking.py`：优先按空行（段落边界）拆分
   - `rules.py`：确定性规则（换行、行尾空格、空行压缩、省略号/破折号、CJK 标点、引号等）
@@ -71,14 +72,13 @@
 
 现有测试（位于 `tests/` 目录）：
 - `tests/smoke_test.py`：启动内存内 HTTPServer，调用 `/health` 与 `/format`（stats）做基本自检
-- `tests/smoke_split_504.py`：验证 504 自动拆分逻辑
 - `tests/smoke_status_chunks.py`：验证 status 接口在缺失 job 时返回 404
 - `tests/smoke_cancel_job.py`：验证创建 job → cancel → 状态为 `cancelled`
 - `tests/test_think_filter.py`：ThinkTagFilter 单元测试（pytest）
 
 建议测试约定：
 - 可按需引入 pytest 等测试框架
-- 覆盖关键路径：分片、规则统计、LLM 重试/拆分、job 状态更新、文件名安全处理
+- 覆盖关键路径：分片、规则统计、LLM 重试、job 状态更新、文件名安全处理
 
 ### Git Workflow
 这是个人自用项目（单维护者），工作流以“低摩擦、可回滚”为主：

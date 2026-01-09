@@ -17,8 +17,6 @@ from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta
 from novel_proofer.llm.config import LLMConfig
 
-_DEFAULT_SPLIT_MIN_CHARS = 1_500
-
 
 def _merge_stats(dst: dict[str, int], src: dict[str, int]) -> None:
     for k, v in src.items():
@@ -60,111 +58,66 @@ def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> N
     tmp.replace(out_path)
 
 
-def _split_text_in_half(text: str) -> tuple[str, str]:
-    n = len(text)
-    if n <= 1:
-        return text, ""
-
-    mid = n // 2
-
-    # Prefer splitting at paragraph boundary, but cut AFTER the boundary
-    # so the right part doesn't start with blank lines.
-    left = text.rfind("\n\n", 0, mid)
-    right = text.find("\n\n", mid)
-
-    if left != -1:
-        pivot = left + 2
-    elif right != -1:
-        pivot = right + 2
-    else:
-        pivot = mid
-
-    pivot = max(1, min(n - 1, pivot))
-    return text[:pivot], text[pivot:]
-
-
 def _llm_process_chunk(cfg: LLMConfig, chunk: str, *, job_id: str | None = None, chunk_index: int | None = None) -> str:
-    # If a chunk is too large and errors, we will split it.
-    stack: list[str] = [chunk]
-    out_parts: list[str] = []
+    if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
+        return ""
+    if not chunk:
+        return ""
 
-    while stack:
-        if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
-            return ""
+    retry_count = 0
 
-        piece = stack.pop()
-        if not piece:
-            continue
+    def on_retry(_retry_index: int, last_code: int | None, last_msg: str | None) -> None:
+        nonlocal retry_count
+        if job_id is None or chunk_index is None:
+            return
+        retry_count += 1
+        GLOBAL_JOBS.update_chunk(job_id, chunk_index, state="retrying")
+        GLOBAL_JOBS.add_retry(job_id, chunk_index, 1, last_code, last_msg)
 
-        retry_count = 0
+    should_stop_fn = None
+    if job_id is not None:
 
-        def on_retry(_retry_index: int, last_code: int | None, last_msg: str | None) -> None:
-            nonlocal retry_count
-            if job_id is None or chunk_index is None:
-                return
-            retry_count += 1
-            GLOBAL_JOBS.update_chunk(job_id, chunk_index, state="retrying")
-            GLOBAL_JOBS.add_retry(job_id, chunk_index, 1, last_code, last_msg)
+        def _should_stop() -> bool:
+            return GLOBAL_JOBS.is_cancelled(job_id)
 
-        try:
-            should_stop_fn = None
-            if job_id is not None:
-                def _should_stop() -> bool:
-                    return GLOBAL_JOBS.is_cancelled(job_id)
-                should_stop_fn = _should_stop
-            out, retries, last_code, last_msg = call_llm_text_resilient_with_meta(
-                cfg,
-                piece,
-                should_stop=should_stop_fn,
-                on_retry=on_retry,
+        should_stop_fn = _should_stop
+
+    out, retries, last_code, last_msg = call_llm_text_resilient_with_meta(
+        cfg,
+        chunk,
+        should_stop=should_stop_fn,
+        on_retry=on_retry,
+    )
+    if job_id is not None and chunk_index is not None and retries > retry_count:
+        GLOBAL_JOBS.add_retry(job_id, chunk_index, retries - retry_count, last_code, last_msg)
+
+    if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
+        return ""
+
+    in_len = len(chunk)
+    out_len = len(out)
+    out_trim = len(out.strip())
+    if in_len > 0 and out_trim == 0:
+        raise LLMError(
+            "LLM output empty; likely token-limit/stream-parse/think-filter issue",
+            status_code=None,
+        )
+    if in_len >= 200 and in_len > 0:
+        ratio = out_len / in_len
+        if ratio < 0.85:
+            raise LLMError(
+                f"LLM output too short (in={in_len}, out={out_len}, ratio={ratio:.2f} < 0.85); "
+                "possible content filtering / token-limit / stream truncation",
+                status_code=None,
             )
-            if job_id is not None and chunk_index is not None and retries > retry_count:
-                GLOBAL_JOBS.add_retry(job_id, chunk_index, retries - retry_count, last_code, last_msg)
+        if ratio > 1.15:
+            raise LLMError(
+                f"LLM output too long (in={in_len}, out={out_len}, ratio={ratio:.2f} > 1.15); "
+                "possible repetition / hallucination",
+                status_code=None,
+            )
 
-            if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
-                return ""
-
-            in_trim = len(piece.strip())
-            out_trim = len(out.strip())
-            if in_trim > 0 and out_trim == 0:
-                raise LLMError(
-                    "LLM output empty; likely token-limit/stream-parse/think-filter issue",
-                    status_code=None,
-                )
-            if in_trim >= 200 and out_trim < max(200, int(in_trim * 0.2)):
-                raise LLMError(
-                    f"LLM output too short (in={in_trim}, out={out_trim}); likely token-limit/stream-parse issue",
-                    status_code=None,
-                )
-
-            out_parts.append(out)
-            continue
-        except LLMError as e:
-            if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
-                return ""
-
-            # Automatic split on transient/timeouts or 504/503 etc.
-            can_split = len(piece) > max(1000, _DEFAULT_SPLIT_MIN_CHARS)
-            retryable = (e.status_code in {502, 503, 504, 408, 429, 500} or e.status_code is None)
-            if can_split and retryable:
-                a, b = _split_text_in_half(piece)
-                if job_id is not None and chunk_index is not None:
-                    GLOBAL_JOBS.add_split(job_id, chunk_index, 1)
-
-                # Ensure we actually make progress; otherwise fallback to strict mid split.
-                if not a or not b or len(a) >= len(piece) or len(b) >= len(piece):
-                    mid = len(piece) // 2
-                    if mid <= 1 or mid >= len(piece) - 1:
-                        raise
-                    a, b = piece[:mid], piece[mid:]
-
-                # process a then b in order
-                stack.append(b)
-                stack.append(a)
-                continue
-            raise
-
-    return "".join(out_parts)
+    return out
 
 
 def _count_done_chunks(job_id: str) -> int:

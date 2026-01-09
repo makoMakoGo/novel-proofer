@@ -68,8 +68,6 @@ if /i "%MODE%"=="smoke" (
   echo [novel-proofer] Running smoke tests...
   "%PYTHON_EXE%" tests\smoke_test.py
   if errorlevel 1 exit /b 1
-  "%PYTHON_EXE%" tests\smoke_split_504.py
-  if errorlevel 1 exit /b 1
   "%PYTHON_EXE%" tests\smoke_status_chunks.py
   if errorlevel 1 exit /b 1
   "%PYTHON_EXE%" tests\smoke_cancel_job.py

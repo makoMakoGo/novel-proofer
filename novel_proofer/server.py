@@ -331,7 +331,6 @@ class Handler(BaseHTTPRequestHandler):
                             "started_at": c.started_at,
                             "finished_at": c.finished_at,
                             "retries": c.retries,
-                            "splits": c.splits,
                             "input_chars": c.input_chars,
                             "output_chars": c.output_chars,
                             "last_error_code": c.last_error_code,

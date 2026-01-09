@@ -55,16 +55,17 @@ LLM 客户端行为规范，包括流式请求、可选参数透传、思考内�
 - **THEN** 系统显示验证错误
 - **AND** 不保存无效配置
 
-### Requirement: Independent think tag filtering
-系统 SHALL **独立于参数透传配置**自动检测并过滤思考标签内容：
+### Requirement: Think tag filtering is independent from extra params
+系统 SHALL **独立于参数透传配置**检测并过滤思考标签内容：
 - 过滤 `<think>...</think>` 标签及其包裹的内容
 - 标签匹配 SHALL 大小写不敏感
 - 过滤 SHALL 在流式接收时实时进行
-- **此功能始终启用，独立于 extra_params 配置**
-- 无论用户是否透传 thinking 参数，系统都会检测并过滤思考内容
+- 过滤行为 SHALL 不依赖 `extra_params`（是否透传 thinking 参数不影响过滤逻辑）
+- 过滤是否启用由 `filter_think_tags` 控制，默认启用（`filter_think_tags=True`）
 
 #### Scenario: Model returns thinking content without thinking params
 - **GIVEN** 用户未配置任何 thinking 参数
+- **AND** `filter_think_tags=True`
 - **AND** 模型返回包含 `<think>思考过程...</think>实际输出` 的内容
 - **WHEN** 系统处理响应
 - **THEN** 最终输出仅包含"实际输出"
@@ -72,6 +73,7 @@ LLM 客户端行为规范，包括流式请求、可选参数透传、思考内�
 
 #### Scenario: Model returns thinking content with thinking params
 - **GIVEN** 用户配置了 `{"enable_thinking": true}`
+- **AND** `filter_think_tags=True`
 - **AND** 模型返回包含思考标签的内容
 - **WHEN** 系统处理响应
 - **THEN** 思考内容仍被过滤
@@ -85,12 +87,14 @@ LLM 客户端行为规范，包括流式请求、可选参数透传、思考内�
 - **AND** 不会因缺少思考内容而报错
 
 #### Scenario: Think tag spans multiple chunks
+- **GIVEN** `filter_think_tags=True`
 - **GIVEN** 流式响应中 `<think>` 和 `</think>` 分布在不同 chunk
 - **WHEN** 系统处理响应
 - **THEN** 系统正确识别跨 chunk 的标签
 - **AND** 完整过滤思考内容
 
 #### Scenario: Nested or malformed think tags
+- **GIVEN** `filter_think_tags=True`
 - **GIVEN** 响应包含嵌套或不完整的 think 标签
 - **WHEN** 系统处理响应
 - **THEN** 采用贪婪匹配策略
