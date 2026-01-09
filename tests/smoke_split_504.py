@@ -41,12 +41,10 @@ def main() -> int:
             api_key="",
             model="DeepSeek-V3.2-Instruct",
             timeout_seconds=1,
-            max_retries=0,
-            split_min_chars=10,
         )
 
         try:
-            _llm_process_chunk(cfg, "a\n\n" * 200)
+            _llm_process_chunk(cfg, "a\n\n" * 3000)
         except LLMError:
             pass
 

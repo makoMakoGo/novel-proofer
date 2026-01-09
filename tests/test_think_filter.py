@@ -6,6 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
+from novel_proofer.llm.client import _maybe_filter_think_tags
+from novel_proofer.llm.config import LLMConfig
 from novel_proofer.llm.think_filter import ThinkTagFilter, filter_think_tags
 
 
@@ -140,3 +142,37 @@ class TestFilterThinkTagsFunction:
         text = "start<think>thought1</think>middle<THINK>thought2</THINK>end"
         result = filter_think_tags(text)
         assert result == "startmiddleend"
+
+    def test_unclosed_think_tag_filters_trailing_content(self):
+        text = "prefix<think>never closed\nVISIBLE"
+        result = filter_think_tags(text)
+        assert result == "prefix"
+
+
+
+class TestMaybeFilterThinkTags:
+    def test_unclosed_returns_raw_stripped_tags(self):
+        cfg = LLMConfig(filter_think_tags=True)
+        raw = "before<think>no close\nAFTER"
+        assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 1000) == "beforeno close\nAFTER"
+
+    def test_balanced_filters(self):
+        cfg = LLMConfig(filter_think_tags=True)
+        raw = "A<think>hidden</think>B"
+        assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 10) == "AB"
+
+    def test_balanced_filters_can_fall_back_to_stripping(self):
+        cfg = LLMConfig(filter_think_tags=True)
+        raw = "A<think>hidden</think>B"
+        assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 10_000) == "AhiddenB"
+
+    def test_disabled_returns_raw(self):
+        cfg = LLMConfig(filter_think_tags=False)
+        raw = "A<think>hidden</think>B"
+        assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 1000) == raw
+
+    def test_low_output_ratio_falls_back_to_stripping_tags(self):
+        cfg = LLMConfig(filter_think_tags=True)
+        raw = "<think>hidden</think>VISIBLE"
+        # Simulate a filter bug/edge where output becomes too small vs input.
+        assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 10_000) == "hiddenVISIBLE"

@@ -18,6 +18,10 @@ class ChunkStatus:
     last_error_message: str | None = None
     splits: int = 0
 
+    # Diagnostics (optional)
+    input_chars: int | None = None
+    output_chars: int | None = None
+
 
 @dataclass
 class JobStatus:
@@ -145,6 +149,13 @@ class JobStore:
                 st.finished_at = time.time()
 
             return True
+
+    def delete(self, job_id: str) -> bool:
+        with self._lock:
+            existed = job_id in self._jobs
+            self._jobs.pop(job_id, None)
+            self._cancelled.discard(job_id)
+            return existed
 
     def is_cancelled(self, job_id: str) -> bool:
         with self._lock:

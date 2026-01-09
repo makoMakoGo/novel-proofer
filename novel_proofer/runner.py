@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import os
+import shutil
 import time
+import traceback
+import uuid
 from pathlib import Path
 
 from novel_proofer.formatting.chunking import chunk_by_lines
@@ -13,6 +17,8 @@ from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta
 from novel_proofer.llm.config import LLMConfig
 
+_DEFAULT_SPLIT_MIN_CHARS = 1_500
+
 
 def _merge_stats(dst: dict[str, int], src: dict[str, int]) -> None:
     for k, v in src.items():
@@ -21,9 +27,19 @@ def _merge_stats(dst: dict[str, int], src: dict[str, int]) -> None:
 
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    # Use a unique temp name to avoid cross-thread collisions.
+    tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
     tmp.write_text(content, encoding="utf-8")
     tmp.replace(path)
+
+
+def _best_effort_cleanup_work_dir(job_id: str, work_dir: Path) -> None:
+    try:
+        if work_dir.exists():
+            shutil.rmtree(work_dir)
+            GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir", 1)
+    except Exception:
+        GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_error", 1)
 
 
 def _chunk_pre_path(work_dir: Path, index: int) -> Path:
@@ -36,7 +52,8 @@ def _chunk_out_path(work_dir: Path, index: int) -> Path:
 
 def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_suffix(out_path.suffix + f".{os.getpid()}.tmp")
+    # Use a unique temp name to avoid cross-thread collisions.
+    tmp = out_path.with_suffix(out_path.suffix + f".{uuid.uuid4().hex}.tmp")
     with tmp.open("w", encoding="utf-8", newline="") as f:
         for i in range(total_chunks):
             f.write(_chunk_out_path(work_dir, i).read_text(encoding="utf-8"))
@@ -90,12 +107,35 @@ def _llm_process_chunk(cfg: LLMConfig, chunk: str, *, job_id: str | None = None,
             GLOBAL_JOBS.add_retry(job_id, chunk_index, 1, last_code, last_msg)
 
         try:
-            out, retries, last_code, last_msg = call_llm_text_resilient_with_meta(cfg, piece, on_retry=on_retry)
+            should_stop_fn = None
+            if job_id is not None:
+                def _should_stop() -> bool:
+                    return GLOBAL_JOBS.is_cancelled(job_id)
+                should_stop_fn = _should_stop
+            out, retries, last_code, last_msg = call_llm_text_resilient_with_meta(
+                cfg,
+                piece,
+                should_stop=should_stop_fn,
+                on_retry=on_retry,
+            )
             if job_id is not None and chunk_index is not None and retries > retry_count:
                 GLOBAL_JOBS.add_retry(job_id, chunk_index, retries - retry_count, last_code, last_msg)
 
             if job_id is not None and GLOBAL_JOBS.is_cancelled(job_id):
                 return ""
+
+            in_trim = len(piece.strip())
+            out_trim = len(out.strip())
+            if in_trim > 0 and out_trim == 0:
+                raise LLMError(
+                    "LLM output empty; likely token-limit/stream-parse/think-filter issue",
+                    status_code=None,
+                )
+            if in_trim >= 200 and out_trim < max(200, int(in_trim * 0.2)):
+                raise LLMError(
+                    f"LLM output too short (in={in_trim}, out={out_trim}); likely token-limit/stream-parse issue",
+                    status_code=None,
+                )
 
             out_parts.append(out)
             continue
@@ -104,7 +144,7 @@ def _llm_process_chunk(cfg: LLMConfig, chunk: str, *, job_id: str | None = None,
                 return ""
 
             # Automatic split on transient/timeouts or 504/503 etc.
-            can_split = len(piece) > max(1000, int(cfg.split_min_chars))
+            can_split = len(piece) > max(1000, _DEFAULT_SPLIT_MIN_CHARS)
             retryable = (e.status_code in {502, 503, 504, 408, 429, 500} or e.status_code is None)
             if can_split and retryable:
                 a, b = _split_text_in_half(piece)
@@ -134,6 +174,65 @@ def _count_done_chunks(job_id: str) -> int:
     return sum(1 for c in st.chunk_statuses if c.state == "done")
 
 
+def _llm_request_snapshot(cfg: LLMConfig, input_text: str) -> dict:
+    provider = (cfg.provider or "").strip().lower()
+
+    if provider == "gemini":
+        url = ""
+        if cfg.base_url and cfg.model:
+            url = cfg.base_url.rstrip("/") + f"/v1beta/models/{cfg.model}:streamGenerateContent?alt=sse"
+
+        payload: dict = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": cfg.system_prompt + "\n\n" + input_text},
+                    ],
+                }
+            ],
+            "generationConfig": {"temperature": cfg.temperature},
+        }
+        if cfg.extra_params:
+            payload.update(cfg.extra_params)
+
+        return {"provider": provider, "url": url, "payload": payload}
+
+    # Default to OpenAI-compatible.
+    if provider != "openai_compatible":
+        provider = "openai_compatible"
+
+    url = ""
+    if cfg.base_url:
+        url = cfg.base_url.rstrip("/") + "/v1/chat/completions"
+
+    payload = {
+        "model": cfg.model,
+        "temperature": cfg.temperature,
+        "stream": True,
+        "messages": [
+            {"role": "system", "content": cfg.system_prompt},
+            {"role": "user", "content": input_text},
+        ],
+    }
+    if cfg.extra_params:
+        payload.update(cfg.extra_params)
+
+    return {"provider": provider, "url": url, "payload": payload}
+
+
+def _chunk_req_path(work_dir: Path, index: int, ts_ms: int) -> Path:
+    return work_dir / "req" / f"{index:06d}_{ts_ms}.json"
+
+
+def _chunk_resp_path(work_dir: Path, index: int, ts_ms: int) -> Path:
+    return work_dir / "resp" / f"{index:06d}_{ts_ms}.txt"
+
+
+def _chunk_err_path(work_dir: Path, index: int, ts_ms: int) -> Path:
+    return work_dir / "error" / f"{index:06d}_{ts_ms}.json"
+
+
 def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None:
     if GLOBAL_JOBS.is_cancelled(job_id):
         return
@@ -146,20 +245,48 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         finished_at=None,
         last_error_code=None,
         last_error_message=None,
+        input_chars=None,
+        output_chars=None,
     )
+
+    ts_ms = int(time.time() * 1000)
 
     try:
         pre = _chunk_pre_path(work_dir, index).read_text(encoding="utf-8")
+        _atomic_write_text(
+            _chunk_req_path(work_dir, index, ts_ms),
+            json.dumps(_llm_request_snapshot(llm, pre), ensure_ascii=False, indent=2) + "\n",
+        )
+        GLOBAL_JOBS.update_chunk(job_id, index, input_chars=len(pre), output_chars=None)
         out = _llm_process_chunk(llm, pre, job_id=job_id, chunk_index=index)
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
 
+        GLOBAL_JOBS.update_chunk(job_id, index, output_chars=len(out))
+
+        _atomic_write_text(_chunk_resp_path(work_dir, index, ts_ms), out)
         _atomic_write_text(_chunk_out_path(work_dir, index), out)
         GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time())
         GLOBAL_JOBS.add_stat(job_id, "llm_chunks", 1)
     except LLMError as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
+        _atomic_write_text(
+            _chunk_err_path(work_dir, index, ts_ms),
+            json.dumps(
+                {
+                    "type": "LLMError",
+                    "job_id": job_id,
+                    "chunk_index": index,
+                    "status_code": e.status_code,
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        )
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
@@ -171,6 +298,21 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
+        _atomic_write_text(
+            _chunk_err_path(work_dir, index, ts_ms),
+            json.dumps(
+                {
+                    "type": type(e).__name__,
+                    "job_id": job_id,
+                    "chunk_index": index,
+                    "message": str(e),
+                    "traceback": traceback.format_exc(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        )
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
@@ -185,15 +327,37 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
     GLOBAL_JOBS.update(job_id, state="running", started_at=time.time(), finished_at=None, error=None)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = {ex.submit(_llm_worker, job_id, i, work_dir, llm): i for i in indices}
-        for f in concurrent.futures.as_completed(futures):
+        # Submit gradually so cancel can actually stop launching new work.
+        pending_indices = list(indices)
+        in_flight: dict[concurrent.futures.Future, int] = {}
+
+        while pending_indices or in_flight:
             if GLOBAL_JOBS.is_cancelled(job_id):
                 break
-            try:
-                f.result()
-            except Exception:
-                # Worker is responsible for updating chunk status.
-                pass
+
+            # Fill up the worker pool.
+            while pending_indices and len(in_flight) < max_workers and not GLOBAL_JOBS.is_cancelled(job_id):
+                i = pending_indices.pop(0)
+                fut = ex.submit(_llm_worker, job_id, i, work_dir, llm)
+                in_flight[fut] = i
+
+            if not in_flight:
+                break
+
+            done, _ = concurrent.futures.wait(in_flight.keys(), timeout=0.1, return_when=concurrent.futures.FIRST_COMPLETED)
+            for f in done:
+                in_flight.pop(f, None)
+                try:
+                    f.result()
+                except Exception:
+                    # Worker is responsible for updating chunk status.
+                    pass
+                GLOBAL_JOBS.update(job_id, done_chunks=_count_done_chunks(job_id))
+
+        # If cancelled, do not keep queued chunks as 'processing'.
+        if GLOBAL_JOBS.is_cancelled(job_id):
+            for i in pending_indices:
+                GLOBAL_JOBS.update_chunk(job_id, i, state="pending")
             GLOBAL_JOBS.update(job_id, done_chunks=_count_done_chunks(job_id))
 
 
@@ -278,6 +442,7 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
             stats=final_stats,
             done_chunks=total,
         )
+        _best_effort_cleanup_work_dir(job_id, work_dir)
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
@@ -319,6 +484,8 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
             finished_at=None,
             last_error_code=None,
             last_error_message=None,
+            input_chars=None,
+            output_chars=None,
         )
 
     _run_llm_for_indices(job_id, failed, work_dir, llm)
@@ -349,3 +516,4 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
         finished_at=time.time(),
         done_chunks=total,
     )
+    _best_effort_cleanup_work_dir(job_id, work_dir)

@@ -22,11 +22,6 @@ class LLMConfig:
     # Concurrency
     max_concurrency: int = 20
 
-    # Resilience
-    max_retries: int = 2
-    retry_backoff_seconds: float = 1.0
-    split_min_chars: int = 6_000
-
     # Streaming & Think tag filtering
     extra_params: dict | None = None  # Optional JSON passthrough for thinking config etc.
     filter_think_tags: bool = True  # Filter <think>...</think> tags from response

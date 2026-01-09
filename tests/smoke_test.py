@@ -62,7 +62,7 @@ def _post_format_stats(port: int, text: str) -> dict:
     boundary = "----npboundary1234"
     fields = {
         "return": "stats",
-        "max_chunk_chars": "60000",
+        "max_chunk_chars": "4000",
         "paragraph_indent": "1",
         "normalize_ellipsis": "1",
         "normalize_em_dash": "1",

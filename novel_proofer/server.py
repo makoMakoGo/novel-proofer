@@ -15,6 +15,7 @@ import html
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 import urllib.parse
@@ -41,6 +42,8 @@ OUTPUT_DIR = WORKDIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 JOBS_DIR = OUTPUT_DIR / ".jobs"
 JOBS_DIR.mkdir(exist_ok=True)
+
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
 
 def _read_template(name: str) -> str:
@@ -166,6 +169,46 @@ def _parse_bool(value: str | None, default_value: bool) -> bool:
     return default_value
 
 
+def _parse_json_object(value: object | None) -> dict | None:
+    """Parse optional JSON object from either a dict or a JSON string."""
+
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        try:
+            obj = json.loads(s)
+        except Exception as e:
+            raise ValueError("llm_extra_params must be a valid JSON object") from e
+        if not isinstance(obj, dict):
+            raise ValueError("llm_extra_params must be a JSON object")
+        return obj
+    raise ValueError("llm_extra_params must be a JSON object")
+
+
+def _cleanup_job_dir(job_id: str) -> bool:
+    """Delete output/.jobs/<job_id>/ directory (best-effort, safe-guarded)."""
+
+    job_id = (job_id or "").strip()
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("invalid job_id")
+
+    root = JOBS_DIR.resolve()
+    target = (JOBS_DIR / job_id).resolve()
+    if target == root or root not in target.parents:
+        raise ValueError("invalid job_id")
+
+    if not target.exists():
+        return False
+
+    shutil.rmtree(target)
+    return True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "NovelProof/0.1"
 
@@ -200,8 +243,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _send_json(self, payload: dict, status: int = 200) -> None:
-        data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    def _send_json(self, payload: dict, status: int = 200, *, indent: int | None = None) -> None:
+        if indent is None:
+            data = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        else:
+            data = json.dumps(payload, ensure_ascii=False, indent=indent).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
@@ -224,6 +270,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/jobs/status":
             job_id = (qs.get("job_id") or [""])[0]
+            include_chunks = _parse_bool((qs.get("include_chunks") or ["1"])[0], True)
+            chunk_filter = str((qs.get("chunk_filter") or ["all"])[0]).strip().lower()
+            chunk_limit = _parse_int((qs.get("chunk_limit") or ["0"])[0], 0)
+            chunk_offset = _parse_int((qs.get("chunk_offset") or ["0"])[0], 0)
+            chunk_limit = max(0, chunk_limit)
+            chunk_offset = max(0, chunk_offset)
+            allowed_filters = {"all", "pending", "processing", "retrying", "done", "error"}
+            if chunk_filter not in allowed_filters:
+                chunk_filter = "all"
             st = GLOBAL_JOBS.get(job_id)
             if st is None:
                 self._send_json({"error": "job not found"}, status=404)
@@ -231,7 +286,7 @@ class Handler(BaseHTTPRequestHandler):
             pct = 0
             if st.total_chunks > 0:
                 pct = int((st.done_chunks / st.total_chunks) * 100)
-            self._send_json({
+            payload: dict = {
                 "job_id": st.job_id,
                 "state": st.state,
                 "percent": pct,
@@ -246,20 +301,54 @@ class Handler(BaseHTTPRequestHandler):
                 "last_retry_count": st.last_retry_count,
                 "stats": st.stats,
                 "error": st.error,
-                "chunks": [
-                    {
-                        "index": c.index,
-                        "state": c.state,
-                        "started_at": c.started_at,
-                        "finished_at": c.finished_at,
-                        "retries": c.retries,
-                        "splits": c.splits,
-                        "last_error_code": c.last_error_code,
-                        "last_error_message": c.last_error_message,
-                    }
-                    for c in st.chunk_statuses
-                ],
-            })
+            }
+
+            if include_chunks:
+                chunk_counts: dict[str, int] = {}
+                chunks: list[dict] = []
+                matched = 0
+                has_more = False
+
+                for c in st.chunk_statuses:
+                    chunk_counts[c.state] = chunk_counts.get(c.state, 0) + 1
+
+                    if chunk_filter != "all" and c.state != chunk_filter:
+                        continue
+
+                    if matched < chunk_offset:
+                        matched += 1
+                        continue
+
+                    if chunk_limit > 0 and len(chunks) >= chunk_limit:
+                        has_more = True
+                        matched += 1
+                        continue
+
+                    chunks.append(
+                        {
+                            "index": c.index,
+                            "state": c.state,
+                            "started_at": c.started_at,
+                            "finished_at": c.finished_at,
+                            "retries": c.retries,
+                            "splits": c.splits,
+                            "input_chars": c.input_chars,
+                            "output_chars": c.output_chars,
+                            "last_error_code": c.last_error_code,
+                            "last_error_message": c.last_error_message,
+                        }
+                    )
+                    matched += 1
+
+                payload["chunk_counts"] = chunk_counts
+                payload["chunk_filter"] = chunk_filter
+                payload["chunk_limit"] = chunk_limit
+                payload["chunk_offset"] = chunk_offset
+                payload["chunks_total_matching"] = matched
+                payload["chunks_has_more"] = has_more
+                payload["chunks"] = chunks
+
+            self._send_json(payload)
             return
 
         if path == "/api/jobs/download":
@@ -272,7 +361,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        if path not in {"/format", "/api/jobs/create", "/api/jobs/cancel", "/api/jobs/retry_failed"}:
+        if path not in {"/format", "/api/jobs/create", "/api/jobs/cancel", "/api/jobs/retry_failed", "/api/jobs/cleanup"}:
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
             return
 
@@ -308,6 +397,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"error": "job is cancelled"}, status=409)
                 return
 
+            try:
+                extra_params = _parse_json_object(payload.get("llm_extra_params"))
+            except ValueError as e:
+                self._send_json({"error": str(e)}, status=400)
+                return
+
             llm = LLMConfig(
                 enabled=True,
                 provider=str(payload.get("llm_provider") or "openai_compatible").strip(),
@@ -317,6 +412,8 @@ class Handler(BaseHTTPRequestHandler):
                 temperature=_parse_float(payload.get("llm_temperature"), 0.0),
                 timeout_seconds=_parse_float(payload.get("llm_timeout_seconds"), 180.0),
                 max_concurrency=_parse_int(str(payload.get("llm_max_concurrency") or ""), 20),
+                extra_params=extra_params,
+                filter_think_tags=_parse_bool(payload.get("llm_filter_think_tags"), True),
             )
 
             t = threading.Thread(
@@ -326,6 +423,36 @@ class Handler(BaseHTTPRequestHandler):
             )
             t.start()
             self._send_json({"ok": True})
+            return
+
+        if path == "/api/jobs/cleanup":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            body = self.rfile.read(length) if length > 0 else b""
+            try:
+                payload = json.loads(body.decode("utf-8", errors="replace") or "{}")
+            except Exception:
+                payload = {}
+
+            job_id = str(payload.get("job_id") or "").strip()
+            st = GLOBAL_JOBS.get(job_id)
+            if st is not None and st.state in {"queued", "running"}:
+                self._send_json({"error": "job is running"}, status=409)
+                return
+            if st is not None and st.state == "cancelled":
+                self._send_json({"error": "job is cancelled"}, status=409)
+                return
+
+            try:
+                removed = _cleanup_job_dir(job_id)
+            except ValueError as e:
+                self._send_json({"error": str(e)}, status=400)
+                return
+            except Exception as e:
+                self._send_json({"error": str(e)}, status=500)
+                return
+
+            deleted = GLOBAL_JOBS.delete(job_id)
+            self._send_json({"ok": True, "removed": removed, "job_deleted": deleted})
             return
 
         content_type = self.headers.get("Content-Type", "")
@@ -344,7 +471,10 @@ class Handler(BaseHTTPRequestHandler):
 
         body = self.rfile.read(length)
         fields, files = _parse_multipart_form_data(content_type, body)
-        print(f"[DEBUG] fields={fields}", flush=True)
+        safe_fields = dict(fields)
+        if safe_fields.get("llm_api_key"):
+            safe_fields["llm_api_key"] = "***"
+        print(f"[DEBUG] fields={safe_fields}", flush=True)
         if not files:
             self.send_error(HTTPStatus.BAD_REQUEST, "No file uploaded")
             return
@@ -352,8 +482,13 @@ class Handler(BaseHTTPRequestHandler):
         uploaded = files[0]
         input_text = _decode_text(uploaded.content)
 
+        max_chunk_chars = _parse_int(fields.get("max_chunk_chars"), 2_000)
+        if max_chunk_chars > 4_000:
+            self.send_error(HTTPStatus.BAD_REQUEST, "max_chunk_chars must be <= 4000")
+            return
+
         cfg = FormatConfig(
-            max_chunk_chars=_parse_int(fields.get("max_chunk_chars"), 2_000),
+            max_chunk_chars=max_chunk_chars,
             paragraph_indent=_parse_bool(fields.get("paragraph_indent"), False),
             indent_with_fullwidth_space=_parse_bool(fields.get("indent_with_fullwidth_space"), False),
             normalize_blank_lines=_parse_bool(fields.get("normalize_blank_lines"), False),
@@ -365,27 +500,38 @@ class Handler(BaseHTTPRequestHandler):
             normalize_quotes=_parse_bool(fields.get("normalize_quotes"), False),
         )
 
+        try:
+            extra_params = _parse_json_object(fields.get("llm_extra_params"))
+        except ValueError as e:
+            self.send_error(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
         llm = LLMConfig(
             enabled=_parse_bool(fields.get("llm_enabled"), False),
             provider=(fields.get("llm_provider") or "openai_compatible").strip(),
             base_url=(fields.get("llm_base_url") or "").strip(),
             api_key=(fields.get("llm_api_key") or "").strip(),
             model=(fields.get("llm_model") or "").strip(),
-            temperature=float(fields.get("llm_temperature") or 0.0),
-            timeout_seconds=float(fields.get("llm_timeout_seconds") or 180.0),
-            max_concurrency=int(fields.get("llm_max_concurrency") or 20),
+            temperature=_parse_float(fields.get("llm_temperature"), 0.0),
+            timeout_seconds=_parse_float(fields.get("llm_timeout_seconds"), 180.0),
+            max_concurrency=_parse_int(fields.get("llm_max_concurrency"), 20),
+            extra_params=extra_params,
+            filter_think_tags=_parse_bool(fields.get("llm_filter_think_tags"), True),
         )
 
         out_name = _derive_output_filename(uploaded.filename, fields.get("suffix") or "_rev")
 
         if path == "/api/jobs/create":
             job = GLOBAL_JOBS.create(uploaded.filename, out_name, total_chunks=0)
-            output_path = OUTPUT_DIR / out_name
-            # Avoid accidental overwrite.
-            if output_path.exists():
-                output_path = OUTPUT_DIR / f"{job.job_id}_{out_name}"
+            # Always include job_id to avoid collisions across concurrent runs.
+            output_path = OUTPUT_DIR / f"{job.job_id}_{out_name}"
             work_dir = JOBS_DIR / job.job_id
-            GLOBAL_JOBS.update(job.job_id, output_path=str(output_path), work_dir=str(work_dir))
+            GLOBAL_JOBS.update(
+                job.job_id,
+                output_filename=output_path.name,
+                output_path=str(output_path),
+                work_dir=str(work_dir),
+            )
 
             t = threading.Thread(
                 target=run_job,
@@ -396,7 +542,7 @@ class Handler(BaseHTTPRequestHandler):
 
             self._send_json({
                 "job_id": job.job_id,
-                "output_filename": out_name,
+                "output_filename": output_path.name,
                 "output_path": str(output_path),
             })
             return

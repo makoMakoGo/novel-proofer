@@ -30,6 +30,8 @@
     label { display: block; font-size: 13px; color: var(--text-muted); margin: 20px 0 8px; font-weight: 500; }
     input[type="text"], input[type="number"] { width: 240px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
     input[type="text"]:focus, input[type="number"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
+    textarea { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; transition: border-color .15s, box-shadow .15s; resize: vertical; min-height: 110px; }
+    textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
     input[type="file"] { width: 100%; padding: 12px; border: 2px dashed var(--border); border-radius: var(--radius-sm); background: var(--input-bg); cursor: pointer; transition: border-color .15s; }
     input[type="file"]:hover { border-color: #ccc; }
 
@@ -89,6 +91,10 @@
     .status-error { background: #fef2f2; color: #ef4444; }
     .status-retrying { background: #fffbeb; color: #f59e0b; }
     .error-msg { color: #ef4444; font-size: 12px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .error-details { font-size: 12px; }
+    .error-summary { cursor: pointer; color: #ef4444; }
+    .error-full { color: #ef4444; white-space: pre-wrap; word-break: break-word; margin-top: 6px; }
+
 
     @media (max-width: 600px) {
       body { padding: 20px 16px; }
@@ -124,7 +130,7 @@
           </div>
           <div>
             <label>分片大小（字符数）</label>
-            <input name="max_chunk_chars" type="number" min="2000" step="2000" value="2000" />
+            <input name="max_chunk_chars" type="number" min="2000" max="4000" step="2000" value="2000" />
           </div>
         </div>
 
@@ -180,11 +186,22 @@
             <input name="llm_max_concurrency" type="number" min="1" step="1" value="20" />
           </div>
         </div>
+        <div class="row">
+          <div>
+            <input type="hidden" name="llm_filter_think_tags" value="0" />
+            <label><input type="checkbox" name="llm_filter_think_tags" value="1" checked />过滤 &lt;think&gt;…&lt;/think&gt;（默认）</label>
+          </div>
+        </div>
+        <div>
+          <label>额外参数（JSON，可选，透传给 LLM）</label>
+          <textarea name="llm_extra_params" placeholder='例如：{"max_tokens": 4096}'></textarea>
+        </div>
 
         <div class="btns">
           <button type="submit" id="btnStart">开始校对</button>
           <button type="button" class="ghost" id="btnCancel" style="display:none" disabled>取消/暂停</button>
           <button type="button" class="ghost" id="btnRetry" style="display:none" disabled>重试失败部分</button>
+          <button type="button" class="ghost" id="btnCleanup" style="display:none" disabled>清理中间文件</button>
         </div>
 
         <div class="progress" id="progress" style="display:none">
@@ -200,8 +217,9 @@
         </div>
 
         <div class="hint">
-          <div>默认启用 LLM；会按“分片大小”分片并发处理，可看到进度。</div>
+          <div>默认启用 LLM；会按“分片大小”分片并发处理（并发表示同时在飞请求数，不是一次处理总字数）。</div>
           <div>如果部分分片失败，可修改 LLM 配置后点击“重试失败部分”。</div>
+          <div>如遇到 token limit / 输出过短，可在“额外参数”里尝试设置输出上限（例如 <code>{"max_tokens": 4096}</code>；不同服务参数名可能不同）。</div>
           <div>完成后结果会写入项目 <code>output/</code> 目录。</div>
         </div>
         </form>
@@ -226,11 +244,12 @@
           <table class="chunks-table">
             <thead>
               <tr>
-                <th>#</th>
-                <th>状态</th>
-                <th>重试</th>
-                <th>拆分</th>
-                <th>错误信息</th>
+          <th>#</th>
+          <th>状态</th>
+          <th>重试</th>
+          <th>拆分</th>
+          <th>输入/输出</th>
+          <th>错误信息</th>
               </tr>
             </thead>
             <tbody id="chunksBody"></tbody>
@@ -257,6 +276,7 @@
     const btnStart = document.getElementById('btnStart');
     const btnCancel = document.getElementById('btnCancel');
     const btnRetry = document.getElementById('btnRetry');
+    const btnCleanup = document.getElementById('btnCleanup');
 
     // Debug tab elements
     const chunksBody = document.getElementById('chunksBody');
@@ -270,16 +290,26 @@
     let currentJobId = null;
     let currentJobState = null;
     let currentFilter = 'all';
+    let activeTab = 'progress';
+    let forceChunksFetch = false;
     let chunksData = [];
+    let chunkCounts = null;
+    let totalChunksFromServer = 0;
+    let chunksFetchInFlight = false;
 
     // Tab switching
     const tabBtns = document.querySelectorAll('.tab-btn');
     const tabContents = document.querySelectorAll('.tab-content');
 
     function switchTab(tabName) {
+      activeTab = tabName;
       tabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabName));
       tabContents.forEach(content => content.classList.toggle('active', content.id === 'tab-' + tabName));
       localStorage.setItem('activeTab', tabName);
+      if (tabName === 'debug' && currentJobId) {
+        forceChunksFetch = true;
+        refreshChunksNow(currentJobId);
+      }
     }
 
     tabBtns.forEach(btn => {
@@ -288,7 +318,7 @@
 
     // Restore tab from localStorage
     const savedTab = localStorage.getItem('activeTab');
-    if (savedTab) switchTab(savedTab);
+    switchTab(savedTab || 'progress');
 
     // Filter buttons
     const filterBtns = document.querySelectorAll('.filter-btn');
@@ -296,7 +326,12 @@
       btn.addEventListener('click', () => {
         currentFilter = btn.dataset.filter;
         filterBtns.forEach(b => b.classList.toggle('active', b === btn));
-        renderChunksTable();
+        if (activeTab === 'debug' && currentJobId) {
+          forceChunksFetch = true;
+          refreshChunksNow(currentJobId);
+        } else {
+          renderChunksTable();
+        }
       });
     });
 
@@ -312,55 +347,82 @@
       if (!chunksData || chunksData.length === 0) {
         noChunksHint.style.display = 'block';
         chunksTableWrap.style.display = 'none';
+        if (currentJobId) {
+          if (currentFilter === 'all') {
+            noChunksHint.textContent = '暂无分片数据（可切换到调试信息页以加载）。';
+          } else {
+            noChunksHint.textContent = '当前过滤条件下无匹配分片。';
+          }
+        } else {
+          noChunksHint.textContent = '暂无分片数据，请先开始校对任务。';
+        }
         return;
       }
 
       noChunksHint.style.display = 'none';
       chunksTableWrap.style.display = 'block';
 
-      let filtered = chunksData;
-      if (currentFilter === 'error') {
-        filtered = chunksData.filter(c => c.state === 'error');
-      } else if (currentFilter === 'retrying') {
-        filtered = chunksData.filter(c => c.state === 'retrying');
-      }
+       const rows = chunksData.slice(0, 500).map(c => {
+         let inOut = '-';
+         if (c.input_chars != null && c.output_chars != null) inOut = `${c.input_chars}/${c.output_chars}`;
+         else if (c.input_chars != null) inOut = `${c.input_chars}/-`;
+         const errFull = c.last_error_message ? String(c.last_error_message) : '';
+         const errTitle = errFull.replace(/"/g, '&quot;');
+         const errMsg = errFull ? `<details class="error-details"><summary class="error-summary">${errFull.slice(0, 60)}</summary><div class="error-full">${errTitle}</div></details>` : '-';
+         return `<tr>
+           <td>${c.index}</td>
+           <td>${getStatusBadge(c.state)}</td>
+           <td>${c.retries}</td>
+           <td>${c.splits}</td>
+           <td>${inOut}</td>
+           <td>${errMsg}</td>
+         </tr>`;
+       }).join('');
 
-      const rows = filtered.slice(0, 500).map(c => {
-        const errMsg = c.last_error_message ? `<span class="error-msg" title="${String(c.last_error_message).replace(/"/g, '&quot;')}">${String(c.last_error_message).slice(0, 60)}</span>` : '-';
-        return `<tr>
-          <td>${c.index}</td>
-          <td>${getStatusBadge(c.state)}</td>
-          <td>${c.retries}</td>
-          <td>${c.splits}</td>
-          <td>${errMsg}</td>
-        </tr>`;
-      }).join('');
 
       chunksBody.innerHTML = rows;
     }
 
     function updateStats() {
-      if (!chunksData || chunksData.length === 0) {
-        statTotal.textContent = '0';
-        statDone.textContent = '0';
-        statError.textContent = '0';
-        statRetrying.textContent = '0';
-        return;
-      }
-      statTotal.textContent = chunksData.length;
-      statDone.textContent = chunksData.filter(c => c.state === 'done').length;
-      statError.textContent = chunksData.filter(c => c.state === 'error').length;
-      statRetrying.textContent = chunksData.filter(c => c.state === 'retrying').length;
+      const counts = chunkCounts || {};
+      statTotal.textContent = String(totalChunksFromServer || 0);
+      statDone.textContent = String(counts.done || 0);
+      statError.textContent = String(counts.error || 0);
+      statRetrying.textContent = String(counts.retrying || 0);
     }
 
     function showChunks(data) {
-      if (!data || !Array.isArray(data.chunks)) {
-        chunksData = [];
-      } else {
-        chunksData = data.chunks;
-      }
+      if (!data || !Array.isArray(data.chunks)) return;
+
+      chunksData = data.chunks;
+      chunkCounts = data.chunk_counts || null;
+      totalChunksFromServer = Number(data.total_chunks || 0);
       updateStats();
       renderChunksTable();
+    }
+
+    async function refreshChunksNow(jobId) {
+      if (!jobId) return;
+      if (chunksFetchInFlight) return;
+      chunksFetchInFlight = true;
+      try {
+        const q = new URLSearchParams({ job_id: jobId, include_chunks: '1' });
+        q.set('chunk_filter', currentFilter);
+        q.set('chunk_limit', '500');
+        q.set('chunk_offset', '0');
+
+        const res = await fetch(`api/jobs/status?${q.toString()}`);
+        const data = await res.json();
+        if (!res.ok) {
+          show(data);
+          return;
+        }
+        showChunks(data);
+      } catch (e) {
+        show(String(e));
+      } finally {
+        chunksFetchInFlight = false;
+      }
     }
 
     function show(obj) {
@@ -384,12 +446,33 @@
       if (busy) {
         btnRetry.style.display = 'none';
         btnRetry.disabled = true;
+        btnCleanup.style.display = 'none';
+        btnCleanup.disabled = true;
       }
     }
 
     function setRetryVisible(visible) {
       btnRetry.style.display = visible ? 'inline-block' : 'none';
       btnRetry.disabled = !visible;
+    }
+
+    function setCleanupVisible(visible) {
+      btnCleanup.style.display = visible ? 'inline-block' : 'none';
+      btnCleanup.disabled = !visible;
+    }
+
+    function parseExtraParamsFromFormData(fd) {
+      const raw = String(fd.get('llm_extra_params') || '').trim();
+      if (!raw) return { ok: true, value: null };
+      try {
+        const obj = JSON.parse(raw);
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+          return { ok: false, error: '额外参数必须是 JSON 对象（例如 {"max_tokens": 4096}）。' };
+        }
+        return { ok: true, value: obj };
+      } catch (e) {
+        return { ok: false, error: '额外参数 JSON 无效，请检查括号/引号/逗号。' };
+      }
     }
 
     async function requestCancel(jobId) {
@@ -412,6 +495,7 @@
       show('已取消。');
       setBusy(false);
       setRetryVisible(false);
+      setCleanupVisible(false);
       await requestCancel(jobId);
     });
 
@@ -419,6 +503,10 @@
       if (!jobId) return { ok: false, error: 'missing job_id' };
 
       const fd = new FormData(form);
+      const extra = parseExtraParamsFromFormData(fd);
+      if (!extra.ok) return { ok: false, error: extra.error };
+      const filterThinkTags = !!document.querySelector('input[type="checkbox"][name="llm_filter_think_tags"]')?.checked;
+
       const payload = {
         job_id: jobId,
         llm_provider: fd.get('llm_provider') || 'openai_compatible',
@@ -428,6 +516,8 @@
         llm_temperature: Number(fd.get('llm_temperature') || 0),
         llm_timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
         llm_max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
+        llm_filter_think_tags: filterThinkTags,
+        llm_extra_params: extra.value,
       };
 
       try {
@@ -450,27 +540,80 @@
       show('准备重试失败分片…');
       setBusy(true);
       setRetryVisible(false);
+      setCleanupVisible(false);
       const r = await requestRetryFailed(jobId);
       if (!r.ok) {
         show(r.error);
         setBusy(false);
         setRetryVisible(true);
+        setCleanupVisible(true);
         return;
       }
       await poll(jobId);
+    });
+
+    async function requestCleanup(jobId) {
+      if (!jobId) return { ok: false, error: 'missing job_id' };
+      try {
+        const res = await fetch('api/jobs/cleanup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_id: jobId }),
+        });
+        const data = await res.json();
+        if (!res.ok) return { ok: false, error: data };
+        return { ok: true, data };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }
+
+    btnCleanup.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      const ok = confirm('确认清理中间文件？清理后将无法继续重试失败部分。');
+      if (!ok) return;
+
+      btnCleanup.disabled = true;
+      show('正在清理中间文件…');
+      const r = await requestCleanup(jobId);
+      if (!r.ok) {
+        show(r.error);
+        btnCleanup.disabled = false;
+        return;
+      }
+
+      show('已清理中间文件。');
+      setRetryVisible(false);
+      setCleanupVisible(false);
+      currentJobId = null;
+      currentJobState = null;
+      chunksData = [];
+      updateStats();
+      renderChunksTable();
     });
 
     async function poll(jobId) {
       while (true) {
         if (!currentJobId || currentJobId !== jobId) return;
 
-        const res = await fetch(`api/jobs/status?job_id=${encodeURIComponent(jobId)}`);
+        const wantChunks = (activeTab === 'debug') || forceChunksFetch;
+        forceChunksFetch = false;
+
+        const q = new URLSearchParams({ job_id: jobId, include_chunks: wantChunks ? '1' : '0' });
+        if (wantChunks) {
+          q.set('chunk_filter', currentFilter);
+          q.set('chunk_limit', '500');
+          q.set('chunk_offset', '0');
+        }
+
+        const res = await fetch(`api/jobs/status?${q.toString()}`);
         const data = await res.json();
         if (!res.ok) throw new Error(JSON.stringify(data));
 
         currentJobState = data.state;
         setProgress(data.done_chunks || 0, data.total_chunks || 0, data.state);
-        showChunks(data);
+        if (wantChunks) showChunks(data);
 
         if (data.state === 'done') {
           show(data.output_path ? `完成。已输出到：${data.output_path}` : '完成。已输出到项目 output/ 目录。');
@@ -478,6 +621,7 @@
           currentJobId = null;
           currentJobState = null;
           setRetryVisible(false);
+          setCleanupVisible(false);
           return;
         }
 
@@ -487,6 +631,7 @@
           currentJobId = null;
           currentJobState = null;
           setRetryVisible(false);
+          setCleanupVisible(false);
           return;
         }
 
@@ -494,6 +639,7 @@
           show(data.error || data);
           setBusy(false);
           setRetryVisible(true);
+          setCleanupVisible(true);
           return;
         }
 
@@ -507,8 +653,19 @@
       currentJobId = null;
       currentJobState = null;
       setRetryVisible(false);
+      setCleanupVisible(false);
 
       const fd = new FormData(form);
+      const extra = parseExtraParamsFromFormData(fd);
+      if (!extra.ok) {
+        show(extra.error);
+        return;
+      }
+      const maxChunkChars = Number(fd.get('max_chunk_chars') || 0);
+      if (!Number.isFinite(maxChunkChars) || maxChunkChars < 2000 || maxChunkChars > 4000) {
+        show('分片大小（字符数）必须在 2000-4000 之间。');
+        return;
+      }
       show('已提交，准备开始…');
       setProgress(0, 0, 'queued');
       setBusy(true);
