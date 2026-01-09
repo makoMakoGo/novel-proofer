@@ -114,11 +114,12 @@ class JobStore:
             st.last_retry_count += inc
             if last_error_code is not None:
                 st.last_error_code = last_error_code
-            if 0 <= index < len(st.chunk_statuses):
-                cs = st.chunk_statuses[index]
-                cs.retries += inc
-                cs.last_error_code = last_error_code
-                cs.last_error_message = last_error_message
+            if not (0 <= index < len(st.chunk_statuses)):
+                return
+            cs = st.chunk_statuses[index]
+            cs.retries += inc
+            cs.last_error_code = last_error_code
+            cs.last_error_message = last_error_message
 
     def add_stat(self, job_id: str, key: str, inc: int = 1) -> None:
         with self._lock:

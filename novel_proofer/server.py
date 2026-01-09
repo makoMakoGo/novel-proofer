@@ -25,7 +25,6 @@ from email.policy import default
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Iterable
 
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import GLOBAL_JOBS
@@ -144,8 +143,8 @@ def _parse_int(value: str | None, default_value: int) -> int:
     if value is None:
         return default_value
     try:
-        return int(str(value).strip())
-    except Exception:
+        return int(value.strip() if isinstance(value, str) else value)
+    except (ValueError, TypeError, AttributeError):
         return default_value
 
 
@@ -153,15 +152,15 @@ def _parse_float(value: str | None, default_value: float) -> float:
     if value is None:
         return default_value
     try:
-        return float(str(value).strip())
-    except Exception:
+        return float(value.strip() if isinstance(value, str) else value)
+    except (ValueError, TypeError, AttributeError):
         return default_value
 
 
 def _parse_bool(value: str | None, default_value: bool) -> bool:
     if value is None:
         return default_value
-    v = str(value).strip().lower()
+    v = (value.strip() if isinstance(value, str) else str(value)).lower()
     if v in {"1", "true", "yes", "on"}:
         return True
     if v in {"0", "false", "no", "off"}:
@@ -188,6 +187,16 @@ def _parse_json_object(value: object | None) -> dict | None:
             raise ValueError("llm_extra_params must be a JSON object")
         return obj
     raise ValueError("llm_extra_params must be a JSON object")
+
+
+def _read_json_body(handler: "Handler") -> dict:
+    """Read and parse JSON body from request, returning empty dict on failure."""
+    length = int(handler.headers.get("Content-Length", "0") or "0")
+    body = handler.rfile.read(length) if length > 0 else b""
+    try:
+        return json.loads(body.decode("utf-8", errors="replace") or "{}")
+    except json.JSONDecodeError:
+        return {}
 
 
 def _cleanup_job_dir(job_id: str) -> bool:
@@ -295,6 +304,7 @@ class Handler(BaseHTTPRequestHandler):
                 "finished_at": st.finished_at,
                 "input_filename": st.input_filename,
                 "output_filename": st.output_filename,
+                "output_path": st.output_path,
                 "total_chunks": st.total_chunks,
                 "done_chunks": st.done_chunks,
                 "last_error_code": st.last_error_code,
@@ -365,24 +375,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/jobs/cancel":
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            body = self.rfile.read(length) if length > 0 else b""
-            try:
-                payload = json.loads(body.decode("utf-8", errors="replace") or "{}")
-            except Exception:
-                payload = {}
+            payload = _read_json_body(self)
             job_id = str(payload.get("job_id") or "")
             ok = GLOBAL_JOBS.cancel(job_id)
             self._send_json({"ok": ok})
             return
 
         if path == "/api/jobs/retry_failed":
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            body = self.rfile.read(length) if length > 0 else b""
-            try:
-                payload = json.loads(body.decode("utf-8", errors="replace") or "{}")
-            except Exception:
-                payload = {}
+            payload = _read_json_body(self)
 
             job_id = str(payload.get("job_id") or "")
             st = GLOBAL_JOBS.get(job_id)
@@ -425,12 +425,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/jobs/cleanup":
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            body = self.rfile.read(length) if length > 0 else b""
-            try:
-                payload = json.loads(body.decode("utf-8", errors="replace") or "{}")
-            except Exception:
-                payload = {}
+            payload = _read_json_body(self)
 
             job_id = str(payload.get("job_id") or "").strip()
             st = GLOBAL_JOBS.get(job_id)

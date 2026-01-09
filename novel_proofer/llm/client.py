@@ -68,6 +68,29 @@ def _parse_sse_line(line: str) -> tuple[str, str] | None:
     return ("data", data)
 
 
+def _extract_content_from_sse_json(data: str, content_parts: list[str]) -> None:
+    """Extract text content from SSE JSON data and append to content_parts."""
+    if not data:
+        return
+    try:
+        obj = json.loads(data)
+        # OpenAI format
+        if "choices" in obj:
+            for choice in obj.get("choices", []):
+                delta = choice.get("delta", {})
+                if "content" in delta and delta["content"]:
+                    content_parts.append(delta["content"])
+        # Gemini format
+        elif "candidates" in obj:
+            for cand in obj.get("candidates", []):
+                parts = cand.get("content", {}).get("parts", [])
+                for p in parts:
+                    if "text" in p:
+                        content_parts.append(p["text"])
+    except json.JSONDecodeError:
+        pass
+
+
 def _stream_request(
     url: str,
     payload: dict,
@@ -125,25 +148,7 @@ def _stream_request(
                     if kind == "done":
                         done = True
                         break
-                    if not data:
-                        continue
-                    try:
-                        obj = json.loads(data)
-                        # OpenAI format
-                        if "choices" in obj:
-                            for choice in obj.get("choices", []):
-                                delta = choice.get("delta", {})
-                                if "content" in delta and delta["content"]:
-                                    content_parts.append(delta["content"])
-                        # Gemini format
-                        elif "candidates" in obj:
-                            for cand in obj.get("candidates", []):
-                                parts = cand.get("content", {}).get("parts", [])
-                                for p in parts:
-                                    if "text" in p:
-                                        content_parts.append(p["text"])
-                    except json.JSONDecodeError:
-                        continue
+                    _extract_content_from_sse_json(data, content_parts)
 
                 if done:
                     break
@@ -153,25 +158,8 @@ def _stream_request(
                 parsed = _parse_sse_line(buffer)
                 if parsed is not None:
                     kind, data = parsed
-                else:
-                    kind, data = "", ""
-
-                if kind != "done" and data:
-                    try:
-                        obj = json.loads(data)
-                        if "choices" in obj:
-                            for choice in obj.get("choices", []):
-                                delta = choice.get("delta", {})
-                                if "content" in delta and delta["content"]:
-                                    content_parts.append(delta["content"])
-                        elif "candidates" in obj:
-                            for cand in obj.get("candidates", []):
-                                parts = cand.get("content", {}).get("parts", [])
-                                for p in parts:
-                                    if "text" in p:
-                                        content_parts.append(p["text"])
-                    except json.JSONDecodeError:
-                        pass
+                    if kind != "done":
+                        _extract_content_from_sse_json(data, content_parts)
 
             return "".join(content_parts)
             

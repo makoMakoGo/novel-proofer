@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
-import os
 import shutil
 import time
 import traceback
@@ -13,7 +12,6 @@ from novel_proofer.formatting.chunking import chunk_by_lines
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.formatting.rules import apply_rules
 from novel_proofer.jobs import GLOBAL_JOBS
-# (Some editors may flag unresolved imports; runtime is OK.)
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta
 from novel_proofer.llm.config import LLMConfig
 
@@ -63,6 +61,47 @@ def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> N
         for i in range(total_chunks):
             f.write(_chunk_out_path(work_dir, i).read_text(encoding="utf-8"))
     tmp.replace(out_path)
+
+
+def _finalize_job(job_id: str, work_dir: Path, out_path: Path, total: int, error_msg: str) -> bool:
+    """Check job status after LLM processing and finalize output.
+
+    Returns True if job completed successfully, False if there were errors.
+    """
+    if GLOBAL_JOBS.is_cancelled(job_id):
+        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+        return False
+
+    cur = GLOBAL_JOBS.get(job_id)
+    if cur is None:
+        return False
+
+    has_error = any(c.state == "error" for c in cur.chunk_statuses)
+    if has_error:
+        GLOBAL_JOBS.update(
+            job_id,
+            state="error",
+            finished_at=time.time(),
+            error=error_msg,
+            done_chunks=_count_done_chunks(job_id),
+        )
+        return False
+
+    _merge_chunk_outputs(work_dir, total, out_path)
+
+    final_stats = dict(cur.stats)
+    GLOBAL_JOBS.update(
+        job_id,
+        state="done",
+        finished_at=time.time(),
+        stats=final_stats,
+        done_chunks=total,
+    )
+    if _should_cleanup_debug_dir(job_id):
+        _best_effort_cleanup_work_dir(job_id, work_dir)
+    else:
+        GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_skipped", 1)
+    return True
 
 
 def _llm_process_chunk(cfg: LLMConfig, chunk: str, *, job_id: str | None = None, chunk_index: int | None = None) -> str:
@@ -373,39 +412,7 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
                 GLOBAL_JOBS.update_chunk(job_id, i, state="done", finished_at=time.time())
             GLOBAL_JOBS.update(job_id, done_chunks=total)
 
-        if GLOBAL_JOBS.is_cancelled(job_id):
-            GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
-            return
-
-        cur = GLOBAL_JOBS.get(job_id)
-        if cur is None:
-            return
-
-        has_error = any(c.state == "error" for c in cur.chunk_statuses)
-        if has_error:
-            GLOBAL_JOBS.update(
-                job_id,
-                state="error",
-                finished_at=time.time(),
-                error="some chunks failed; update LLM config and retry failed chunks",
-                done_chunks=_count_done_chunks(job_id),
-            )
-            return
-
-        _merge_chunk_outputs(work_dir, total, out_path)
-
-        final_stats = dict(cur.stats)
-        GLOBAL_JOBS.update(
-            job_id,
-            state="done",
-            finished_at=time.time(),
-            stats=final_stats,
-            done_chunks=total,
-        )
-        if _should_cleanup_debug_dir(job_id):
-            _best_effort_cleanup_work_dir(job_id, work_dir)
-        else:
-            GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_skipped", 1)
+        _finalize_job(job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks")
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
@@ -433,8 +440,7 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
     total = len(st.chunk_statuses)
     failed = [c.index for c in st.chunk_statuses if c.state == "error"]
     if not failed:
-        has_output = out_path.exists()
-        if has_output:
+        if out_path.exists():
             GLOBAL_JOBS.update(job_id, state="done", finished_at=time.time(), done_chunks=total)
         return
 
@@ -452,34 +458,4 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
         )
 
     _run_llm_for_indices(job_id, failed, work_dir, llm)
-
-    if GLOBAL_JOBS.is_cancelled(job_id):
-        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
-        return
-
-    cur = GLOBAL_JOBS.get(job_id)
-    if cur is None:
-        return
-
-    has_error = any(c.state == "error" for c in cur.chunk_statuses)
-    if has_error:
-        GLOBAL_JOBS.update(
-            job_id,
-            state="error",
-            finished_at=time.time(),
-            error="some chunks still failed; update LLM config and retry again",
-            done_chunks=_count_done_chunks(job_id),
-        )
-        return
-
-    _merge_chunk_outputs(work_dir, total, out_path)
-    GLOBAL_JOBS.update(
-        job_id,
-        state="done",
-        finished_at=time.time(),
-        done_chunks=total,
-    )
-    if _should_cleanup_debug_dir(job_id):
-        _best_effort_cleanup_work_dir(job_id, work_dir)
-    else:
-        GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_skipped", 1)
+    _finalize_job(job_id, work_dir, out_path, total, "some chunks still failed; update LLM config and retry again")
