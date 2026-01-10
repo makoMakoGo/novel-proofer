@@ -4,6 +4,10 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Virtual environments
 .venv/

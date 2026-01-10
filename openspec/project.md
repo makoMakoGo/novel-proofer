@@ -66,9 +66,13 @@
 - 最终输出：仅当全部分片成功时，才会将合并结果写入 `output/`（统一为 `utf-8`；文件名会做安全清洗 `_safe_filename`）
 
 ### Testing Strategy
-当前采用 smoke scripts，并且必须在项目虚拟环境中运行：
-- 推荐一键：`start.bat --smoke`
-- 或直接运行（Windows）：`./.venv/Scripts/python.exe tests/smoke_test.py`
+测试分为两类：
+- smoke scripts：更接近真实使用路径，必须在项目虚拟环境中运行
+  - 推荐一键：`start.bat --smoke`
+  - 或直接运行（Windows）：`./.venv/Scripts/python.exe tests/smoke_test.py`
+- pytest 单元测试：覆盖 formatting/runner/server 等关键逻辑（需要安装 `requirements-dev.txt`）
+  - 安装：`pip install -r requirements-dev.txt`
+  - 运行：`pytest -q`
 
 现有测试（位于 `tests/` 目录）：
 - `tests/smoke_test.py`：启动内存内 HTTPServer，调用 `/health` 与 `/format`（stats）做基本自检

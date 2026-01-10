@@ -55,7 +55,7 @@ python -m novel_proofer.server
 flowchart LR
     A[上传 .txt] --> B[分片] --> C[本地规则<br/>换行/空格/标点/缩进]
     C --> D{LLM?}
-    D -->|否| F[合并]
+    D -->|否| F[合并<br/>补齐段落空行]
     D -->|是| E[LLM 处理]
     E --> H{成功?}
     H -->|是| F
@@ -106,6 +106,8 @@ HTTP 错误重试：状态码 408、409、425、429、500、502、503、504 会�
 
 输出校验：LLM 返回后进行长度校验以防止内容丢失。输出为空时报告 token 限制或流解析问题；输入 ≥200 字符时，若输出/输入比值 < 0.85 则判定过短，> 1.15 则判定过长，均标记为失败。
 
+合并输出：合并分片输出时会统一换行符，并在相邻非空行之间补齐一个空行，避免分片边界丢失段落分隔；同时保留分片内的原始空行。
+
 Think 标签过滤：部分模型（如 DeepSeek）会输出 `<think>...</think>` 推理过程。启用过滤后使用状态机流式过滤，支持跨 chunk 边界；若检测到未闭合标签，回退为仅移除标签标记、保留内容。
 
 
@@ -117,27 +119,28 @@ Think 标签过滤：部分模型（如 DeepSeek）会输出 `<think>...</think>
 
 ```
 output/.jobs/{job_id}/
-├── pre/          # 本地规则处理后的分片输入
-├── out/          # 分片最终输出（通过校验，参与合并）
-├── req/          # 发送给 LLM 的请求 JSON
-├── resp/         # LLM 响应留档（raw / filtered，带时间戳）
-└── error/        # 错误详情 JSON
-```
-
-错误 JSON 格式示例：
-
-```json
-{
-  "type": "LLMError",
-  "job_id": "abc123...",
-  "chunk_index": 5,
-  "status_code": 504,
-  "message": "HTTP 504 from LLM: Gateway Timeout",
-  "traceback": "..."
-}
+├── README.txt
+├── pre/{index:06d}.txt   # 发送给 LLM 的分片输入
+├── out/{index:06d}.txt   # 分片最终输出（通过校验）
+└── resp/{index:06d}.txt  # LLM 原始响应（覆盖式）
 ```
 
 UI 调试面板位于「分析进度」标签页，提供统计栏（总计/完成/错误/重试中分片数）、过滤器（全部/仅错误/仅重试）、以及分片表格（状态、重试次数、输入输出字符数、错误信息）。分片状态包括 `pending`（等待处理）、`processing`（正在请求）、`retrying`（等待重试）、`done`（处理完成）、`error`（处理失败）。
+
+
+## 开发与测试
+
+安装开发依赖：
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+运行测试：
+
+```bash
+pytest -q
+```
 
 
 ## 已知问题

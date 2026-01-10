@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import concurrent.futures
-import json
 import shutil
 import time
-import traceback
 import uuid
 from pathlib import Path
 
@@ -17,18 +15,12 @@ from novel_proofer.llm.config import LLMConfig
 
 
 _JOB_DEBUG_README = """\
-本目录为 novel-proofer 的单次任务调试产物，用于排查与重试。
+本目录为 novel-proofer 的单次任务调试产物。
 
 目录说明：
-- pre/   : 本地规则处理后的分片输入（发送给 LLM 的输入），文件名为分片 index（固定覆盖）。
-- out/   : 分片最终输出（通过校验，参与合并），文件名为分片 index（固定覆盖）。
-- req/   : 每次请求 LLM 的请求快照 JSON（含 provider/url/payload），文件名带时间戳（不会覆盖）。
-- resp/  : LLM 响应留档（原始 raw / 过滤后 filtered），文件名带时间戳（不会覆盖）。
-- error/ : 结构化错误详情 JSON（含 traceback 与关联文件名），文件名带时间戳（不会覆盖）。
-
-文件命名：
-- pre/{index}.txt、out/{index}.txt 会被覆盖（以当前最新为准）。
-- req/resp/error 目录下文件名包含 {index}_{timestamp}，用于保留多次尝试历史。
+- pre/  : 发送给 LLM 的分片输入
+- out/  : 分片最终输出（通过校验）
+- resp/ : LLM 原始响应
 """
 
 
@@ -100,12 +92,33 @@ def _should_cleanup_debug_dir(job_id: str) -> bool:
     return bool(getattr(st, "cleanup_debug_dir", True))
 
 
-def _chunk_pre_path(work_dir: Path, index: int) -> Path:
-    return work_dir / "pre" / f"{index:06d}.txt"
+def _chunk_path(work_dir: Path, subdir: str, index: int) -> Path:
+    return work_dir / subdir / f"{index:06d}.txt"
 
 
-def _chunk_out_path(work_dir: Path, index: int) -> Path:
-    return work_dir / "out" / f"{index:06d}.txt"
+def _iter_normalized_lines_for_merge(text: str) -> list[str]:
+    """Normalize text into lines for final merge.
+
+    - Normalizes CRLF/CR to LF.
+    - Treats whitespace-only lines as blank lines.
+    - Trims trailing whitespace on non-blank lines.
+    - Preserves explicit blank lines (including multiple) inside the chunk.
+    """
+
+    text = _normalize_newlines(text)
+    had_trailing_newline = text.endswith("\n")
+    lines = text.split("\n")
+    if had_trailing_newline and lines:
+        # Drop the implicit last empty element created by split("\n") when text endswith "\n".
+        lines.pop()
+
+    out: list[str] = []
+    for line in lines:
+        if line.strip() == "":
+            out.append("")
+        else:
+            out.append(line.rstrip())
+    return out
 
 
 def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> None:
@@ -113,8 +126,27 @@ def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> N
     # Use a unique temp name to avoid cross-thread collisions.
     tmp = out_path.with_suffix(out_path.suffix + f".{uuid.uuid4().hex}.tmp")
     with tmp.open("w", encoding="utf-8", newline="") as f:
+        prev_nonblank = False
         for i in range(total_chunks):
-            f.write(_chunk_out_path(work_dir, i).read_text(encoding="utf-8"))
+            chunk_text = _chunk_path(work_dir, "out", i).read_text(encoding="utf-8")
+            lines = _iter_normalized_lines_for_merge(chunk_text)
+            is_last_chunk = i == total_chunks - 1
+            keep_final_newline = chunk_text.endswith("\n") or chunk_text.endswith("\r")
+            last_line_idx = len(lines) - 1
+            for j, line in enumerate(lines):
+                if line == "":
+                    f.write("\n")
+                    prev_nonblank = False
+                    continue
+
+                if prev_nonblank:
+                    # Ensure paragraph separation (blank line) between adjacent non-blank lines,
+                    # especially across chunk boundaries.
+                    f.write("\n")
+                f.write(line)
+                if not (is_last_chunk and not keep_final_newline and j == last_line_idx):
+                    f.write("\n")
+                prev_nonblank = True
     tmp.replace(out_path)
 
 
@@ -182,71 +214,8 @@ def _validate_llm_output(input_text: str, output_text: str) -> None:
             )
 
 
-def _llm_request_snapshot(cfg: LLMConfig, input_text: str) -> dict:
-    provider = (cfg.provider or "").strip().lower()
-
-    if provider == "gemini":
-        url = ""
-        if cfg.base_url and cfg.model:
-            url = cfg.base_url.rstrip("/") + f"/v1beta/models/{cfg.model}:streamGenerateContent?alt=sse"
-
-        payload: dict = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {"text": cfg.system_prompt + "\n\n" + input_text},
-                    ],
-                }
-            ],
-            "generationConfig": {"temperature": cfg.temperature},
-        }
-        if cfg.extra_params:
-            payload.update(cfg.extra_params)
-
-        return {"provider": provider, "url": url, "payload": payload}
-
-    # Default to OpenAI-compatible.
-    if provider != "openai_compatible":
-        provider = "openai_compatible"
-
-    url = ""
-    if cfg.base_url:
-        url = cfg.base_url.rstrip("/") + "/v1/chat/completions"
-
-    payload = {
-        "model": cfg.model,
-        "temperature": cfg.temperature,
-        "stream": True,
-        "messages": [
-            {"role": "system", "content": cfg.system_prompt},
-            {"role": "user", "content": input_text},
-        ],
-    }
-    if cfg.extra_params:
-        payload.update(cfg.extra_params)
-
-    return {"provider": provider, "url": url, "payload": payload}
-
-
-def _chunk_req_path(work_dir: Path, index: int, ts_ms: int) -> Path:
-    return work_dir / "req" / f"{index:06d}_{ts_ms}.json"
-
-
-def _chunk_resp_raw_path(work_dir: Path, index: int, ts_ms: int) -> Path:
-    return work_dir / "resp" / f"{index:06d}_{ts_ms}_raw.txt"
-
-
-def _chunk_resp_filtered_path(work_dir: Path, index: int, ts_ms: int) -> Path:
-    return work_dir / "resp" / f"{index:06d}_{ts_ms}_filtered.txt"
-
-
-def _chunk_resp_stream_path(work_dir: Path, index: int, ts_ms: int) -> Path:
-    return work_dir / "resp" / f"{index:06d}_{ts_ms}_stream.txt"
-
-
-def _chunk_err_path(work_dir: Path, index: int, ts_ms: int) -> Path:
-    return work_dir / "error" / f"{index:06d}_{ts_ms}.json"
+def _is_whitespace_only(text: str) -> bool:
+    return text.strip() == ""
 
 
 def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None:
@@ -265,25 +234,17 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         output_chars=None,
     )
 
-    ts_ms = int(time.time() * 1000)
-
-    raw_text: str | None = None
-    filtered_text: str | None = None
-    stream_debug: str | None = None
-
     try:
-        pre = _chunk_pre_path(work_dir, index).read_text(encoding="utf-8")
+        pre = _chunk_path(work_dir, "pre", index).read_text(encoding="utf-8")
         # Whitespace-only chunks are valid (e.g., paragraph separators). Skip LLM entirely to
         # avoid providers that emit no `content` for empty prompts.
-        if pre.strip() == "":
+        if _is_whitespace_only(pre):
             GLOBAL_JOBS.update_chunk(job_id, index, input_chars=len(pre), output_chars=len(pre))
-            _atomic_write_text(_chunk_out_path(work_dir, index), pre)
+            _atomic_write_text(_chunk_path(work_dir, "out", index), pre)
             GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time())
             GLOBAL_JOBS.add_stat(job_id, "llm_skipped_blank_chunks", 1)
             return
 
-        req_path = _chunk_req_path(work_dir, index, ts_ms)
-        _atomic_write_text(req_path, json.dumps(_llm_request_snapshot(llm, pre), ensure_ascii=False, indent=2) + "\n")
         GLOBAL_JOBS.update_chunk(job_id, index, input_chars=len(pre), output_chars=None)
 
         retry_count = 0
@@ -305,7 +266,6 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         )
         raw_text = result.raw_text
         filtered_text = result.text
-        stream_debug = result.stream_debug
 
         if retries > retry_count:
             GLOBAL_JOBS.add_retry(job_id, index, retries - retry_count, last_code, last_msg)
@@ -316,10 +276,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         assert filtered_text is not None
         GLOBAL_JOBS.update_chunk(job_id, index, output_chars=len(filtered_text))
 
-        _atomic_write_text(_chunk_resp_raw_path(work_dir, index, ts_ms), raw_text or "")
-        _atomic_write_text(_chunk_resp_filtered_path(work_dir, index, ts_ms), filtered_text)
-        if (raw_text or "").strip() == "" and stream_debug:
-            _atomic_write_text(_chunk_resp_stream_path(work_dir, index, ts_ms), stream_debug)
+        _atomic_write_text(_chunk_path(work_dir, "resp", index), raw_text or "")
 
         _validate_llm_output(pre, filtered_text)
 
@@ -327,44 +284,12 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         if final_text != filtered_text:
             GLOBAL_JOBS.update_chunk(job_id, index, output_chars=len(final_text))
 
-        _atomic_write_text(_chunk_out_path(work_dir, index), final_text)
+        _atomic_write_text(_chunk_path(work_dir, "out", index), final_text)
         GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time())
         GLOBAL_JOBS.add_stat(job_id, "llm_chunks", 1)
     except LLMError as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
-        req_rel = str(_chunk_req_path(work_dir, index, ts_ms).relative_to(work_dir)).replace("\\", "/")
-        pre_rel = str(_chunk_pre_path(work_dir, index).relative_to(work_dir)).replace("\\", "/")
-        resp_raw_rel = str(_chunk_resp_raw_path(work_dir, index, ts_ms).relative_to(work_dir)).replace("\\", "/")
-        resp_filtered_rel = str(_chunk_resp_filtered_path(work_dir, index, ts_ms).relative_to(work_dir)).replace("\\", "/")
-        resp_stream_rel = str(_chunk_resp_stream_path(work_dir, index, ts_ms).relative_to(work_dir)).replace("\\", "/")
-        out_rel = str(_chunk_out_path(work_dir, index).relative_to(work_dir)).replace("\\", "/")
-        _atomic_write_text(
-            _chunk_err_path(work_dir, index, ts_ms),
-            json.dumps(
-                {
-                    "type": "LLMError",
-                    "job_id": job_id,
-                    "chunk_index": index,
-                    "status_code": e.status_code,
-                    "message": str(e),
-                    "files": {
-                        "pre": pre_rel,
-                        "req": req_rel,
-                        "resp_raw": resp_raw_rel,
-                        "resp_filtered": resp_filtered_rel,
-                        "resp_stream": resp_stream_rel,
-                        "out": out_rel,
-                    },
-                    "raw_excerpt": (raw_text or "")[:400],
-                    "filtered_excerpt": (filtered_text or "")[:400],
-                    "traceback": traceback.format_exc(),
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
-        )
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
@@ -376,21 +301,6 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
-        _atomic_write_text(
-            _chunk_err_path(work_dir, index, ts_ms),
-            json.dumps(
-                {
-                    "type": type(e).__name__,
-                    "job_id": job_id,
-                    "chunk_index": index,
-                    "message": str(e),
-                    "traceback": traceback.format_exc(),
-                },
-                ensure_ascii=False,
-                indent=2,
-            )
-            + "\n",
-        )
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
@@ -484,7 +394,7 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
                 return
 
             fixed, s = apply_rules(c, fmt)
-            _atomic_write_text(_chunk_pre_path(work_dir, i), fixed)
+            _atomic_write_text(_chunk_path(work_dir, "pre", i), fixed)
             _merge_stats(local_stats, s)
 
         for k, v in local_stats.items():
@@ -508,8 +418,8 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
                 if GLOBAL_JOBS.is_cancelled(job_id):
                     GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
                     return
-                pre = _chunk_pre_path(work_dir, i).read_text(encoding="utf-8")
-                _atomic_write_text(_chunk_out_path(work_dir, i), pre)
+                pre = _chunk_path(work_dir, "pre", i).read_text(encoding="utf-8")
+                _atomic_write_text(_chunk_path(work_dir, "out", i), pre)
                 GLOBAL_JOBS.update_chunk(job_id, i, state="done", finished_at=time.time())
             GLOBAL_JOBS.update(job_id, done_chunks=total)
 

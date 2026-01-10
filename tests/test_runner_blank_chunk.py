@@ -28,6 +28,9 @@ def test_llm_worker_skips_whitespace_only_chunk() -> None:
 
             out = (work_dir / "out" / "000000.txt").read_text(encoding="utf-8")
             assert out == pre
+            assert not (work_dir / "resp").exists()
+            assert not (work_dir / "req").exists()
+            assert not (work_dir / "error").exists()
 
             st = GLOBAL_JOBS.get(job_id)
             assert st is not None
@@ -37,4 +40,3 @@ def test_llm_worker_skips_whitespace_only_chunk() -> None:
             assert st.chunk_statuses[0].output_chars == len(pre)
         finally:
             GLOBAL_JOBS.delete(job_id)
-

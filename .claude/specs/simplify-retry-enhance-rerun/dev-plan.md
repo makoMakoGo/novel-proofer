@@ -35,17 +35,17 @@
 ### Task 3: max_chunk_chars 上限校验和中间过程持久化
 - **ID**: task-3
 - **type**: default
-- **描述**: 实现前后端 max_chunk_chars 上限 4000 校验，并在 runner 中保存 LLM 请求 payload、响应内容、错误信息到工作目录
+- **描述**: 实现前后端 max_chunk_chars 上限 4000 校验，并在 runner 中保存 LLM 分片输入/输出与原始响应到工作目录
 - **文件范围**: `novel_proofer/runner.py`, `novel_proofer/server.py`, `templates/index.html`
 - **依赖**: None
 - **测试命令**: `python -m pytest tests/ -v --cov=novel_proofer/runner --cov=novel_proofer/server --cov-report=term`
 - **测试重点**:
   - 后端校验 max_chunk_chars <= 4000
   - 前端 HTML 输入框 max 属性设置为 4000
-  - 验证中间过程文件正确保存到 `output/.jobs/<job_id>/req/`, `resp/`, `error/` 目录
-  - 测试文件命名包含 chunk_index 和时间戳
+  - 验证中间过程文件正确保存到 `output/.jobs/<job_id>/pre/`, `out/`, `resp/` 目录
+  - 测试文件命名包含 chunk_index
   - 确认并发场景下文件写入安全
-  - 验证错误信息正确记录到 error 目录
+  - 验证 LLM 响应内容正确落盘到 resp 目录
 
 ### Task 4: 增强 rerun 功能
 - **ID**: task-4
@@ -70,7 +70,7 @@
 - [ ] `_call_openai_compatible` 中不再有 `"max_tokens": 4096` 硬编码
 - [ ] LLMConfig 中 `max_retries`, `retry_backoff_seconds`, `split_min_chars` 配置项已删除
 - [ ] 前后端 max_chunk_chars 上限均为 4000
-- [ ] 中间过程文件正确保存到 req/resp/error/ 子目录
+- [ ] 中间过程文件正确保存到 pre/out/resp 子目录
 - [ ] 支持单 chunk rerun、多选批量 rerun、一键 rerun 所有失败
 - [ ] 所有单元测试通过
 - [ ] 代码覆盖率 ≥ 90%

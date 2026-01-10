@@ -27,8 +27,9 @@ def _is_chapter_title(line: str) -> bool:
     # Common patterns: 第X章 / 序章 / 番外
     if _chapter_like_re.match(line):
         return True
-    # Also accept short all-caps-like headings (rare in cn novels)
-    if len(s) <= 40 and s.upper() == s and any(c.isalpha() for c in s):
+    # Also accept short all-caps-like headings (rare in cn novels).
+    # Only apply this to lines with ASCII letters (not pure CJK).
+    if len(s) <= 40 and s.upper() == s and any(c.isascii() and c.isalpha() for c in s):
         return True
     return False
 
@@ -233,14 +234,24 @@ def _normalize_paragraph_indent(text: str, config: FormatConfig) -> tuple[str, b
         if stripped and all(ch in "-=*_—" for ch in stripped) and len(stripped) >= 3:
             continue
 
-        # For normal paragraphs, ensure a consistent indent.
-        if line.startswith(indent):
-            continue
+        # Only indent at paragraph start (first line or after blank line).
+        is_para_start = i == 0 or not lines[i - 1].strip()
 
-        new_line = _leading_ws_re.sub("", line)
-        # Avoid indenting very short non-paragraph lines (e.g., single punctuation)
-        if new_line and len(new_line) >= 2:
-            new_line = indent + new_line
+        if is_para_start:
+            # For paragraph starts, ensure a consistent indent.
+            if line.startswith(indent):
+                continue
+
+            new_line = _leading_ws_re.sub("", line)
+            # Avoid indenting very short non-paragraph lines (e.g., single punctuation)
+            if new_line and len(new_line) >= 2:
+                new_line = indent + new_line
+                if new_line != line:
+                    lines[i] = new_line
+                    changed = True
+        else:
+            # Mid-paragraph line: strip any leading whitespace (no indent).
+            new_line = _leading_ws_re.sub("", line)
             if new_line != line:
                 lines[i] = new_line
                 changed = True

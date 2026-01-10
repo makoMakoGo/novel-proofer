@@ -123,6 +123,16 @@ class TestThinkTagFilter:
         result += f.flush()
         assert result == "output"
 
+    def test_empty_chunk_returns_empty_string(self):
+        f = ThinkTagFilter()
+        assert f.feed("") == ""
+
+    def test_nested_open_without_close_in_chunk_increments_depth(self):
+        f = ThinkTagFilter()
+        out = f.feed("<think><think>abc")
+        out += f.flush()
+        assert out == ""
+
 
 class TestFilterThinkTagsFunction:
     """Tests for filter_think_tags convenience function."""
