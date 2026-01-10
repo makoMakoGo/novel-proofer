@@ -275,6 +275,15 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
     try:
         pre = _chunk_pre_path(work_dir, index).read_text(encoding="utf-8")
+        # Whitespace-only chunks are valid (e.g., paragraph separators). Skip LLM entirely to
+        # avoid providers that emit no `content` for empty prompts.
+        if pre.strip() == "":
+            GLOBAL_JOBS.update_chunk(job_id, index, input_chars=len(pre), output_chars=len(pre))
+            _atomic_write_text(_chunk_out_path(work_dir, index), pre)
+            GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time())
+            GLOBAL_JOBS.add_stat(job_id, "llm_skipped_blank_chunks", 1)
+            return
+
         req_path = _chunk_req_path(work_dir, index, ts_ms)
         _atomic_write_text(req_path, json.dumps(_llm_request_snapshot(llm, pre), ensure_ascii=False, indent=2) + "\n")
         GLOBAL_JOBS.update_chunk(job_id, index, input_chars=len(pre), output_chars=None)
