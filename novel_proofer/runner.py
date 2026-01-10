@@ -165,21 +165,19 @@ def _validate_llm_output(input_text: str, output_text: str) -> None:
     out_trim = len(output_text.strip())
     if in_len > 0 and out_trim == 0:
         raise LLMError(
-            "LLM output empty; likely token-limit/stream-parse/think-filter issue",
+            "LLM output empty",
             status_code=None,
         )
     if in_len >= 200 and in_len > 0:
         ratio = out_len / in_len
         if ratio < 0.85:
             raise LLMError(
-                f"LLM output too short (in={in_len}, out={out_len}, ratio={ratio:.2f} < 0.85); "
-                "possible content filtering / token-limit / stream truncation",
+                f"LLM output too short (in={in_len}, out={out_len}, ratio={ratio:.2f} < 0.85)",
                 status_code=None,
             )
         if ratio > 1.15:
             raise LLMError(
-                f"LLM output too long (in={in_len}, out={out_len}, ratio={ratio:.2f} > 1.15); "
-                "possible repetition / hallucination",
+                f"LLM output too long (in={in_len}, out={out_len}, ratio={ratio:.2f} > 1.15)",
                 status_code=None,
             )
 

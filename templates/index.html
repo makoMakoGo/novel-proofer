@@ -244,7 +244,6 @@
         <div class="filter-bar">
           <button type="button" class="filter-btn active" data-filter="all">全部</button>
           <button type="button" class="filter-btn" data-filter="error">仅错误</button>
-          <button type="button" class="filter-btn" data-filter="retrying">仅重试</button>
         </div>
 
         <div id="chunksTableWrap">
@@ -359,21 +358,70 @@
         .replace(/'/g, '&#39;');
     }
 
-    function formatErrorBrief(code, message) {
+    function truncateStr(s, maxLen) {
+      const str = String(s || '');
+      const n = Number(maxLen || 0);
+      if (!Number.isFinite(n) || n <= 0) return str;
+      if (str.length <= n) return str;
+      return str.slice(0, n) + '…';
+    }
+
+    function tryParseJson(s) {
+      try {
+        return JSON.parse(s);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function formatErrorDisplay(code, message) {
       const codeStr = (code == null || code === '') ? '' : String(code);
       const msg = (message == null) ? '' : String(message).trim();
 
-      let reason = msg;
-      if (/LLM output empty/i.test(msg)) reason = 'LLM output empty';
-      else if (/LLM output too short/i.test(msg)) reason = 'LLM output too short';
-      else if (/LLM output too long/i.test(msg)) reason = 'LLM output too long';
-      else if (/^HTTP\s+\d+\s+from\s+LLM:/i.test(msg)) reason = msg.replace(/^HTTP\s+\d+\s+from\s+LLM:\s*/i, '').trim();
+      if (!codeStr && !msg) return null;
 
-      let out = '';
-      if (codeStr) out = `HTTP ${codeStr}`;
-      if (reason) out = out ? `${out} · ${reason}` : reason;
-      if (out.length > 90) out = out.slice(0, 90) + '…';
-      return out;
+      const httpMatch = msg.match(/^HTTP\s+(\d+)\s+from\s+LLM:\s*(.*)$/i);
+      if (httpMatch) {
+        const httpCode = httpMatch[1] || codeStr || '';
+        const body = String(httpMatch[2] || '').trim();
+
+        let reason = '';
+        if (body) {
+          const parsed = (body.startsWith('{') || body.startsWith('[')) ? tryParseJson(body) : null;
+          if (parsed && parsed.error && parsed.error.message) reason = String(parsed.error.message);
+          else if (parsed && parsed.message) reason = String(parsed.message);
+          else reason = body;
+        }
+
+        const brief = httpCode ? `HTTP ${httpCode}` : 'HTTP error';
+        const detail = reason ? `${brief}: ${reason}` : brief;
+        return { brief: truncateStr(brief, 40), detail: truncateStr(detail, 300) };
+      }
+
+      if (/LLM output empty/i.test(msg)) {
+        return { brief: 'LLM output empty', detail: 'LLM output empty' };
+      }
+
+      if (/LLM output too short/i.test(msg)) {
+        const m = msg.match(/ratio=([0-9.]+)/i);
+        const brief = m ? `LLM output too short (ratio=${m[1]})` : 'LLM output too short';
+        return { brief: truncateStr(brief, 60), detail: truncateStr(msg || brief, 300) };
+      }
+
+      if (/LLM output too long/i.test(msg)) {
+        const m = msg.match(/ratio=([0-9.]+)/i);
+        const brief = m ? `LLM output too long (ratio=${m[1]})` : 'LLM output too long';
+        return { brief: truncateStr(brief, 60), detail: truncateStr(msg || brief, 300) };
+      }
+
+      if (codeStr) {
+        const brief = `HTTP ${codeStr}`;
+        const detail = msg ? `${brief}: ${msg}` : brief;
+        return { brief: truncateStr(brief, 40), detail: truncateStr(detail, 300) };
+      }
+
+      const brief = truncateStr(msg, 60);
+      return { brief, detail: truncateStr(msg, 300) };
     }
 
     function renderChunksTable() {
@@ -402,9 +450,9 @@
 
          const errCode = (c.last_error_code != null) ? String(c.last_error_code) : '';
          const errFull = c.last_error_message ? String(c.last_error_message) : '';
-         const brief = formatErrorBrief(errCode, errFull);
-         const errMsg = brief
-           ? `<span class="error-brief" title="${escapeHtml(errFull || brief)}">${escapeHtml(brief)}</span>`
+         const err = formatErrorDisplay(errCode, errFull);
+         const errMsg = err
+           ? `<span class="error-brief" title="${escapeHtml(err.detail)}">${escapeHtml(err.brief)}</span>`
            : '-';
 
          return `<tr>
