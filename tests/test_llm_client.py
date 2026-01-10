@@ -68,23 +68,13 @@ def test_call_llm_text_disabled_passthrough():
 
 
 def test_call_llm_text_routes_to_openai_compatible(monkeypatch: pytest.MonkeyPatch):
-    cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://x", model="m")
+    cfg = LLMConfig(enabled=True, base_url="http://x", model="m")
 
     def fake_call(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:  # noqa: ANN001
         return "OK"
 
     monkeypatch.setattr(llm_client, "_call_openai_compatible", fake_call)
     assert llm_client.call_llm_text(cfg, "hi") == "OK"
-
-
-def test_call_llm_text_routes_to_gemini(monkeypatch: pytest.MonkeyPatch):
-    cfg = LLMConfig(enabled=True, provider="gemini", base_url="http://x", model="m")
-
-    def fake_call(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:  # noqa: ANN001
-        return "G"
-
-    monkeypatch.setattr(llm_client, "_call_gemini", fake_call)
-    assert llm_client.call_llm_text(cfg, "hi") == "G"
 
 
 def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch: pytest.MonkeyPatch):
@@ -104,7 +94,6 @@ def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch
 
     cfg = LLMConfig(
         enabled=True,
-        provider="openai_compatible",
         base_url="http://example.com",
         api_key="k",
         model="m",
@@ -146,38 +135,6 @@ def test_call_openai_compatible_merges_extra_params(monkeypatch: pytest.MonkeyPa
 
     assert captured["payload"]["max_tokens"] == 123
     assert captured["payload"]["temperature"] == 0.7
-
-
-def test_call_gemini_payload_and_merge_extra_params(monkeypatch: pytest.MonkeyPatch):
-    captured: dict = {}
-
-    def fake_stream_request_with_debug(  # noqa: ANN001
-        url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None
-    ) -> tuple[str, str]:
-        captured["url"] = url
-        captured["payload"] = payload
-        captured["should_stop"] = should_stop
-        return "RAW", "DBG"
-
-    monkeypatch.setattr(llm_client, "_stream_request_with_debug", fake_stream_request_with_debug)
-
-    cfg = LLMConfig(
-        enabled=True,
-        provider="gemini",
-        base_url="http://example.com/",
-        model="m",
-        system_prompt="S",
-        extra_params={"foo": "bar"},
-        filter_think_tags=False,
-    )
-    out = llm_client._call_gemini(cfg, "U", should_stop=lambda: False)
-
-    assert out == "RAW"
-    assert captured["url"] == "http://example.com/v1beta/models/m:streamGenerateContent?alt=sse"
-    assert captured["payload"]["contents"][0]["parts"][0]["text"] == "S\n\nU"
-    assert captured["payload"]["generationConfig"]["temperature"] == cfg.temperature
-    assert captured["payload"]["foo"] == "bar"
-    assert callable(captured["should_stop"])
 
 
 @pytest.mark.parametrize(
@@ -248,13 +205,6 @@ def test_stream_request_parses_openai_sse(monkeypatch: pytest.MonkeyPatch):
 def test_stream_request_stops_reading_after_done(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _DoneThenBoomResponse(b"data: [DONE]\n"))
     assert llm_client._stream_request("http://x", {"stream": True}, headers={}, timeout=1.0) == ""
-
-
-def test_stream_request_parses_gemini_sse(monkeypatch: pytest.MonkeyPatch):
-    sse = b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"A\"},{\"text\":\"B\"}]}}]}\n"
-    monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _FakeResponse([sse]))
-    out = llm_client._stream_request("http://x", {"stream": True}, headers={}, timeout=1.0)
-    assert out == "AB"
 
 
 def test_stream_request_should_stop_short_circuits(monkeypatch: pytest.MonkeyPatch):

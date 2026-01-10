@@ -42,7 +42,7 @@ def test_llm_worker_records_retries_and_aligns_newlines(monkeypatch: pytest.Monk
 
         job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         try:
-            cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m")
+            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
             runner._llm_worker(job_id, 0, work_dir, cfg)
 
             st = GLOBAL_JOBS.get(job_id)
@@ -73,7 +73,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
         job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         try:
             assert GLOBAL_JOBS.cancel(job_id) is True
-            runner._llm_worker(job_id, 0, work_dir, LLMConfig(enabled=True, provider="openai_compatible", base_url="", model=""))
+            runner._llm_worker(job_id, 0, work_dir, LLMConfig(enabled=True, base_url="", model=""))
             assert not (work_dir / "resp").exists()
         finally:
             GLOBAL_JOBS.delete(job_id)
@@ -92,7 +92,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
                 return LLMTextResult(text="OK\n", raw_text="RAW"), 0, None, None
 
             monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_cancel_then_return)
-            cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m")
+            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
             runner._llm_worker(job_id2, 0, work_dir, cfg)
             assert not (work_dir / "resp").exists()
             assert not (work_dir / "out").exists()
@@ -113,7 +113,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
                 raise LLMError("x", status_code=500)
 
             monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_cancel_then_raise)
-            cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m")
+            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
             runner._llm_worker(job_id3, 0, work_dir, cfg)
             st = GLOBAL_JOBS.get(job_id3)
             assert st is not None
@@ -126,7 +126,7 @@ def test_llm_worker_ratio_validation_errors(monkeypatch: pytest.MonkeyPatch) -> 
     pre = "a" * 200
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
-        cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m")
+        cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
 
         def run_case(sub: str, out_text: str, expect: str) -> None:
             work_dir = base / sub
@@ -153,7 +153,7 @@ def test_llm_worker_ratio_validation_errors(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_run_llm_for_indices_paused_cancelled_and_worker_exception(monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m", max_concurrency=1)
+    cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m", max_concurrency=1)
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         work_dir = base / "work"
@@ -189,7 +189,7 @@ def test_run_llm_for_indices_paused_cancelled_and_worker_exception(monkeypatch: 
 def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     fmt = runner.FormatConfig(max_chunk_chars=2000)
     llm_off = LLMConfig(enabled=False)
-    llm_on = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m")
+    llm_on = LLMConfig(enabled=True, base_url="http://example.com", model="m")
 
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
@@ -300,7 +300,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
 
 
 def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch) -> None:
-    llm = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m", max_concurrency=1)
+    llm = LLMConfig(enabled=True, base_url="http://example.com", model="m", max_concurrency=1)
 
     runner.retry_failed_chunks("missing", llm)
     runner.resume_paused_job("missing", llm)
@@ -382,4 +382,3 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             assert st is not None and st.state == "done"
         finally:
             GLOBAL_JOBS.delete(job6_id)
-

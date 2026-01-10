@@ -7,7 +7,7 @@
 
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](https://python.org)
-[![Stdlib Only](https://img.shields.io/badge/Dependencies-stdlib%20only-orange)](requirements.txt)
+[![Server](https://img.shields.io/badge/Server-FastAPI%2FUvicorn-009688)](requirements.txt)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 </div>
@@ -24,7 +24,7 @@
 | 功能     | 说明                                                            |
 | -------- | --------------------------------------------------------------- |
 | 本地排版 | 修正缩进、空行、标点符号                                        |
-| LLM 辅助 | 可选接入 OpenAI/Gemini 处理复杂标点                             |
+| LLM 辅助 | 可选接入 OpenAI-compatible 处理复杂标点                         |
 | 并发处理 | 大文件分片多线程处理                                            |
 | 失败重试 | LLM 分片失败后可修改配置并重试失败分片，全部成功后再合并输出    |
 | 输出校验 | 当分片输出明显过短/过长时会标记失败，便于换模型/配置后重试      |
@@ -92,12 +92,7 @@ flowchart LR
 
 处理流程为：输入文本 → 按段落边界分片 → 本地规则预处理 → LLM 流式请求 → 输出校验 → 合并输出。
 
-支持的 LLM 提供商：
-
-| 提供商              | 端点格式                                                         |
-| ------------------- | ---------------------------------------------------------------- |
-| `openai_compatible` | `{base_url}/v1/chat/completions`（SSE 流式）                     |
-| `gemini`            | `{base_url}/v1beta/models/{model}:streamGenerateContent?alt=sse` |
+支持的 LLM 端点：OpenAI-compatible（`{base_url}/v1/chat/completions`，SSE 流式）。
 
 
 ## 异常处理与校验
@@ -140,6 +135,12 @@ pip install -r requirements-dev.txt
 
 ```bash
 pytest -q
+```
+
+Windows 一键自检：
+
+```bash
+start.bat --smoke
 ```
 
 

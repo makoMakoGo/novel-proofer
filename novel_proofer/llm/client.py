@@ -82,19 +82,11 @@ def _extract_content_from_sse_json(data: str, content_parts: list[str]) -> None:
         return
     try:
         obj = json.loads(data)
-        # OpenAI format
         if "choices" in obj:
             for choice in obj.get("choices", []):
                 delta = choice.get("delta", {})
                 if "content" in delta and delta["content"]:
                     content_parts.append(delta["content"])
-        # Gemini format
-        elif "candidates" in obj:
-            for cand in obj.get("candidates", []):
-                parts = cand.get("content", {}).get("parts", [])
-                for p in parts:
-                    if "text" in p:
-                        content_parts.append(p["text"])
     except json.JSONDecodeError:
         pass
 
@@ -277,10 +269,6 @@ def call_llm_text(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], 
     if not cfg.enabled:
         return input_text
 
-    provider = (cfg.provider or "").strip().lower()
-    if provider == "gemini":
-        return _call_gemini(cfg, input_text, should_stop=should_stop)
-
     return _call_openai_compatible(cfg, input_text, should_stop=should_stop)
 
 
@@ -289,10 +277,6 @@ def call_llm_text_with_raw(
 ) -> LLMTextResult:
     if not cfg.enabled:
         return LLMTextResult(text=input_text, raw_text=input_text, stream_debug="")
-
-    provider = (cfg.provider or "").strip().lower()
-    if provider == "gemini":
-        return _call_gemini_with_raw(cfg, input_text, should_stop=should_stop)
 
     return _call_openai_compatible_with_raw(cfg, input_text, should_stop=should_stop)
 
@@ -481,46 +465,6 @@ def _call_openai_compatible_with_raw(
             {"role": "system", "content": cfg.system_prompt},
             {"role": "user", "content": input_text},
         ],
-    }
-
-    # Merge extra_params if provided
-    if cfg.extra_params:
-        payload.update(cfg.extra_params)
-
-    raw_content, stream_debug = _stream_request_with_debug(
-        url, payload, headers=_headers(cfg), timeout=cfg.timeout_seconds, should_stop=should_stop
-    )
-
-    return LLMTextResult(
-        text=_maybe_filter_think_tags(cfg, raw_content, input_text=input_text),
-        raw_text=raw_content,
-        stream_debug=stream_debug,
-    )
-
-
-def _call_gemini(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None) -> str:
-    return _call_gemini_with_raw(cfg, input_text, should_stop=should_stop).text
-
-
-def _call_gemini_with_raw(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None) -> LLMTextResult:
-    if not cfg.base_url:
-        raise LLMError("LLM base_url is empty")
-    if not cfg.model:
-        raise LLMError("LLM model is empty")
-
-    print(f"[LLM] model={cfg.model} (streaming)", flush=True)
-    # Gemini streaming uses alt=sse query parameter
-    url = cfg.base_url.rstrip("/") + f"/v1beta/models/{cfg.model}:streamGenerateContent?alt=sse"
-    payload: dict = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": cfg.system_prompt + "\n\n" + input_text},
-                ],
-            }
-        ],
-        "generationConfig": {"temperature": cfg.temperature},
     }
 
     # Merge extra_params if provided

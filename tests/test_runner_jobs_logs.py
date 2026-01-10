@@ -51,7 +51,7 @@ def test_llm_worker_success_writes_resp_index_file_only(monkeypatch: pytest.Monk
         job_id = job.job_id
         try:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
-            cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m")
+            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
 
             runner._llm_worker(job_id, 0, work_dir, cfg)
 
@@ -89,7 +89,7 @@ def test_llm_worker_error_does_not_create_error_dir(monkeypatch: pytest.MonkeyPa
         job_id = job.job_id
         try:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
-            cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m")
+            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
 
             runner._llm_worker(job_id, 0, work_dir, cfg)
 
@@ -138,7 +138,7 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
         try:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
             GLOBAL_JOBS.update(job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
-            cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m", max_concurrency=1)
+            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m", max_concurrency=1)
 
             runner._llm_worker(job_id, 0, work_dir, cfg)
             assert (work_dir / "resp" / "000000.txt").read_text(encoding="utf-8") == "RAW-FAIL"
@@ -189,7 +189,7 @@ def test_resume_paused_job_overwrites_existing_resp(monkeypatch: pytest.MonkeyPa
             (work_dir / "resp").mkdir(parents=True, exist_ok=True)
             (work_dir / "resp" / "000000.txt").write_text("RAW-OLD", encoding="utf-8")
 
-            cfg = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m", max_concurrency=1)
+            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m", max_concurrency=1)
             runner.resume_paused_job(job_id, cfg)
 
             _assert_no_legacy_log_dirs(work_dir)

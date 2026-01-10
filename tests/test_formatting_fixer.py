@@ -14,9 +14,8 @@ def test_format_txt_llm_enabled_calls_llm_and_counts(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(fixer, "call_llm_text_resilient", fake_call_llm_text_resilient)
 
     cfg = FormatConfig(max_chunk_chars=2000)
-    llm = LLMConfig(enabled=True, provider="openai_compatible", base_url="http://example.com", model="m")
+    llm = LLMConfig(enabled=True, base_url="http://example.com", model="m")
 
     out = fixer.format_txt("x\n", cfg, llm=llm)
     assert out.text.endswith("LLM")
     assert out.stats.get("llm_chunks") == 1
-

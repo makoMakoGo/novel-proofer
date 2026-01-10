@@ -6,7 +6,7 @@ rem - Creates/uses .venv
 rem - Installs deps from requirements.txt if present
 rem - Picks a free port (default 18080)
 rem - Starts server and prints URL
-rem - Optional: run smoke tests in venv
+rem - Optional: run tests in venv
 
 cd /d "%~dp0"
 
@@ -65,14 +65,18 @@ if exist "requirements.txt" (
 )
 
 if /i "%MODE%"=="smoke" (
-  echo [novel-proofer] Running smoke tests...
-  "%PYTHON_EXE%" tests\smoke_test.py
+  echo [novel-proofer] Running tests...
+  if exist "requirements-dev.txt" (
+    echo [novel-proofer] Installing dev dependencies from requirements-dev.txt...
+    "%PYTHON_EXE%" -m pip --disable-pip-version-check install -r requirements-dev.txt
+    if errorlevel 1 (
+      echo [novel-proofer] Dev dependency install failed.
+      exit /b 1
+    )
+  )
+  "%PYTHON_EXE%" -m pytest -q
   if errorlevel 1 exit /b 1
-  "%PYTHON_EXE%" tests\smoke_status_chunks.py
-  if errorlevel 1 exit /b 1
-  "%PYTHON_EXE%" tests\smoke_cancel_job.py
-  if errorlevel 1 exit /b 1
-  echo [novel-proofer] Smoke tests OK.
+  echo [novel-proofer] Tests OK.
   exit /b 0
 )
 

@@ -7,9 +7,6 @@ from dataclasses import dataclass
 class LLMConfig:
     enabled: bool = False
 
-    # Provider selection
-    provider: str = "openai_compatible"  # openai_compatible | gemini
-
     # Endpoint/auth
     base_url: str = ""  # e.g. https://juya.owl.ci
     api_key: str = ""  # do NOT hardcode in repo

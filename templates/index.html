@@ -150,10 +150,6 @@
             <input type="hidden" name="llm_enabled" value="0" />
             <label><input type="checkbox" name="llm_enabled" value="1" checked />启用 LLM（默认）</label>
           </div>
-          <div>
-            <label>提供商</label>
-            <input name="llm_provider" type="text" value="openai_compatible" />
-          </div>
         </div>
         <div class="row">
           <div>
@@ -481,7 +477,7 @@
 
       chunksData = data.chunks;
       chunkCounts = data.chunk_counts || null;
-      totalChunksFromServer = Number(data.total_chunks || 0);
+      totalChunksFromServer = Number(data?.job?.progress?.total_chunks || 0);
       updateStats();
       renderChunksTable();
     }
@@ -491,12 +487,12 @@
       if (chunksFetchInFlight) return;
       chunksFetchInFlight = true;
       try {
-        const q = new URLSearchParams({ job_id: jobId, include_chunks: '1' });
-        q.set('chunk_filter', currentFilter);
-        q.set('chunk_limit', '500');
-        q.set('chunk_offset', '0');
+        const q = new URLSearchParams({ chunks: '1' });
+        q.set('chunk_state', currentFilter);
+        q.set('limit', '500');
+        q.set('offset', '0');
 
-        const res = await fetch(`api/jobs/status?${q.toString()}`);
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}?${q.toString()}`);
         const data = await res.json();
         if (!res.ok) {
           show(data);
@@ -589,25 +585,57 @@
       }
     }
 
+    function buildLlmOptions(fd, extraParamsValue) {
+      const llmEnabled = !!document.querySelector('input[type="checkbox"][name="llm_enabled"]')?.checked;
+      const filterThinkTags = !!document.querySelector('input[type="checkbox"][name="llm_filter_think_tags"]')?.checked;
+
+      return {
+        enabled: llmEnabled,
+        base_url: String(fd.get('llm_base_url') || ''),
+        api_key: String(fd.get('llm_api_key') || ''),
+        model: String(fd.get('llm_model') || ''),
+        temperature: Number(fd.get('llm_temperature') || 0),
+        timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
+        max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
+        extra_params: extraParamsValue,
+        filter_think_tags: filterThinkTags,
+      };
+    }
+
+    function buildJobOptions(fd, extraParamsValue) {
+      const cleanupDebugDir = !!document.querySelector('input[type="checkbox"][name="cleanup_debug_dir"]')?.checked;
+      return {
+        format: {
+          max_chunk_chars: Number(fd.get('max_chunk_chars') || 2000),
+          paragraph_indent: fd.get('paragraph_indent') != null,
+          indent_with_fullwidth_space: fd.get('indent_with_fullwidth_space') != null,
+          normalize_blank_lines: fd.get('normalize_blank_lines') != null,
+          trim_trailing_spaces: fd.get('trim_trailing_spaces') != null,
+          normalize_ellipsis: fd.get('normalize_ellipsis') != null,
+          normalize_em_dash: fd.get('normalize_em_dash') != null,
+          normalize_cjk_punctuation: fd.get('normalize_cjk_punctuation') != null,
+          fix_cjk_punct_spacing: fd.get('fix_cjk_punct_spacing') != null,
+          normalize_quotes: fd.get('normalize_quotes') != null,
+        },
+        llm: buildLlmOptions(fd, extraParamsValue),
+        output: {
+          suffix: String(fd.get('suffix') || '_rev'),
+          cleanup_debug_dir: cleanupDebugDir,
+        },
+      };
+    }
+
     async function requestCancel(jobId) {
       if (!jobId) return;
       try {
-        await fetch('api/jobs/cancel', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ job_id: jobId }),
-        });
+        await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
       } catch (e) {}
     }
 
     async function requestPause(jobId) {
       if (!jobId) return { ok: false, error: 'missing job_id' };
       try {
-        const res = await fetch('api/jobs/pause', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ job_id: jobId }),
-        });
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/pause`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) return { ok: false, error: data };
         return { ok: true, data };
@@ -622,23 +650,10 @@
       const fd = new FormData(form);
       const extra = parseExtraParamsFromFormData(fd);
       if (!extra.ok) return { ok: false, error: extra.error };
-      const filterThinkTags = !!document.querySelector('input[type="checkbox"][name="llm_filter_think_tags"]')?.checked;
-
-      const payload = {
-        job_id: jobId,
-        llm_provider: fd.get('llm_provider') || 'openai_compatible',
-        llm_base_url: fd.get('llm_base_url') || '',
-        llm_api_key: fd.get('llm_api_key') || '',
-        llm_model: fd.get('llm_model') || '',
-        llm_temperature: Number(fd.get('llm_temperature') || 0),
-        llm_timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
-        llm_max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
-        llm_filter_think_tags: filterThinkTags,
-        llm_extra_params: extra.value,
-      };
+      const payload = { llm: buildLlmOptions(fd, extra.value) };
 
       try {
-        const res = await fetch('api/jobs/resume', {
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/resume`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -700,23 +715,10 @@
       const fd = new FormData(form);
       const extra = parseExtraParamsFromFormData(fd);
       if (!extra.ok) return { ok: false, error: extra.error };
-      const filterThinkTags = !!document.querySelector('input[type="checkbox"][name="llm_filter_think_tags"]')?.checked;
-
-      const payload = {
-        job_id: jobId,
-        llm_provider: fd.get('llm_provider') || 'openai_compatible',
-        llm_base_url: fd.get('llm_base_url') || '',
-        llm_api_key: fd.get('llm_api_key') || '',
-        llm_model: fd.get('llm_model') || '',
-        llm_temperature: Number(fd.get('llm_temperature') || 0),
-        llm_timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
-        llm_max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
-        llm_filter_think_tags: filterThinkTags,
-        llm_extra_params: extra.value,
-      };
+      const payload = { llm: buildLlmOptions(fd, extra.value) };
 
       try {
-        const res = await fetch('api/jobs/retry_failed', {
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/retry-failed`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
@@ -750,11 +752,7 @@
     async function requestCleanup(jobId) {
       if (!jobId) return { ok: false, error: 'missing job_id' };
       try {
-        const res = await fetch('api/jobs/cleanup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ job_id: jobId }),
-        });
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/cleanup-debug`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) return { ok: false, error: data };
         return { ok: true, data };
@@ -795,23 +793,23 @@
         const wantChunks = (activeTab === 'debug') || forceChunksFetch;
         forceChunksFetch = false;
 
-        const q = new URLSearchParams({ job_id: jobId, include_chunks: wantChunks ? '1' : '0' });
+        const q = new URLSearchParams({ chunks: wantChunks ? '1' : '0' });
         if (wantChunks) {
-          q.set('chunk_filter', currentFilter);
-          q.set('chunk_limit', '500');
-          q.set('chunk_offset', '0');
+          q.set('chunk_state', currentFilter);
+          q.set('limit', '500');
+          q.set('offset', '0');
         }
 
-        const res = await fetch(`api/jobs/status?${q.toString()}`);
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}?${q.toString()}`);
         const data = await res.json();
         if (!res.ok) throw new Error(JSON.stringify(data));
 
-        currentJobState = data.state;
-        setProgress(data.done_chunks || 0, data.total_chunks || 0, data.state);
+        currentJobState = data?.job?.state;
+        setProgress(data?.job?.progress?.done_chunks || 0, data?.job?.progress?.total_chunks || 0, data?.job?.state);
         if (wantChunks) showChunks(data);
 
-        if (data.state === 'done') {
-          show(data.output_path ? `完成。已输出到：${data.output_path}` : '完成。已输出到项目 output/ 目录。');
+        if (data?.job?.state === 'done') {
+          show(data?.job?.output_path ? `完成。已输出到：${data.job.output_path}` : '完成。已输出到项目 output/ 目录。');
           setBusy(false);
           currentJobId = null;
           currentJobState = null;
@@ -820,7 +818,7 @@
           return;
         }
 
-        if (data.state === 'cancelled') {
+        if (data?.job?.state === 'cancelled') {
           show('已取消。');
           setBusy(false);
           currentJobId = null;
@@ -830,7 +828,7 @@
           return;
         }
 
-        if (data.state === 'paused') {
+        if (data?.job?.state === 'paused') {
           show('已暂停。');
           setBusy(false);
           setPaused(true);
@@ -839,8 +837,8 @@
           return;
         }
 
-        if (data.state === 'error') {
-          show(data.error || data);
+        if (data?.job?.state === 'error') {
+          show(data?.job?.error || data);
           setBusy(false);
           setRetryVisible(true);
           setCleanupVisible(true);
@@ -874,7 +872,18 @@
       setProgress(0, 0, 'queued');
       setBusy(true);
 
-      const res = await fetch('api/jobs/create', { method: 'POST', body: fd });
+      const file = fd.get('file');
+      if (!(file instanceof File)) {
+        show('请选择 TXT 文件。');
+        setBusy(false);
+        return;
+      }
+      const opts = buildJobOptions(fd, extra.value);
+      const requestFd = new FormData();
+      requestFd.append('file', file);
+      requestFd.append('options', JSON.stringify(opts));
+
+      const res = await fetch('api/v1/jobs', { method: 'POST', body: requestFd });
       const data = await res.json();
       if (!res.ok) {
         show(data);
@@ -882,9 +891,9 @@
         return;
       }
 
-      currentJobId = data.job_id;
+      currentJobId = data?.job?.id;
       currentJobState = 'queued';
-      await poll(data.job_id);
+      await poll(currentJobId);
     });
   </script>
 </body>

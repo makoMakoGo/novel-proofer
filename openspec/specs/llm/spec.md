@@ -5,10 +5,17 @@ LLM 客户端行为规范，包括流式请求、可选参数透传、思考内�
 
 ## Requirements
 
+### Requirement: Only OpenAI-compatible provider is supported
+系统 SHALL 仅支持 OpenAI-compatible LLM 端点；不再支持其他 provider（如 Gemini）。
+
+#### Scenario: User config selects the only provider
+- **GIVEN** 用户启用 LLM
+- **WHEN** 系统发起 LLM 请求
+- **THEN** 使用 OpenAI-compatible SSE 流式接口
+
 ### Requirement: Mandatory streaming requests
 系统 SHALL **强制**使用流式（SSE）请求调用 LLM API：
 - OpenAI-compatible API 使用 `stream: true` 参数
-- Gemini API 使用 `alt=sse` 查询参数
 - 流式请求 SHALL 在收到每个 chunk 时保持连接活跃
 - **流式请求是强制的，不可配置关闭**
 
@@ -29,7 +36,7 @@ LLM 客户端行为规范，包括流式请求、可选参数透传、思考内�
 系统 SHALL 支持用户通过 UI 配置可选的额外参数透传：
 - 用户可在配置界面输入任意 JSON 对象
 - JSON 对象将被合并到 LLM 请求体中
-- 此功能用于透传 thinking 配置或其他 provider 特定参数
+- 此功能用于透传 thinking 配置或其他服务/模型特定参数
 - 参数透传是**可选的**，默认为空
 
 #### Scenario: User configures thinking parameters
@@ -38,7 +45,7 @@ LLM 客户端行为规范，包括流式请求、可选参数透传、思考内�
 - **THEN** 请求体包含这些额外参数
 - **AND** 参数与其他请求参数合并
 
-#### Scenario: User configures provider-specific parameters
+#### Scenario: User configures model-specific parameters
 - **GIVEN** 用户输入 `{"temperature": 0.7, "top_p": 0.9}`
 - **WHEN** 系统构建 LLM 请求
 - **THEN** 这些参数被透传到请求中

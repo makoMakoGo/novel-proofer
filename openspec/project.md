@@ -15,11 +15,10 @@
 ## Tech Stack
 - 语言：Python 3（当前环境 `python --version` 显示 3.14.x）
 - 依赖：可引入成熟的、社区认可的第三方库（如 FastAPI、httpx、pytest 等），选择最合适的方案
-- Web Server：`http.server.ThreadingHTTPServer` + `BaseHTTPRequestHandler`（`novel_proofer/server.py`）
+- Web Server：FastAPI（`novel_proofer/api.py`） + Uvicorn（`novel_proofer/server.py` 启动器）
 - 并发：`concurrent.futures.ThreadPoolExecutor`（LLM 分片并发，`novel_proofer/runner.py`）
 - LLM 访问：`urllib.request` 直接发 HTTP JSON（`novel_proofer/llm/client.py`）
-  - OpenAI-compatible：`POST {base_url}/v1/chat/completions`
-  - Gemini：`POST {base_url}/v1beta/models/{model}:generateContent`
+  - OpenAI-compatible：`POST {base_url}/v1/chat/completions`（SSE 流式）
 - 前端：单页 HTML + 原生 JS（`templates/index.html`），可按需引入框架或库
 - Windows 便捷启动：`start.bat`（创建/激活 `.venv`，可选安装 `requirements.txt`，自动选空闲端口，启动服务）
 
@@ -34,17 +33,14 @@
 
 ### Architecture Patterns
 核心模块分层（建议保持这种分层，避免把逻辑堆到 handler 里）：
-- HTTP 层：`novel_proofer/server.py`
-  - `Handler` 处理请求
+- HTTP 层：`novel_proofer/api.py`
+  - FastAPI app + 路由/校验/统一错误结构
   - 主要端点：
     - `GET /`：返回页面模板
-    - `GET /health`：健康检查
-    - `POST /api/jobs/create`：创建异步任务（后台线程执行）
-    - `GET /api/jobs/status?job_id=...`：轮询任务状态/分片状态
-    - `POST /api/jobs/cancel`：取消任务
-    - `POST /api/jobs/retry_failed`：仅重试失败分片（允许用户先更新 LLM 配置）
-    - `POST /format`：遗留同步路径（兼容用；可返回 stats/json/下载）
-    - `GET /api/jobs/download`：当前被禁用（返回 410），输出文件改为写入 `output/`
+    - `GET /healthz`：健康检查
+    - `POST /api/v1/jobs`：创建异步任务（multipart：file + options JSON）
+    - `GET /api/v1/jobs/{job_id}`：查询任务状态（可选返回 chunk 列表，支持过滤与分页）
+    - `POST /api/v1/jobs/{job_id}/cancel|pause|resume|retry-failed|cleanup-debug`：任务动作端点
 - 任务与状态：`novel_proofer/jobs.py`
   - `JobStore` 为内存态任务存储（线程锁保护），用于进度、错误与统计信息
 - 执行器：`novel_proofer/runner.py`
@@ -61,24 +57,19 @@
   - `config.py`：提供商/鉴权/并发/重试等参数 + system prompt
 
 数据与文件：
-- 上传 TXT：服务端会尝试 `utf-8-sig/utf-8/gb18030/gbk` 解码（`novel_proofer/server.py:_decode_text`）
+- 上传 TXT：服务端会尝试 `utf-8-sig/utf-8/gb18030/gbk` 解码（`novel_proofer/api.py:_decode_text`）
 - 分片工作区：每个 job 会在 `output/.jobs/<job_id>/` 下落盘保存分片中间结果（`pre/` 与 `out/` 等）；默认任务成功后自动清理，可在 UI 取消勾选“完成后删除调试中间文件”来保留
 - 最终输出：仅当全部分片成功时，才会将合并结果写入 `output/`（统一为 `utf-8`；文件名会做安全清洗 `_safe_filename`）
 
 ### Testing Strategy
 测试分为两类：
-- smoke scripts：更接近真实使用路径，必须在项目虚拟环境中运行
-  - 推荐一键：`start.bat --smoke`
-  - 或直接运行（Windows）：`./.venv/Scripts/python.exe tests/smoke_test.py`
-- pytest 单元测试：覆盖 formatting/runner/server 等关键逻辑（需要安装 `requirements-dev.txt`）
+- `start.bat --smoke`：在虚拟环境中运行 `pytest -q` 做基本自检（会安装 `requirements-dev.txt`）
+- pytest 单元测试：覆盖 formatting/runner/api 等关键逻辑（需要安装 `requirements-dev.txt`）
   - 安装：`pip install -r requirements-dev.txt`
   - 运行：`pytest -q`
 
 现有测试（位于 `tests/` 目录）：
-- `tests/smoke_test.py`：启动内存内 HTTPServer，调用 `/health` 与 `/format`（stats）做基本自检
-- `tests/smoke_status_chunks.py`：验证 status 接口在缺失 job 时返回 404
-- `tests/smoke_cancel_job.py`：验证创建 job → cancel → 状态为 `cancelled`
-- `tests/smoke_debug_dir_retention.py`：验证任务成功后调试目录默认清理；取消清理开关则保留
+- `tests/test_api_endpoints.py`：FastAPI v1 端点基本行为
 - `tests/test_think_filter.py`：ThinkTagFilter 单元测试（pytest）
 
 建议测试约定：
@@ -108,17 +99,16 @@
 
 ## Important Constraints
 - Windows 友好：提供 `start.bat` 一键启动；端口自动探测（`netstat`）
-- 大文件处理：上传体积限制 200MB（`novel_proofer/server.py`），并支持分片并发
+- 大文件处理：上传体积限制 200MB（`novel_proofer/api.py`），并支持分片并发
 - **环境隔离（强制）**：
   - 本项目所有运行/测试/验证都必须使用项目内的虚拟环境解释器：`./.venv/Scripts/python.exe`
-  - 不要用主机 `python` 直接运行任何 `tests/smoke_*.py` 或启动服务
+  - 不要用主机 `python` 直接启动服务
   - 参考启动脚本：`start.bat` 会创建/激活 `.venv` 并用 `"%VENV_DIR%\Scripts\python.exe" -m novel_proofer.server ...`
 - 安全：
   - 不要在仓库里硬编码 `LLM` 的 `api_key`
-  - 上传文件名会被清洗；下载头使用 RFC 5987 处理 UTF-8 文件名（`_content_disposition`）
+  - 上传文件名会被清洗（`_safe_filename`）
 
 ## External Dependencies
-- 可选外部服务：LLM provider（通过页面表单或 API 传入）
-  - OpenAI-compatible：需要 `base_url`/`model`，可选 `api_key`
-  - Gemini：同上
+- 可选外部服务：OpenAI-compatible LLM（通过页面表单或 API 传入）
+  - 需要 `base_url`/`model`，可选 `api_key`
 - 其他：无数据库、无消息队列、无外部存储；任务状态仅保存在内存中（进程重启即丢失）
