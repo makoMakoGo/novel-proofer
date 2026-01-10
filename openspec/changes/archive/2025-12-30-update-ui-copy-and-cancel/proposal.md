@@ -21,17 +21,18 @@
   - `templates/index.html`（按钮文案、提示文案、取消按钮与交互）
   - `novel_proofer/jobs.py`（支持 cancelled 状态/对外状态一致性）
   - `novel_proofer/runner.py`（尽早检查取消，避免继续 LLM 调用与后续 chunk 处理）
-  - `novel_proofer/server.py`（取消请求处理与返回结构，如需调整）
+  - `novel_proofer/api.py`（取消/暂停等请求处理与返回结构）
 
 ## Implementation Reference (not shown in UI)
 以下仅作为实现者参考，不应出现在 UI 文案/提示中：
-- `GET /health`：健康检查
-- `POST /api/jobs/create`：创建异步校对任务
-- `GET /api/jobs/status?job_id=...`：轮询任务进度/分片状态
-- `POST /api/jobs/cancel`：取消任务
-- `GET /api/jobs/download`：当前禁用（410），产物以写入 `output/` 为主
-- `POST /format`：遗留同步路径（保留兼容用）
+- `GET /healthz`：健康检查
+- `POST /api/v1/jobs`：创建异步校对任务（上传 TXT）
+- `GET /api/v1/jobs/{job_id}`：轮询任务进度/分片状态
+- `POST /api/v1/jobs/{job_id}/cancel`：取消任务
+- `POST /api/v1/jobs/{job_id}/pause`：暂停任务
+- `POST /api/v1/jobs/{job_id}/resume`：继续任务
+- `POST /api/v1/jobs/{job_id}/retry-failed`：重试失败分片
+- `POST /api/v1/jobs/{job_id}/cleanup-debug`：清理中间文件（并从内存中删除 job）
 
 ## Non-Goals
-- 不强制实现真正的“暂停后可恢复”（resume）。本次“暂停”指用户可取消当前任务。
 - 不新增下载端点；输出仍以写入 `output/` 为主（如未来恢复下载可另开 change）。

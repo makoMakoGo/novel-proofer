@@ -9,7 +9,7 @@
 
 ## 3. Streaming Client
 - [x] 3.1 实现 `_stream_openai_compatible()` 流式请求函数
-- [x] 3.2 实现 `_stream_gemini()` 流式请求函数
+- [x] 3.2 仅保留 OpenAI-compatible SSE 解析路径
 - [x] 3.3 集成 ThinkTagFilter 到流式处理
 - [x] 3.4 修改 `call_llm_text()` 强制使用流式请求
 
@@ -18,5 +18,5 @@
 
 ## 5. Testing
 - [x] 5.1 添加 ThinkTagFilter 单元测试
-- [ ] 5.2 添加流式请求 smoke test
+- [x] 5.2 添加流式请求 pytest 单元测试（SSE 解析）
 - [ ] 5.3 验证网关超时场景

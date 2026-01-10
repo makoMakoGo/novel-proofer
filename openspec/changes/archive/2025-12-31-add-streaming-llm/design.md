@@ -38,8 +38,8 @@
 ### Decision 3: 额外参数透传
 - **What**: 在 LLMConfig 中新增 `extra_params: Optional[dict]` 配置
 - **Why**: 
-  - 不同 provider 使用不同参数名（thinking、enable_thinking、reasoning_effort 等）
-  - 用户可能需要透传其他 provider 特定参数
+  - 不同服务/模型使用不同参数名（thinking、enable_thinking、reasoning_effort 等）
+  - 用户可能需要透传其他服务/模型特定参数
   - 让用户自行输入 JSON，更加灵活和 robust
 - **UI**: 在配置界面添加可选的 JSON 输入框
 
@@ -52,7 +52,7 @@
 ## Risks / Trade-offs
 - **Risk**: 流式解析增加代码复杂度 → 通过状态机封装降低复杂度
 - **Trade-off**: 流式请求无法获取完整 token 统计 → 可接受，当前未使用此信息
-- **Trade-off**: 用户需要了解 provider 的参数格式 → 可接受，提供示例
+- **Trade-off**: 用户需要了解服务/模型的参数格式 → 可接受，提供示例
 
 ## Migration Plan
 1. 修改 `call_llm_text` 直接使用流式请求（移除非流式代码）

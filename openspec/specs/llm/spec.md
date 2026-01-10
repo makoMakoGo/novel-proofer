@@ -1,7 +1,7 @@
 # llm Specification
 
 ## Purpose
-LLM 客户端行为规范，包括流式请求、可选参数透传、思考内容过滤等。
+LLM 客户端行为规范：覆盖 OpenAI-compatible SSE 流式调用、可选参数透传、Think 标签过滤与开关，以及与重试/取消相关的可观察行为。
 
 ## Requirements
 

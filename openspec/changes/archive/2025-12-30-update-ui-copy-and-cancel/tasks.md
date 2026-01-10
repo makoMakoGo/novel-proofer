@@ -14,5 +14,5 @@
 - [x] 3.3 执行器与 worker：在开始处理 chunk 前检查取消，避免继续发起新的 LLM 请求
 
 ## 4. 验证
-- [x] 4.1 更新/新增 smoke 脚本覆盖取消路径（创建 job → cancel → 状态为 cancelled）
+- [x] 4.1 更新/新增 pytest 用例覆盖取消路径（创建 job → cancel → 状态为 cancelled）
 - [x] 4.2 `openspec validate update-ui-copy-and-cancel --strict` 通过

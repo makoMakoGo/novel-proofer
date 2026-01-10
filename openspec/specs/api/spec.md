@@ -1,7 +1,7 @@
 # api Specification
 
 ## Purpose
-对外 HTTP API 行为规范：定义版本化端点、请求/响应结构、错误语义与 job 生命周期。
+对外 HTTP API 行为规范：定义版本化端点、请求/响应结构、错误语义与 job 生命周期，并明确文件上传与输出策略（产物写入 `output/`，不提供下载端点）。
 
 ## Requirements
 
@@ -56,4 +56,3 @@
 - **WHEN** 客户端请求不存在的 `job_id`
 - **THEN** 返回 `404`
 - **AND** JSON 体包含 `error.code = "not_found"`
-

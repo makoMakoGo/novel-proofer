@@ -1,7 +1,7 @@
 # ui Specification
 
 ## Purpose
-用户界面行为规范，包括文案、交互和状态反馈，确保UI以用户目标为中心，不暴露技术细节。
+用户界面行为规范：包括表单参数、进度与完成提示、调试信息展示与过滤、暂停/取消/重试等交互，并确保 UI 以用户目标为中心，不暴露后端接口细节。
 ## Requirements
 ### Requirement: UI uses user-centered labels
 页面 SHALL 以用户目标为中心，不使用实现细节作为按钮文案：
