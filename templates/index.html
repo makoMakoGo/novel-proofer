@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>小说排版校对器（TXT）</title>
+  <title>涩涩小说排版校对器</title>
   <style>
     :root {
       --bg: #fafafa;
@@ -21,26 +21,26 @@
     }
 
     * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 40px 24px; background: var(--bg); color: var(--text); line-height: 1.5; }
-    .wrap { max-width: 800px; margin: 0 auto; }
-    h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 24px; letter-spacing: -0.02em; }
-    .card { background: var(--card); border-radius: var(--radius); padding: 32px; box-shadow: var(--shadow); }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 24px; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 24px; letter-spacing: -0.02em; text-align: center; color: var(--text); }
+    .card { background: var(--card); border-radius: var(--radius); padding: 28px 36px; box-shadow: var(--shadow); }
 
-    .row { display: flex; gap: 20px; flex-wrap: wrap; }
-    label { display: block; font-size: 13px; color: var(--text-muted); margin: 20px 0 8px; font-weight: 500; }
-    input[type="text"], input[type="number"] { width: 240px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
+    .row { display: flex; gap: 16px; flex-wrap: wrap; }
+    label { display: block; font-size: 13px; color: var(--text-muted); margin: 12px 0 5px; font-weight: 500; }
+    input[type="text"], input[type="number"] { width: 180px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
     input[type="text"]:focus, input[type="number"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
-    textarea { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; transition: border-color .15s, box-shadow .15s; resize: vertical; min-height: 110px; }
+    textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; transition: border-color .15s, box-shadow .15s; resize: vertical; min-height: 60px; }
     textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
-    input[type="file"] { width: 100%; padding: 12px; border: 2px dashed var(--border); border-radius: var(--radius-sm); background: var(--input-bg); cursor: pointer; transition: border-color .15s; }
+    input[type="file"] { width: 100%; padding: 10px; border: 2px dashed var(--border); border-radius: var(--radius-sm); background: var(--input-bg); cursor: pointer; transition: border-color .15s; }
     input[type="file"]:hover { border-color: #ccc; }
 
-    .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 12px; }
-    .checks label { margin: 0; display: flex; gap: 10px; align-items: center; font-weight: 400; color: var(--text); cursor: pointer; padding: 8px 12px; border-radius: var(--radius-sm); transition: background .15s; }
+    .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-top: 8px; }
+    .checks label { margin: 0; display: flex; gap: 10px; align-items: center; font-weight: 400; color: var(--text); cursor: pointer; padding: 6px 10px; border-radius: var(--radius-sm); transition: background .15s; }
     .checks label:hover { background: var(--input-bg); }
     .checks input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
 
-    button { margin-top: 20px; padding: 12px 20px; border: none; border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: 14px; font-weight: 500; cursor: pointer; transition: background .15s, transform .1s; }
+    button { margin-top: 16px; padding: 10px 18px; border: none; border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: 14px; font-weight: 500; cursor: pointer; transition: background .15s, transform .1s; }
     button:hover { background: var(--accent-hover); }
     button:active { transform: scale(0.98); }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -48,8 +48,8 @@
     .ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
     .ghost:hover { background: var(--input-bg); border-color: #ccc; }
 
-    .hint { color: var(--text-muted); font-size: 13px; margin-top: 24px; line-height: 1.8; }
-    .out { margin-top: 20px; padding: 16px; background: var(--input-bg); border-radius: var(--radius-sm); }
+    .hint { color: var(--text-muted); font-size: 12px; margin-top: 20px; line-height: 1.7; }
+    .out { margin-top: 16px; padding: 14px; background: var(--input-bg); border-radius: var(--radius-sm); }
     .out pre { white-space: pre-wrap; margin: 0; font-size: 13px; font-family: "SF Mono", Consolas, monospace; }
     code { background: var(--input-bg); padding: 2px 8px; border-radius: 6px; font-size: 12px; }
 
@@ -58,8 +58,8 @@
     .meta { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-muted); margin-top: 12px; }
 
     /* Tabs */
-    .tabs { display: flex; gap: 4px; margin-bottom: 28px; border-bottom: 1px solid var(--border); }
-    .tab-btn { padding: 12px 20px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--text-muted); position: relative; transition: color .15s; font-weight: 500; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+    .tab-btn { padding: 10px 18px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--text-muted); position: relative; transition: color .15s; font-weight: 500; }
     .tab-btn:hover { color: var(--text); background: var(--input-bg); }
     .tab-btn.active { color: var(--text); }
     .tab-btn.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--accent); border-radius: 2px 2px 0 0; }
@@ -106,8 +106,8 @@
 </head>
 <body>
   <div class="wrap">
-    <h1>小说排版校对器（TXT）</h1>
     <div class="card">
+      <h1>涩涩小说排版校对器</h1>
       <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
       <label>上传 TXT</label>
       <input name="file" type="file" accept=".txt,text/plain" required />
@@ -190,12 +190,12 @@
             <label>Model</label>
             <input name="llm_model" type="text" value="DeepSeek-V3.2-Exp" />
           </div>
-        </div>
-        <div class="row">
           <div>
             <label>API Key（可留空）</label>
             <input name="llm_api_key" type="text" placeholder="sk-..." />
           </div>
+        </div>
+        <div class="row">
           <div>
             <label>Temperature</label>
             <input name="llm_temperature" type="number" step="0.1" value="0" />
