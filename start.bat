@@ -27,6 +27,8 @@ if not exist "%PYTHON_EXE%" (
     echo [novel-proofer] Please ensure Python is installed and on PATH.
     exit /b 1
   )
+) else (
+  echo [novel-proofer] Virtual environment already configured.
 )
 
 call "%VENV_DIR%\Scripts\activate.bat"
@@ -50,12 +52,18 @@ if exist "requirements.txt" (
   )
 
   if "!HAS_REQ!"=="1" (
-    echo [novel-proofer] Installing dependencies from requirements.txt...
-    "%PYTHON_EXE%" -m pip --disable-pip-version-check install -r requirements.txt
+    rem Check if all requirements are already satisfied (silent)
+    "%PYTHON_EXE%" -c "import sys,re;from pathlib import Path;from importlib.metadata import version;from pip._vendor.packaging.requirements import Requirement;sys.exit(0 if all(True if not (line:=re.split(r'\s+#',raw.lstrip('\ufeff').strip(),1)[0].strip()) or line.startswith('#') else (False if line.startswith('-') else ((req:=Requirement(line)) and ((req.marker is not None and not req.marker.evaluate()) or (not getattr(req,'url',None) and (not req.specifier or req.specifier.contains(version(req.name),prereleases=True)))))) for raw in Path('requirements.txt').read_text(encoding='utf-8',errors='replace').splitlines()) else 1)" >nul 2>&1
     if errorlevel 1 (
-      echo [novel-proofer] Dependency install failed.
-      echo [novel-proofer] If you are offline or behind a proxy, configure pip accordingly.
-      exit /b 1
+      echo [novel-proofer] Installing dependencies from requirements.txt...
+      "%PYTHON_EXE%" -m pip --disable-pip-version-check install -r requirements.txt
+      if errorlevel 1 (
+        echo [novel-proofer] Dependency install failed.
+        echo [novel-proofer] If you are offline or behind a proxy, configure pip accordingly.
+        exit /b 1
+      )
+    ) else (
+      echo [novel-proofer] Dependencies already installed.
     )
   ) else (
     echo [novel-proofer] requirements.txt has no dependencies, skipping install.
