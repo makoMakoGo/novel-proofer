@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from novel_proofer.formatting.chunking import chunk_by_lines
+from novel_proofer.formatting.chunking import chunk_by_lines_with_first_chunk_max
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.formatting.rules import apply_rules
 from novel_proofer.llm.client import call_llm_text_resilient
@@ -51,7 +51,12 @@ def _merge_text_parts(parts: list[str]) -> str:
 
 def format_txt(text: str, config: FormatConfig, llm: LLMConfig | None = None) -> FormatResult:
     stats: dict[str, int] = {}
-    chunks = chunk_by_lines(text, max_chars=max(2_000, int(config.max_chunk_chars)))
+    max_chars = int(config.max_chunk_chars)
+    max_chars = max(200, min(4_000, max_chars))
+    first_chunk_max_chars = max_chars
+    if llm is not None and llm.enabled:
+        first_chunk_max_chars = min(4_000, max(first_chunk_max_chars, 2_000))
+    chunks = chunk_by_lines_with_first_chunk_max(text, max_chars=max_chars, first_chunk_max_chars=first_chunk_max_chars)
 
     out_parts: list[str] = []
     for i, chunk in enumerate(chunks):

@@ -7,7 +7,7 @@ import uuid
 from dataclasses import replace
 from pathlib import Path
 
-from novel_proofer.formatting.chunking import chunk_by_lines
+from novel_proofer.formatting.chunking import chunk_by_lines_with_first_chunk_max
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.formatting.rules import apply_rules
 from novel_proofer.jobs import GLOBAL_JOBS
@@ -388,7 +388,16 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
     GLOBAL_JOBS.update(job_id, state="running", started_at=time.time(), finished_at=None, error=None)
 
     try:
-        chunks = chunk_by_lines(input_text, max_chars=max(2_000, int(fmt.max_chunk_chars)))
+        max_chars = int(fmt.max_chunk_chars)
+        max_chars = max(200, min(4_000, max_chars))
+        first_chunk_max_chars = max_chars
+        if llm.enabled:
+            first_chunk_max_chars = min(4_000, max(first_chunk_max_chars, 2_000))
+        chunks = chunk_by_lines_with_first_chunk_max(
+            input_text,
+            max_chars=max_chars,
+            first_chunk_max_chars=first_chunk_max_chars,
+        )
         total = len(chunks)
         GLOBAL_JOBS.init_chunks(job_id, total_chunks=total)
 

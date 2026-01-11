@@ -56,3 +56,31 @@ def chunk_by_lines(text: str, max_chars: int) -> list[str]:
 
     flush_all()
     return chunks
+
+
+def chunk_by_lines_with_first_chunk_max(text: str, *, max_chars: int, first_chunk_max_chars: int) -> list[str]:
+    """Chunk text by lines, allowing a larger first chunk budget.
+
+    This is useful when the first chunk needs to carry additional context
+    (e.g. front-matter that must be cleaned with a different prompt).
+    """
+    if max_chars <= 0:
+        return [text]
+
+    # Fallback to the standard behavior when the first chunk budget is not larger.
+    if first_chunk_max_chars <= max_chars or first_chunk_max_chars <= 0:
+        return chunk_by_lines(text, max_chars=max_chars)
+
+    first_pass = chunk_by_lines(text, max_chars=first_chunk_max_chars)
+    if not first_pass:
+        return [text]
+
+    first = first_pass[0]
+    rest_text = "".join(first_pass[1:])
+    if rest_text == "":
+        return [first]
+
+    rest = chunk_by_lines(rest_text, max_chars=max_chars)
+    if rest == [""]:
+        return [first]
+    return [first, *rest]

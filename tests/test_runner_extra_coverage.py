@@ -302,7 +302,11 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
             work_dir = base / "w6"
             out_path = base / "o6.txt"
             GLOBAL_JOBS.update(job6_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
-            monkeypatch.setattr(runner, "chunk_by_lines", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+            monkeypatch.setattr(
+                runner,
+                "chunk_by_lines_with_first_chunk_max",
+                lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+            )
             runner.run_job(job6_id, "x\n", fmt, llm_off)
             st = GLOBAL_JOBS.get(job6_id)
             assert st is not None and st.state == "error"

@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>涩涩小说排版校对器</title>
+  <title>Novel Proofer</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z' stroke='%23292D32' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M18.3801 15.27V7.57999C18.3801 6.80999 17.7601 6.25 17.0001 6.31H16.9601C15.6201 6.42 13.5901 7.11001 12.4501 7.82001L12.3401 7.89002C12.1601 8.00002 11.8501 8.00002 11.6601 7.89002L11.5001 7.79001C10.3701 7.08001 8.34012 6.40999 7.00012 6.29999C6.24012 6.23999 5.62012 6.81001 5.62012 7.57001V15.27C5.62012 15.88 6.1201 16.46 6.7301 16.53L6.9101 16.56C8.2901 16.74 10.4301 17.45 11.6501 18.12L11.6801 18.13C11.8501 18.23 12.1301 18.23 12.2901 18.13C13.5101 17.45 15.6601 16.75 17.0501 16.56L17.2601 16.53C17.8801 16.46 18.3801 15.89 18.3801 15.27Z' stroke='%23292D32' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 8.1001V17.6601' stroke='%23292D32' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <style>
     :root {
       --bg: #fafafa;
@@ -21,13 +22,14 @@
     }
 
     * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 24px; background: var(--bg); color: var(--text); line-height: 1.5; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 12px 24px 24px; background: var(--bg); color: var(--text); line-height: 1.5; }
     .wrap { max-width: 1100px; margin: 0 auto; }
     h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 24px; letter-spacing: -0.02em; text-align: center; color: var(--text); }
-    .card { background: var(--card); border-radius: var(--radius); padding: 28px 36px; box-shadow: var(--shadow); }
+    .card { background: var(--card); border-radius: var(--radius); padding: 16px 36px 28px; box-shadow: var(--shadow); }
 
     .row { display: flex; gap: 16px; flex-wrap: wrap; }
     label { display: block; font-size: 13px; color: var(--text-muted); margin: 12px 0 5px; font-weight: 500; }
+    .field-hint { margin: -2px 0 6px; font-size: 12px; color: var(--text-muted); line-height: 1.4; }
     input[type="text"], input[type="number"] { width: 180px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
     input[type="text"]:focus, input[type="number"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
     textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; transition: border-color .15s, box-shadow .15s; resize: vertical; min-height: 60px; }
@@ -77,12 +79,16 @@
     .filter-btn:hover { border-color: #ccc; color: var(--text); background: var(--input-bg); }
     .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
-    .chunks-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .chunks-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
     .chunks-table th { text-align: left; padding: 12px 16px; background: var(--input-bg); font-weight: 500; color: var(--text-muted); }
     .chunks-table th:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
     .chunks-table th:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
     .chunks-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); }
     .chunks-table tr:hover td { background: var(--input-bg); }
+    .chunks-table th:nth-child(1), .chunks-table td:nth-child(1) { width: 72px; }
+    .chunks-table th:nth-child(2), .chunks-table td:nth-child(2) { width: 160px; }
+    .chunks-table th:nth-child(3), .chunks-table td:nth-child(3) { width: 80px; }
+    .chunks-table th:nth-child(4), .chunks-table td:nth-child(4) { width: 120px; }
 
     .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; }
     .status-pending { background: #f3f4f6; color: #6b7280; }
@@ -90,7 +96,7 @@
     .status-done { background: #f0fdf4; color: #22c55e; }
     .status-error { background: #fef2f2; color: #ef4444; }
     .status-retrying { background: #fffbeb; color: #f59e0b; }
-    .error-brief { color: #ef4444; font-size: 12px; display: inline-block; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .error-brief { color: #ef4444; font-size: 12px; display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 
     @media (max-width: 600px) {
@@ -107,7 +113,7 @@
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>涩涩小说排版校对器</h1>
+      <h1><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: -3px; margin-right: 8px;"><path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M18.3801 15.27V7.57999C18.3801 6.80999 17.7601 6.25 17.0001 6.31H16.9601C15.6201 6.42 13.5901 7.11001 12.4501 7.82001L12.3401 7.89002C12.1601 8.00002 11.8501 8.00002 11.6601 7.89002L11.5001 7.79001C10.3701 7.08001 8.34012 6.40999 7.00012 6.29999C6.24012 6.23999 5.62012 6.81001 5.62012 7.57001V15.27C5.62012 15.88 6.1201 16.46 6.7301 16.53L6.9101 16.56C8.2901 16.74 10.4301 17.45 11.6501 18.12L11.6801 18.13C11.8501 18.23 12.1301 18.23 12.2901 18.13C13.5101 17.45 15.6601 16.75 17.0501 16.56L17.2601 16.53C17.8801 16.46 18.3801 15.89 18.3801 15.27Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 8.1001V17.6601" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Novel Proofer</h1>
       <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
       <label>上传 TXT</label>
       <input name="file" type="file" accept=".txt,text/plain" required />
@@ -157,7 +163,8 @@
           </div>
           <div>
             <label>分片大小（字符数）</label>
-            <input name="max_chunk_chars" type="number" min="2000" max="4000" step="2000" value="2000" />
+            <div class="field-hint">允许范围 200–4000（步进 100）；启用 LLM 时首分片最小 2000（用于清理前置信息）。</div>
+            <input name="max_chunk_chars" type="number" min="200" max="4000" step="100" value="2000" />
           </div>
         </div>
 

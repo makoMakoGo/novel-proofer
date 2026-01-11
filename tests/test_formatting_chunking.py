@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from novel_proofer.formatting.chunking import chunk_by_lines
+from novel_proofer.formatting.chunking import chunk_by_lines, chunk_by_lines_with_first_chunk_max
 
 
 def test_chunk_by_lines_max_chars_non_positive_returns_whole_text() -> None:
@@ -36,3 +36,9 @@ def test_chunk_by_lines_flush_upto_leaves_tail() -> None:
     # re-scans the remaining buffer.
     text = "aa\n\nbb\ncc\n"
     assert chunk_by_lines(text, max_chars=7) == ["aa\n\n", "bb\ncc\n"]
+
+
+def test_chunk_by_lines_with_first_chunk_max_uses_larger_budget_for_first_chunk() -> None:
+    text = "aaa\n\nbbbb\n\ncccc\n\ndddd\n"
+    out = chunk_by_lines_with_first_chunk_max(text, max_chars=6, first_chunk_max_chars=12)
+    assert out == ["aaa\n\nbbbb\n\n", "cccc\n\n", "dddd\n"]

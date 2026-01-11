@@ -129,7 +129,7 @@ class LLMOptions(BaseModel):
 
 
 class FormatOptions(BaseModel):
-    max_chunk_chars: int = Field(default=2_000, ge=2_000, le=4_000)
+    max_chunk_chars: int = Field(default=2_000, ge=200, le=4_000)
     paragraph_indent: bool = True
     indent_with_fullwidth_space: bool = True
     normalize_blank_lines: bool = True
@@ -520,4 +520,3 @@ async def cleanup_debug(job_id: str):
 
     deleted = GLOBAL_JOBS.delete(job_id)
     return JobActionResponse(ok=True, job=_job_to_out(st) if deleted else None)
-
