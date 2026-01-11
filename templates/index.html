@@ -29,7 +29,6 @@
 
     .row { display: flex; gap: 16px; flex-wrap: wrap; }
     label { display: block; font-size: 13px; color: var(--text-muted); margin: 12px 0 5px; font-weight: 500; }
-    .field-hint { margin: -2px 0 6px; font-size: 12px; color: var(--text-muted); line-height: 1.4; }
     input[type="text"], input[type="number"] { width: 180px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
     input[type="text"]:focus, input[type="number"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
     textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; transition: border-color .15s, box-shadow .15s; resize: vertical; min-height: 60px; }
@@ -163,7 +162,6 @@
           </div>
           <div>
             <label>分片大小（字符数）</label>
-            <div class="field-hint">允许范围 200–4000（步进 100）；启用 LLM 时首分片最小 2000（用于清理前置信息）。</div>
             <input name="max_chunk_chars" type="number" min="200" max="4000" step="100" value="2000" />
           </div>
         </div>
