@@ -412,6 +412,27 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
             if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
                 GLOBAL_JOBS.update(job_id, state="paused", finished_at=None)
                 return
+
+            # Post-LLM deterministic pass: enforce local formatting invariants on outputs.
+            post_stats: dict[str, int] = {}
+            cur = GLOBAL_JOBS.get(job_id)
+            if cur is not None:
+                for cs in cur.chunk_statuses:
+                    if GLOBAL_JOBS.is_cancelled(job_id):
+                        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+                        return
+                    if cs.state != "done":
+                        continue
+                    p = _chunk_path(work_dir, "out", cs.index)
+                    if not p.exists():
+                        continue
+                    chunk_out = p.read_text(encoding="utf-8")
+                    fixed, s = apply_rules(chunk_out, fmt)
+                    if fixed != chunk_out:
+                        _atomic_write_text(p, fixed)
+                    _merge_stats(post_stats, s)
+            for k, v in post_stats.items():
+                GLOBAL_JOBS.add_stat(job_id, f"post_{k}", v)
         else:
             # Pure local mode: treat local output as final chunk output.
             for i in range(total):

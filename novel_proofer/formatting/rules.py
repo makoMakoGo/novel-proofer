@@ -53,8 +53,8 @@ def apply_rules(text: str, config: FormatConfig) -> tuple[str, dict[str, int]]:
             stats["trim_trailing_spaces"] = stats.get("trim_trailing_spaces", 0) + n
 
     if config.normalize_blank_lines:
-        # Collapse 3+ blank lines into 2 blank lines.
-        text, n = re.subn(r"\n{4,}", "\n\n\n", text)
+        # Collapse 2+ blank lines into 1 blank line.
+        text, n = re.subn(r"\n{3,}", "\n\n", text)
         if n:
             stats["normalize_blank_lines"] = stats.get("normalize_blank_lines", 0) + n
 
@@ -208,7 +208,7 @@ def _normalize_quotes(text: str) -> tuple[str, int]:
     return "\n".join(lines), changed
 
 
-_leading_ws_re = re.compile(r"^(?:[ \t]|\u3000)+")
+_leading_ws_re = re.compile(r"^\s+")
 
 
 def _normalize_paragraph_indent(text: str, config: FormatConfig) -> tuple[str, bool]:
