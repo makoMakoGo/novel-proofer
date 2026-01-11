@@ -876,8 +876,8 @@
         return;
       }
       const maxChunkChars = Number(fd.get('max_chunk_chars') || 0);
-      if (!Number.isFinite(maxChunkChars) || maxChunkChars < 2000 || maxChunkChars > 4000) {
-        show('分片大小（字符数）必须在 2000-4000 之间。');
+      if (!Number.isFinite(maxChunkChars) || maxChunkChars < 200 || maxChunkChars > 4000) {
+        show('分片大小（字符数）必须在 200-4000 之间。');
         return;
       }
       show('已提交，准备开始…');
