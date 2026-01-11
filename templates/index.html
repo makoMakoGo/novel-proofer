@@ -108,6 +108,39 @@
   <div class="wrap">
     <h1>小说排版校对器（TXT）</h1>
     <div class="card">
+      <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
+      <label>上传 TXT</label>
+      <input name="file" type="file" accept=".txt,text/plain" required />
+
+      <!-- Action Area (always visible) -->
+      <div class="btns">
+        <button type="button" id="btnStart">开始校对</button>
+        <button type="button" class="ghost" id="btnPause" style="display:none" disabled>暂停</button>
+        <button type="button" class="ghost" id="btnCancel" style="display:none" disabled>取消</button>
+        <button type="button" class="ghost" id="btnRetry" style="display:none" disabled>重试失败部分</button>
+        <button type="button" class="ghost" id="btnCleanup" style="display:none" disabled>清理中间文件</button>
+      </div>
+
+      <div class="progress" id="progress" style="display:none">
+        <div class="bar" id="bar"></div>
+      </div>
+      <div class="meta" id="meta" style="display:none">
+        <div id="metaLeft">准备中</div>
+        <div id="metaRight">0%</div>
+      </div>
+
+      <div class="out" id="out" style="display:none">
+        <pre id="outText"></pre>
+      </div>
+
+      <div class="hint">
+        <div>默认启用 LLM；会按"分片大小"分片并发处理（并发表示同时在飞请求数，不是一次处理总字数）。</div>
+        <div>如果部分分片失败，可修改 LLM 配置后点击"重试失败部分"。</div>
+        <div>如遇到 token limit / 输出过短，可在"额外参数"里尝试设置输出上限（例如 <code>{"max_tokens": 4096}</code>；不同服务参数名可能不同）。</div>
+        <div>如需排查中间结果，可取消勾选"完成后删除调试中间文件"；中间文件位于 <code>output/.jobs/</code>。</div>
+        <div>完成后结果会写入项目 <code>output/</code> 目录。</div>
+      </div>
+
       <!-- Tab Navigation -->
       <div class="tabs">
         <button type="button" class="tab-btn active" data-tab="progress">参数设置</button>
@@ -116,9 +149,6 @@
 
       <!-- Progress Tab -->
       <div id="tab-progress" class="tab-content active">
-        <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
-          <label>上传 TXT</label>
-        <input name="file" type="file" accept=".txt,text/plain" required />
 
         <div class="row">
           <div>
@@ -197,36 +227,8 @@
           <label>额外参数（JSON，可选，透传给 LLM）</label>
           <textarea name="llm_extra_params" placeholder='例如：{"max_tokens": 4096}'></textarea>
         </div>
-
-        <div class="btns">
-          <button type="submit" id="btnStart">开始校对</button>
-          <button type="button" class="ghost" id="btnPause" style="display:none" disabled>暂停</button>
-          <button type="button" class="ghost" id="btnCancel" style="display:none" disabled>取消</button>
-          <button type="button" class="ghost" id="btnRetry" style="display:none" disabled>重试失败部分</button>
-          <button type="button" class="ghost" id="btnCleanup" style="display:none" disabled>清理中间文件</button>
-        </div>
-
-        <div class="progress" id="progress" style="display:none">
-          <div class="bar" id="bar"></div>
-        </div>
-        <div class="meta" id="meta" style="display:none">
-          <div id="metaLeft">准备中</div>
-          <div id="metaRight">0%</div>
-        </div>
-
-        <div class="out" id="out" style="display:none">
-          <pre id="outText"></pre>
-        </div>
-
-        <div class="hint">
-          <div>默认启用 LLM；会按“分片大小”分片并发处理（并发表示同时在飞请求数，不是一次处理总字数）。</div>
-          <div>如果部分分片失败，可修改 LLM 配置后点击“重试失败部分”。</div>
-          <div>如遇到 token limit / 输出过短，可在“额外参数”里尝试设置输出上限（例如 <code>{"max_tokens": 4096}</code>；不同服务参数名可能不同）。</div>
-          <div>如需排查中间结果，可取消勾选“完成后删除调试中间文件”；中间文件位于 <code>output/.jobs/</code>。</div>
-          <div>完成后结果会写入项目 <code>output/</code> 目录。</div>
-        </div>
-        </form>
       </div>
+      </form>
 
       <!-- Debug Tab -->
       <div id="tab-debug" class="tab-content">
@@ -848,6 +850,11 @@
         await new Promise(r => setTimeout(r, 800));
       }
     }
+
+    // btnStart click triggers form submit (button is outside form)
+    btnStart.addEventListener('click', () => {
+      form.requestSubmit();
+    });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();

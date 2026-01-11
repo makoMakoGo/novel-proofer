@@ -16,6 +16,7 @@ htmlcov/
 output/
 
 # Editor / tooling
+.playwright-mcp/
 
 # OS
 .DS_Store
