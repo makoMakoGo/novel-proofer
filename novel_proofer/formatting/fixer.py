@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from novel_proofer.formatting.chunking import chunk_by_lines
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.formatting.rules import apply_rules
 from novel_proofer.llm.client import call_llm_text_resilient
-from novel_proofer.llm.config import LLMConfig
+from novel_proofer.llm.config import FIRST_CHUNK_SYSTEM_PROMPT_PREFIX, LLMConfig
 
 
 @dataclass
@@ -54,10 +54,13 @@ def format_txt(text: str, config: FormatConfig, llm: LLMConfig | None = None) ->
     chunks = chunk_by_lines(text, max_chars=max(2_000, int(config.max_chunk_chars)))
 
     out_parts: list[str] = []
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
         fixed, chunk_stats = apply_rules(chunk, config)
         if llm is not None and llm.enabled:
-            fixed = call_llm_text_resilient(llm, fixed)
+            llm_cfg = llm
+            if i == 0:
+                llm_cfg = replace(llm, system_prompt=FIRST_CHUNK_SYSTEM_PROMPT_PREFIX + "\n\n" + llm.system_prompt)
+            fixed = call_llm_text_resilient(llm_cfg, fixed)
             stats["llm_chunks"] = stats.get("llm_chunks", 0) + 1
         out_parts.append(fixed)
         for k, v in chunk_stats.items():

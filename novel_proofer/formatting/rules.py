@@ -24,6 +24,14 @@ def _is_chapter_title(line: str) -> bool:
     s = line.strip()
     if not s:
         return False
+    # Common book title formats (help keep the very first title unindented).
+    if len(s) <= 80 and s[-1] not in "。！？…" and (
+        (s.startswith("《") and s.endswith("》"))
+        or (s.startswith("【") and s.endswith("】"))
+        or (s.endswith("】") and "【" in s)
+        or (s.endswith("》") and "《" in s)
+    ):
+        return True
     # Common patterns: 第X章 / 序章 / 番外
     if _chapter_like_re.match(line):
         return True

@@ -128,28 +128,40 @@ def test_llm_worker_ratio_validation_errors(monkeypatch: pytest.MonkeyPatch) -> 
         base = Path(td)
         cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
 
-        def run_case(sub: str, out_text: str, expect: str) -> None:
+        def run_case(
+            sub: str,
+            *,
+            index: int,
+            total_chunks: int,
+            out_text: str,
+            expect_error_substr: str | None,
+        ) -> None:
             work_dir = base / sub
             out_path = base / f"{sub}.txt"
             (work_dir / "pre").mkdir(parents=True, exist_ok=True)
-            (work_dir / "pre" / "000000.txt").write_text(pre, encoding="utf-8")
-            job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
+            (work_dir / "pre" / f"{index:06d}.txt").write_text(pre, encoding="utf-8")
+            job_id = _mk_job(work_dir, out_path, total_chunks=total_chunks, cleanup_debug_dir=False)
             try:
                 monkeypatch.setattr(
                     runner,
                     "call_llm_text_resilient_with_meta_and_raw",
                     lambda *a, **k: (LLMTextResult(text=out_text, raw_text="RAW"), 0, None, None),
                 )
-                runner._llm_worker(job_id, 0, work_dir, cfg)
+                runner._llm_worker(job_id, index, work_dir, cfg)
                 st = GLOBAL_JOBS.get(job_id)
                 assert st is not None
-                assert st.chunk_statuses[0].state == "error"
-                assert expect in (st.chunk_statuses[0].last_error_message or "")
+                if expect_error_substr is None:
+                    assert st.chunk_statuses[index].state == "done"
+                else:
+                    assert st.chunk_statuses[index].state == "error"
+                    assert expect_error_substr in (st.chunk_statuses[index].last_error_message or "")
             finally:
                 GLOBAL_JOBS.delete(job_id)
 
-        run_case("short", "b" * 10, "too short")
-        run_case("long", "b" * 400, "too long")
+        # Chunk 0 is allowed to become shorter (front-matter removal).
+        run_case("short0", index=0, total_chunks=1, out_text="b" * 10, expect_error_substr=None)
+        run_case("short1", index=1, total_chunks=2, out_text="b" * 10, expect_error_substr="too short")
+        run_case("long0", index=0, total_chunks=1, out_text="b" * 400, expect_error_substr="too long")
 
 
 def test_run_llm_for_indices_paused_cancelled_and_worker_exception(monkeypatch: pytest.MonkeyPatch) -> None:

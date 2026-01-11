@@ -4,6 +4,7 @@ import concurrent.futures
 import shutil
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from novel_proofer.formatting.chunking import chunk_by_lines
@@ -11,7 +12,7 @@ from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.formatting.rules import apply_rules
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
-from novel_proofer.llm.config import LLMConfig
+from novel_proofer.llm.config import FIRST_CHUNK_SYSTEM_PROMPT_PREFIX, LLMConfig
 
 
 _JOB_DEBUG_README = """\
@@ -191,7 +192,7 @@ def _finalize_job(job_id: str, work_dir: Path, out_path: Path, total: int, error
     return True
 
 
-def _validate_llm_output(input_text: str, output_text: str) -> None:
+def _validate_llm_output(input_text: str, output_text: str, *, allow_shorter: bool = False) -> None:
     in_len = len(input_text)
     out_len = len(output_text)
     out_trim = len(output_text.strip())
@@ -202,7 +203,7 @@ def _validate_llm_output(input_text: str, output_text: str) -> None:
         )
     if in_len >= 200 and in_len > 0:
         ratio = out_len / in_len
-        if ratio < 0.85:
+        if ratio < 0.85 and not allow_shorter:
             raise LLMError(
                 f"LLM output too short (in={in_len}, out={out_len}, ratio={ratio:.2f} < 0.85)",
                 status_code=None,
@@ -258,8 +259,12 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         def _should_stop() -> bool:
             return GLOBAL_JOBS.is_cancelled(job_id)
 
+        llm_cfg = llm
+        if index == 0:
+            llm_cfg = replace(llm, system_prompt=FIRST_CHUNK_SYSTEM_PROMPT_PREFIX + "\n\n" + llm.system_prompt)
+
         result, retries, last_code, last_msg = call_llm_text_resilient_with_meta_and_raw(
-            llm,
+            llm_cfg,
             pre,
             should_stop=_should_stop,
             on_retry=on_retry,
@@ -278,7 +283,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
         _atomic_write_text(_chunk_path(work_dir, "resp", index), raw_text or "")
 
-        _validate_llm_output(pre, filtered_text)
+        _validate_llm_output(pre, filtered_text, allow_shorter=(index == 0))
 
         final_text = _align_trailing_newlines(pre, filtered_text)
         if final_text != filtered_text:
