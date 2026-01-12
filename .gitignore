@@ -22,3 +22,12 @@ output/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+## AI config not wanted
+.claude/specs/
+
+# Local agent notes
+AGENTS.md
+
+# OpenSpec (local/spec workspace)
+openspec/
