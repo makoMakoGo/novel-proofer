@@ -22,7 +22,7 @@ def test_llm_worker_skips_whitespace_only_chunk() -> None:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
 
             # Base URL/model intentionally empty: if LLM call happens, it would error.
-            cfg = LLMConfig(enabled=True, base_url="", model="")
+            cfg = LLMConfig(base_url="", model="")
 
             _llm_worker(job_id, 0, work_dir, cfg)
 

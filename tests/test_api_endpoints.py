@@ -9,7 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 import novel_proofer.api as api
+import novel_proofer.runner as runner
 from novel_proofer.jobs import GLOBAL_JOBS
+from novel_proofer.llm.client import LLMTextResult
 
 
 def _wait_job_done(client: TestClient, job_id: str, *, timeout_seconds: float = 5.0) -> dict:
@@ -34,6 +36,17 @@ def test_healthz_ok():
 
 
 def test_create_job_local_mode_writes_output_and_is_queryable(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        runner,
+        "call_llm_text_resilient_with_meta_and_raw",
+        lambda cfg, input_text, *, should_stop=None, on_retry=None: (
+            LLMTextResult(text=input_text, raw_text="RAW"),
+            0,
+            None,
+            None,
+        ),
+    )
+
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         out_dir = base / "output"
@@ -47,7 +60,7 @@ def test_create_job_local_mode_writes_output_and_is_queryable(monkeypatch: pytes
         client = TestClient(api.app)
         options = {
             "format": {"max_chunk_chars": 2000},
-            "llm": {"enabled": False},
+            "llm": {"base_url": "http://example.com", "model": "m", "max_concurrency": 1},
             "output": {"suffix": "_rev", "cleanup_debug_dir": True},
         }
 
@@ -78,6 +91,17 @@ def test_create_job_local_mode_writes_output_and_is_queryable(monkeypatch: pytes
 
 
 def test_get_job_chunk_filter_and_paging(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        runner,
+        "call_llm_text_resilient_with_meta_and_raw",
+        lambda cfg, input_text, *, should_stop=None, on_retry=None: (
+            LLMTextResult(text=input_text, raw_text="RAW"),
+            0,
+            None,
+            None,
+        ),
+    )
+
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         out_dir = base / "output"
@@ -92,7 +116,11 @@ def test_get_job_chunk_filter_and_paging(monkeypatch: pytest.MonkeyPatch):
 
         # Create enough text to produce multiple chunks.
         text = ("a" * 120 + "\n") * 100  # ~12k chars including newlines
-        options = {"format": {"max_chunk_chars": 2000}, "llm": {"enabled": False}, "output": {"suffix": "_rev"}}
+        options = {
+            "format": {"max_chunk_chars": 2000},
+            "llm": {"base_url": "http://example.com", "model": "m", "max_concurrency": 1},
+            "output": {"suffix": "_rev"},
+        }
         r = client.post(
             "/api/v1/jobs",
             data={"options": json.dumps(options, ensure_ascii=False)},
@@ -127,15 +155,21 @@ def test_job_not_found_error_envelope():
 
 def test_create_job_llm_enabled_requires_base_url_and_model():
     client = TestClient(api.app)
-    options = {"format": {"max_chunk_chars": 2000}, "llm": {"enabled": True, "base_url": "", "model": ""}}
+    options = {"format": {"max_chunk_chars": 2000}, "llm": {"base_url": "", "model": ""}}
     r = client.post(
         "/api/v1/jobs",
         data={"options": json.dumps(options, ensure_ascii=False)},
         files={"file": ("x.txt", "x\n", "text/plain; charset=utf-8")},
     )
-    assert r.status_code == 400
-    body = r.json()
-    assert body.get("error", {}).get("code") == "bad_request"
+    assert r.status_code == 201, r.text
+    job_id = (r.json().get("job") or {}).get("id")
+    assert isinstance(job_id, str) and len(job_id) == 32
+
+    try:
+        final = _wait_job_done(client, job_id, timeout_seconds=5.0)
+        assert (final.get("job") or {}).get("state") == "error"
+    finally:
+        GLOBAL_JOBS.delete(str(job_id))
 
 
 def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.MonkeyPatch):
@@ -162,7 +196,7 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         st = GLOBAL_JOBS.get(job2.job_id)
         assert st is not None and st.state == "paused"
 
-        r2 = client.post(f"/api/v1/jobs/{job2.job_id}/resume", json={"llm": {"enabled": False}})
+        r2 = client.post(f"/api/v1/jobs/{job2.job_id}/resume", json={"llm": {"base_url": "http://example.com", "model": "m"}})
         assert r2.status_code == 200
         assert r2.json().get("ok") is True
         st2 = GLOBAL_JOBS.get(job2.job_id)
@@ -175,7 +209,10 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
     job3 = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
     try:
         GLOBAL_JOBS.update(job3.job_id, state="error")
-        r = client.post(f"/api/v1/jobs/{job3.job_id}/retry-failed", json={"llm": {"enabled": False}})
+        r = client.post(
+            f"/api/v1/jobs/{job3.job_id}/retry-failed",
+            json={"llm": {"base_url": "http://example.com", "model": "m"}},
+        )
         assert r.status_code == 200
         assert r.json().get("ok") is True
     finally:

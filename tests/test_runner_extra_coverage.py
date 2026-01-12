@@ -42,7 +42,7 @@ def test_llm_worker_records_retries_and_aligns_newlines(monkeypatch: pytest.Monk
 
         job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         try:
-            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
+            cfg = LLMConfig(base_url="http://example.com", model="m")
             runner._llm_worker(job_id, 0, work_dir, cfg)
 
             st = GLOBAL_JOBS.get(job_id)
@@ -73,7 +73,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
         job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         try:
             assert GLOBAL_JOBS.cancel(job_id) is True
-            runner._llm_worker(job_id, 0, work_dir, LLMConfig(enabled=True, base_url="", model=""))
+            runner._llm_worker(job_id, 0, work_dir, LLMConfig(base_url="", model=""))
             assert not (work_dir / "resp").exists()
         finally:
             GLOBAL_JOBS.delete(job_id)
@@ -92,7 +92,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
                 return LLMTextResult(text="OK\n", raw_text="RAW"), 0, None, None
 
             monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_cancel_then_return)
-            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
+            cfg = LLMConfig(base_url="http://example.com", model="m")
             runner._llm_worker(job_id2, 0, work_dir, cfg)
             assert not (work_dir / "resp").exists()
             assert not (work_dir / "out").exists()
@@ -113,7 +113,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
                 raise LLMError("x", status_code=500)
 
             monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_cancel_then_raise)
-            cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
+            cfg = LLMConfig(base_url="http://example.com", model="m")
             runner._llm_worker(job_id3, 0, work_dir, cfg)
             st = GLOBAL_JOBS.get(job_id3)
             assert st is not None
@@ -126,7 +126,7 @@ def test_llm_worker_ratio_validation_errors(monkeypatch: pytest.MonkeyPatch) -> 
     pre = "a" * 200
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
-        cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m")
+        cfg = LLMConfig(base_url="http://example.com", model="m")
 
         def run_case(
             sub: str,
@@ -165,7 +165,7 @@ def test_llm_worker_ratio_validation_errors(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_run_llm_for_indices_paused_cancelled_and_worker_exception(monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = LLMConfig(enabled=True, base_url="http://example.com", model="m", max_concurrency=1)
+    cfg = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
         work_dir = base / "work"
@@ -200,8 +200,8 @@ def test_run_llm_for_indices_paused_cancelled_and_worker_exception(monkeypatch: 
 
 def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     fmt = runner.FormatConfig(max_chunk_chars=2000)
-    llm_off = LLMConfig(enabled=False)
-    llm_on = LLMConfig(enabled=True, base_url="http://example.com", model="m")
+    llm = LLMConfig(base_url="http://example.com", model="m")
+    orig_run_llm_for_indices = runner._run_llm_for_indices
 
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
@@ -223,7 +223,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
                 return chunk, {}
 
             monkeypatch.setattr(runner, "apply_rules", cancel_after_first)
-            runner.run_job(job_id, ("x\n" * 3000), fmt, llm_off)
+            runner.run_job(job_id, ("x\n" * 3000), fmt, llm)
             st = GLOBAL_JOBS.get(job_id)
             assert st is not None and st.state == "cancelled"
         finally:
@@ -241,7 +241,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
                 return chunk, {}
 
             monkeypatch.setattr(runner, "apply_rules", cancel_during_apply)
-            runner.run_job(job2_id, "x\n", fmt, llm_off)
+            runner.run_job(job2_id, "x\n", fmt, llm)
             st = GLOBAL_JOBS.get(job2_id)
             assert st is not None and st.state == "cancelled"
         finally:
@@ -254,7 +254,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
             out_path = base / "o3.txt"
             GLOBAL_JOBS.update(job3_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "paused")
-            runner.run_job(job3_id, "x\n", fmt, llm_on)
+            runner.run_job(job3_id, "x\n", fmt, llm)
             st = GLOBAL_JOBS.get(job3_id)
             assert st is not None and st.state == "paused"
         finally:
@@ -266,18 +266,32 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
             out_path = base / "o4.txt"
             GLOBAL_JOBS.update(job4_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "cancelled")
-            runner.run_job(job4_id, "x\n", fmt, llm_on)
+            runner.run_job(job4_id, "x\n", fmt, llm)
             st = GLOBAL_JOBS.get(job4_id)
             assert st is not None and st.state == "cancelled"
         finally:
             GLOBAL_JOBS.delete(job4_id)
 
-        # Cancelled during local output loop.
+        # Restore real LLM runner for later cases.
+        monkeypatch.setattr(runner, "_run_llm_for_indices", orig_run_llm_for_indices)
+
+        # Cancelled during LLM output write.
         job5_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0).job_id
         try:
             work_dir = base / "w5"
             out_path = base / "o5.txt"
             GLOBAL_JOBS.update(job5_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
+
+            monkeypatch.setattr(
+                runner,
+                "call_llm_text_resilient_with_meta_and_raw",
+                lambda cfg, input_text, *, should_stop=None, on_retry=None: (
+                    LLMTextResult(text=input_text, raw_text="RAW"),
+                    0,
+                    None,
+                    None,
+                ),
+            )
 
             orig_atomic = runner._atomic_write_text
             cancelled = False
@@ -290,7 +304,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
                     GLOBAL_JOBS.cancel(job5_id)
 
             monkeypatch.setattr(runner, "_atomic_write_text", atomic_and_cancel)
-            runner.run_job(job5_id, ("x\n" * 3000), fmt, llm_off)
+            runner.run_job(job5_id, ("x\n" * 3000), fmt, llm)
             st = GLOBAL_JOBS.get(job5_id)
             assert st is not None and st.state == "cancelled"
         finally:
@@ -307,7 +321,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
                 "chunk_by_lines_with_first_chunk_max",
                 lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
             )
-            runner.run_job(job6_id, "x\n", fmt, llm_off)
+            runner.run_job(job6_id, "x\n", fmt, llm)
             st = GLOBAL_JOBS.get(job6_id)
             assert st is not None and st.state == "error"
             assert "boom" in (st.error or "")
@@ -316,7 +330,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
 
 
 def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch) -> None:
-    llm = LLMConfig(enabled=True, base_url="http://example.com", model="m", max_concurrency=1)
+    llm = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
 
     runner.retry_failed_chunks("missing", llm)
     runner.resume_paused_job("missing", llm)

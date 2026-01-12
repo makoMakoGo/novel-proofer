@@ -16,8 +16,6 @@ FIRST_CHUNK_SYSTEM_PROMPT_PREFIX = """\
 
 @dataclass(frozen=True)
 class LLMConfig:
-    enabled: bool = False
-
     # Endpoint/auth
     base_url: str = ""  # e.g. https://juya.owl.ci
     api_key: str = ""  # do NOT hardcode in repo

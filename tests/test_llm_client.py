@@ -62,13 +62,8 @@ def test_llm_config_removed_retry_fields():
         LLMConfig(max_retries=1)  # type: ignore[call-arg]
 
 
-def test_call_llm_text_disabled_passthrough():
-    cfg = LLMConfig(enabled=False)
-    assert llm_client.call_llm_text(cfg, "hello") == "hello"
-
-
 def test_call_llm_text_routes_to_openai_compatible(monkeypatch: pytest.MonkeyPatch):
-    cfg = LLMConfig(enabled=True, base_url="http://x", model="m")
+    cfg = LLMConfig(base_url="http://x", model="m")
 
     def fake_call(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:  # noqa: ANN001
         return "OK"
@@ -93,7 +88,6 @@ def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch
     monkeypatch.setattr(llm_client, "_stream_request_with_debug", fake_stream_request_with_debug)
 
     cfg = LLMConfig(
-        enabled=True,
         base_url="http://example.com",
         api_key="k",
         model="m",
@@ -125,7 +119,6 @@ def test_call_openai_compatible_merges_extra_params(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(llm_client, "_stream_request_with_debug", fake_stream_request_with_debug)
 
     cfg = LLMConfig(
-        enabled=True,
         base_url="http://example.com",
         model="m",
         extra_params={"max_tokens": 123, "temperature": 0.7},
@@ -249,7 +242,7 @@ def test_call_llm_text_resilient_retries_and_succeeds(monkeypatch: pytest.Monkey
     monkeypatch.setattr(llm_client, "call_llm_text", fake_call_llm_text)
     monkeypatch.setattr(llm_client.time, "sleep", lambda s: sleeps.append(float(s)))
 
-    cfg = LLMConfig(enabled=True)
+    cfg = LLMConfig()
     assert llm_client.call_llm_text_resilient(cfg, "x") == "OK"
     assert len(calls) == 3
     assert len(sleeps) == 2
@@ -264,7 +257,7 @@ def test_call_llm_text_resilient_non_retryable_raises(monkeypatch: pytest.Monkey
     monkeypatch.setattr(llm_client, "call_llm_text", fake_call_llm_text)
     monkeypatch.setattr(llm_client.time, "sleep", lambda s: sleeps.append(float(s)))
 
-    cfg = LLMConfig(enabled=True)
+    cfg = LLMConfig()
     with pytest.raises(LLMError, match=r"HTTP 400"):
         llm_client.call_llm_text_resilient(cfg, "x")
     assert sleeps == []
@@ -283,7 +276,7 @@ def test_call_llm_text_resilient_with_meta_calls_on_retry(monkeypatch: pytest.Mo
     monkeypatch.setattr(llm_client, "call_llm_text", fake_call_llm_text)
     monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
 
-    cfg = LLMConfig(enabled=True)
+    cfg = LLMConfig()
     out, retries, last_code, last_msg = llm_client.call_llm_text_resilient_with_meta(
         cfg, "x", on_retry=lambda idx, code, msg: on_retry_calls.append((idx, code, msg))
     )

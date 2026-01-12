@@ -14,7 +14,7 @@ def test_format_txt_llm_enabled_calls_llm_and_counts(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(fixer, "call_llm_text_resilient", fake_call_llm_text_resilient)
 
     cfg = FormatConfig(max_chunk_chars=2000)
-    llm = LLMConfig(enabled=True, base_url="http://example.com", model="m")
+    llm = LLMConfig(base_url="http://example.com", model="m")
 
     out = fixer.format_txt("x\n", cfg, llm=llm)
     assert out.text.endswith("LLM")
@@ -33,7 +33,7 @@ def test_format_txt_llm_enabled_keeps_front_matter_in_first_chunk_when_chunk_siz
     monkeypatch.setattr(fixer, "call_llm_text_resilient", fake_call_llm_text_resilient)
 
     cfg = FormatConfig(max_chunk_chars=200)
-    llm = LLMConfig(enabled=True, base_url="http://example.com", model="m")
+    llm = LLMConfig(base_url="http://example.com", model="m")
 
     header = "作者：X\n标签：Y\n内容简介：Z\n\n"
     body = ("正文段落。\n\n" * 500).strip() + "\n"

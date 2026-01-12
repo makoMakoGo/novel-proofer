@@ -117,7 +117,6 @@ def _error(status_code: int, message: str) -> JSONResponse:
 
 
 class LLMOptions(BaseModel):
-    enabled: bool = False
     base_url: str = ""
     api_key: str = ""
     model: str = ""
@@ -278,13 +277,7 @@ def _parse_options_json(options: str) -> JobOptions:
 
 
 def _llm_from_options(opts: LLMOptions) -> LLMConfig:
-    if opts.enabled:
-        if not (opts.base_url or "").strip():
-            raise HTTPException(status_code=400, detail="llm.base_url is required when llm.enabled=true")
-        if not (opts.model or "").strip():
-            raise HTTPException(status_code=400, detail="llm.model is required when llm.enabled=true")
     return LLMConfig(
-        enabled=bool(opts.enabled),
         base_url=str(opts.base_url or "").strip(),
         api_key=str(opts.api_key or "").strip(),
         model=str(opts.model or "").strip(),
@@ -471,7 +464,7 @@ async def resume_job(job_id: str, body: RetryFailedRequest = Body(default_factor
     if not GLOBAL_JOBS.resume(job_id):
         raise HTTPException(status_code=409, detail="failed to resume job")
 
-    llm = _llm_from_options(body.llm or LLMOptions(enabled=False))
+    llm = _llm_from_options(body.llm or LLMOptions())
     t = threading.Thread(
         target=resume_paused_job,
         args=(job_id, llm),
@@ -491,7 +484,7 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
     if st.state == "cancelled":
         raise HTTPException(status_code=409, detail="job is cancelled")
 
-    llm = _llm_from_options(body.llm or LLMOptions(enabled=False))
+    llm = _llm_from_options(body.llm or LLMOptions())
     t = threading.Thread(
         target=retry_failed_chunks,
         args=(job_id, llm),

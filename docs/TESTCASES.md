@@ -1,6 +1,6 @@
 # 测试用例说明
 
-在仓库根目录执行 `.venv\Scripts\python.exe -m pytest --collect-only -q`，pytest 当前共收集到 **95** 个测试用例（包含参数化展开）。本文档按文件列出每个用例的覆盖点，便于快速定位“在测什么”。
+在仓库根目录执行 `.venv\Scripts\python.exe -m pytest --collect-only -q`，pytest 当前共收集到 **94** 个测试用例（包含参数化展开）。本文档按文件列出每个用例的覆盖点，便于快速定位“在测什么”。
 
 如需运行全部测试：`pytest -q`。
 
@@ -9,10 +9,10 @@
 | Test case | 说明 |
 | --- | --- |
 | `tests/test_api_endpoints.py::test_healthz_ok` | 验证 `GET /healthz` 返回 `200` 且 JSON 为 `{"ok": True}`。 |
-| `tests/test_api_endpoints.py::test_create_job_local_mode_writes_output_and_is_queryable` | 以 `llm.enabled=False` 创建任务，轮询等待完成；验证输出文件在 `OUTPUT_DIR` 下生成且内容非空，同时清理 `GLOBAL_JOBS` 记录避免串扰。 |
+| `tests/test_api_endpoints.py::test_create_job_local_mode_writes_output_and_is_queryable` | 提供 LLM 配置创建任务，轮询等待完成；验证输出文件在 `OUTPUT_DIR` 下生成且内容非空，同时清理 `GLOBAL_JOBS` 记录避免串扰。 |
 | `tests/test_api_endpoints.py::test_get_job_chunk_filter_and_paging` | 创建多分片任务后，用 `chunks=1&chunk_state=done&limit=1&offset=0` 拉取分片列表；验证分页 `has_more`、返回数量与 `chunk_counts.done` 统计。 |
 | `tests/test_api_endpoints.py::test_job_not_found_error_envelope` | 查询不存在的任务时返回 `404`，并使用统一错误信封（`error.code == "not_found"`）。 |
-| `tests/test_api_endpoints.py::test_create_job_llm_enabled_requires_base_url_and_model` | `llm.enabled=True` 但 `base_url/model` 为空时，创建任务应返回 `400`（`error.code == "bad_request"`）。 |
+| `tests/test_api_endpoints.py::test_create_job_llm_enabled_requires_base_url_and_model` | LLM 配置缺失（`base_url/model` 为空）时，创建任务仍返回 `201`，但任务最终进入 `error` 状态。 |
 | `tests/test_api_endpoints.py::test_job_actions_cancel_pause_resume_retry_cleanup` | 覆盖任务动作接口：`cancel/pause/resume/retry-failed/cleanup-debug` 的返回值、状态流转与调试目录清理。 |
 
 ## tests/test_formatting_chunking.py
@@ -59,8 +59,7 @@
 | Test case | 说明 |
 | --- | --- |
 | `tests/test_llm_client.py::test_llm_config_removed_retry_fields` | 校验 `LLMConfig` 已移除旧重试字段，且传入旧参数会抛 `TypeError`。 |
-| `tests/test_llm_client.py::test_call_llm_text_disabled_passthrough` | `LLMConfig(enabled=False)` 时 `call_llm_text()` 原样返回输入。 |
-| `tests/test_llm_client.py::test_call_llm_text_routes_to_openai_compatible` | LLM 启用时应路由到 `_call_openai_compatible()`。 |
+| `tests/test_llm_client.py::test_call_llm_text_routes_to_openai_compatible` | `call_llm_text()` 应路由到 `_call_openai_compatible()`。 |
 | `tests/test_llm_client.py::test_call_openai_compatible_payload_has_no_max_tokens_by_default` | OpenAI-compatible 请求默认不带 `max_tokens`；使用 SSE `stream=True`，消息包含 system/user，且正确注入 `Authorization`。 |
 | `tests/test_llm_client.py::test_call_openai_compatible_merges_extra_params` | `extra_params`（如 `max_tokens/temperature`）应合并进最终 payload。 |
 | `tests/test_llm_client.py::test_parse_sse_line[data: [DONE]-expected0]` | SSE 行 `data: [DONE]` 解析为 done 信号（`("done", "")`）。 |
@@ -163,4 +162,3 @@
 | `tests/test_think_filter.py::TestMaybeFilterThinkTags::test_balanced_filters_can_fall_back_to_stripping` | 当过滤后输出相对输入过短时回退为“去标记保内容”（避免误删）。 |
 | `tests/test_think_filter.py::TestMaybeFilterThinkTags::test_disabled_returns_raw` | 配置关闭过滤时直接返回 raw，不做任何处理。 |
 | `tests/test_think_filter.py::TestMaybeFilterThinkTags::test_low_output_ratio_falls_back_to_stripping_tags` | 当输出比例过低（疑似误删/边界情况）时回退为“去标记保内容”。 |
-

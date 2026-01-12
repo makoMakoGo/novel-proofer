@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Novel Proofer is a Chinese novel formatting/proofreading tool with a FastAPI backend and HTML frontend. It applies deterministic local rules for punctuation/indentation normalization, and optionally uses LLM for semantic formatting (paragraph splitting, dialogue separation, chapter title handling).
+Novel Proofer is a Chinese novel formatting/proofreading tool with a FastAPI backend and HTML frontend. It applies deterministic local rules for punctuation/indentation normalization, and uses LLM for semantic formatting (paragraph splitting, dialogue separation, chapter title handling).
 
 ## Commands
 
@@ -54,7 +54,7 @@ novel_proofer/
 1. **Upload** (`POST /api/v1/jobs`): File decoded (UTF-8/GBK), JobStatus created
 2. **Chunking**: Text split by line boundaries (`chunk_by_lines_with_first_chunk_max`)
 3. **Local Rules**: Each chunk processed by `apply_rules()` -> saved to `output/.jobs/{id}/pre/`
-4. **LLM** (if enabled): Concurrent workers call streaming endpoint, retry on 408/429/5xx
+4. **LLM**: Concurrent workers call streaming endpoint, retry on 408/429/5xx
 5. **Validation**: Output length ratio checked (0.85-1.15x input)
 6. **Post-processing**: Local rules re-applied to LLM output for consistency
 7. **Merge**: Chunks combined with paragraph separation, output to `output/`

@@ -179,13 +179,7 @@
           <label><input type="checkbox" name="normalize_quotes" value="1" />引号统一为中文引号（谨慎）</label>
         </div>
 
-        <label>LLM（可选，用于更复杂的对话/标点处理）</label>
-        <div class="row">
-          <div>
-            <input type="hidden" name="llm_enabled" value="0" />
-            <label><input type="checkbox" name="llm_enabled" value="1" checked />启用 LLM（默认）</label>
-          </div>
-        </div>
+        <label>LLM（用于更复杂的对话/标点处理）</label>
         <div class="row">
           <div>
             <label>Base URL</label>
@@ -593,11 +587,9 @@
     }
 
     function buildLlmOptions(fd, extraParamsValue) {
-      const llmEnabled = !!document.querySelector('input[type="checkbox"][name="llm_enabled"]')?.checked;
       const filterThinkTags = !!document.querySelector('input[type="checkbox"][name="llm_filter_think_tags"]')?.checked;
 
       return {
-        enabled: llmEnabled,
         base_url: String(fd.get('llm_base_url') || ''),
         api_key: String(fd.get('llm_api_key') || ''),
         model: String(fd.get('llm_model') || ''),

@@ -266,18 +266,12 @@ def _headers(cfg: LLMConfig) -> dict[str, str]:
 
 
 def call_llm_text(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None) -> str:
-    if not cfg.enabled:
-        return input_text
-
     return _call_openai_compatible(cfg, input_text, should_stop=should_stop)
 
 
 def call_llm_text_with_raw(
     cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None
 ) -> LLMTextResult:
-    if not cfg.enabled:
-        return LLMTextResult(text=input_text, raw_text=input_text, stream_debug="")
-
     return _call_openai_compatible_with_raw(cfg, input_text, should_stop=should_stop)
 
 

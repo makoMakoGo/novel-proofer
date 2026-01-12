@@ -390,9 +390,7 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
     try:
         max_chars = int(fmt.max_chunk_chars)
         max_chars = max(200, min(4_000, max_chars))
-        first_chunk_max_chars = max_chars
-        if llm.enabled:
-            first_chunk_max_chars = min(4_000, max(first_chunk_max_chars, 2_000))
+        first_chunk_max_chars = min(4_000, max(max_chars, 2_000))
         chunks = chunk_by_lines_with_first_chunk_max(
             input_text,
             max_chars=max_chars,
@@ -418,45 +416,34 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
             GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
             return
 
-        if llm.enabled:
-            outcome = _run_llm_for_indices(job_id, list(range(total)), work_dir, llm)
-            if outcome == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
-                GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
-                return
-            if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
-                GLOBAL_JOBS.update(job_id, state="paused", finished_at=None)
-                return
+        outcome = _run_llm_for_indices(job_id, list(range(total)), work_dir, llm)
+        if outcome == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+            GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+            return
+        if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
+            GLOBAL_JOBS.update(job_id, state="paused", finished_at=None)
+            return
 
-            # Post-LLM deterministic pass: enforce local formatting invariants on outputs.
-            post_stats: dict[str, int] = {}
-            cur = GLOBAL_JOBS.get(job_id)
-            if cur is not None:
-                for cs in cur.chunk_statuses:
-                    if GLOBAL_JOBS.is_cancelled(job_id):
-                        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
-                        return
-                    if cs.state != "done":
-                        continue
-                    p = _chunk_path(work_dir, "out", cs.index)
-                    if not p.exists():
-                        continue
-                    chunk_out = p.read_text(encoding="utf-8")
-                    fixed, s = apply_rules(chunk_out, fmt)
-                    if fixed != chunk_out:
-                        _atomic_write_text(p, fixed)
-                    _merge_stats(post_stats, s)
-            for k, v in post_stats.items():
-                GLOBAL_JOBS.add_stat(job_id, f"post_{k}", v)
-        else:
-            # Pure local mode: treat local output as final chunk output.
-            for i in range(total):
+        # Post-LLM deterministic pass: enforce local formatting invariants on outputs.
+        post_stats: dict[str, int] = {}
+        cur = GLOBAL_JOBS.get(job_id)
+        if cur is not None:
+            for cs in cur.chunk_statuses:
                 if GLOBAL_JOBS.is_cancelled(job_id):
                     GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
                     return
-                pre = _chunk_path(work_dir, "pre", i).read_text(encoding="utf-8")
-                _atomic_write_text(_chunk_path(work_dir, "out", i), pre)
-                GLOBAL_JOBS.update_chunk(job_id, i, state="done", finished_at=time.time())
-            GLOBAL_JOBS.update(job_id, done_chunks=total)
+                if cs.state != "done":
+                    continue
+                p = _chunk_path(work_dir, "out", cs.index)
+                if not p.exists():
+                    continue
+                chunk_out = p.read_text(encoding="utf-8")
+                fixed, s = apply_rules(chunk_out, fmt)
+                if fixed != chunk_out:
+                    _atomic_write_text(p, fixed)
+                _merge_stats(post_stats, s)
+        for k, v in post_stats.items():
+            GLOBAL_JOBS.add_stat(job_id, f"post_{k}", v)
 
         _finalize_job(job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks")
     except Exception as e:
