@@ -16,7 +16,7 @@ from novel_proofer.llm.client import LLMTextResult
 
 def _wait_job_done(client: TestClient, job_id: str, *, timeout_seconds: float = 5.0) -> dict:
     deadline = time.time() + timeout_seconds
-    last: dict | None = None
+    last: dict = {}
     while time.time() < deadline:
         res = client.get(f"/api/v1/jobs/{job_id}?chunks=0")
         assert res.status_code == 200

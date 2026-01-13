@@ -1,0 +1,8 @@
+{
+  "name": "scene_03_long_line",
+  "description": "虚构小说片段 + 单行超长段落（明显超预算），覆盖 chunk_by_lines 的单行超预算行为与 merge 对长行/标点规则的稳定性。",
+  "format": {
+    "max_chunk_chars": 240
+  }
+}
+

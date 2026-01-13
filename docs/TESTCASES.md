@@ -1,6 +1,6 @@
 # 测试用例说明
 
-在仓库根目录执行 `.venv\Scripts\python.exe -m pytest --collect-only -q`，pytest 当前共收集到 **94** 个测试用例（包含参数化展开）。本文档按文件列出每个用例的覆盖点，便于快速定位“在测什么”。
+在仓库根目录执行 `.venv\Scripts\python.exe -m pytest --collect-only -q`，pytest 当前共收集到 **103** 个测试用例（包含参数化展开）。本文档按文件列出每个用例的覆盖点，便于快速定位“在测什么”。
 
 如需运行全部测试：`pytest -q`。
 
@@ -78,6 +78,18 @@
 | `tests/test_llm_client.py::test_call_llm_text_resilient_retries_and_succeeds` | `call_llm_text_resilient()` 对可重试错误（如 `HTTP 500`）进行多次尝试并最终成功；同时会调用 `sleep()` 退避。 |
 | `tests/test_llm_client.py::test_call_llm_text_resilient_non_retryable_raises` | 对不可重试错误（如 `HTTP 400`）不应退避重试，直接抛出异常。 |
 | `tests/test_llm_client.py::test_call_llm_text_resilient_with_meta_calls_on_retry` | 带 meta 的重试接口会返回 `retries/last_code/last_msg`，并在重试时触发 `on_retry(idx, code, msg)` 回调。 |
+
+## tests/test_pipeline_corpus_golden.py
+
+| Test case | 说明 |
+| --- | --- |
+| `tests/test_pipeline_corpus_golden.py::test_pipeline_corpus_golden` | 离线 golden：从 `tests/fixtures/pipeline_corpus/cases/*/` 读取 `input.txt`，走真实 per-chunk + merge 流程；用 fake LLM（回显输入）保证稳定；默认断言 `expected.txt` 精确一致（可用 `--update-golden` 更新）。 |
+
+## tests/test_llm_corpus_golden.py
+
+| Test case | 说明 |
+| --- | --- |
+| `tests/test_llm_corpus_golden.py::test_llm_corpus_golden_end_to_end` | 可选 LLM 端到端 golden：读取 `tests/fixtures/llm_corpus/cases/*/`，调用真实 OpenAI-compatible endpoint 跑完整 per-chunk + merge；默认通过 marker 选择与 env/flag opt-in（未启用则 skipped）。 |
 
 ## tests/test_runner_blank_chunk.py
 
@@ -160,5 +172,5 @@
 | `tests/test_think_filter.py::TestMaybeFilterThinkTags::test_unclosed_returns_raw_stripped_tags` | `_maybe_filter_think_tags()` 遇到未闭合标签时回退为“仅去标签标记、保留内容”。 |
 | `tests/test_think_filter.py::TestMaybeFilterThinkTags::test_balanced_filters` | 标签闭合且输出比例正常时，优先执行真正的过滤（去掉 think 内容）。 |
 | `tests/test_think_filter.py::TestMaybeFilterThinkTags::test_balanced_filters_can_fall_back_to_stripping` | 当过滤后输出相对输入过短时回退为“去标记保内容”（避免误删）。 |
-| `tests/test_think_filter.py::TestMaybeFilterThinkTags::test_disabled_returns_raw` | 配置关闭过滤时直接返回 raw，不做任何处理。 |
+| `tests/test_think_filter.py::TestMaybeFilterThinkTags::test_filtering_is_always_on_does_not_return_raw` | think 标签过滤为强制开启：遇到 think 标签时不会原样返回（至少会过滤或去标记）。 |
 | `tests/test_think_filter.py::TestMaybeFilterThinkTags::test_low_output_ratio_falls_back_to_stripping_tags` | 当输出比例过低（疑似误删/边界情况）时回退为“去标记保内容”。 |

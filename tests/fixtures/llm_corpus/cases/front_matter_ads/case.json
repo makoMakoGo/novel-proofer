@@ -1,0 +1,21 @@
+{
+  "name": "front_matter_ads",
+  "description": "首 chunk 包含标题/作者/简介/广告水印，要求删掉元信息与引流，只保留标题+正文。",
+  "format": {
+    "max_chunk_chars": 800,
+    "paragraph_indent": true,
+    "indent_with_fullwidth_space": true,
+    "normalize_blank_lines": true,
+    "trim_trailing_spaces": true,
+    "normalize_ellipsis": true,
+    "normalize_em_dash": true,
+    "normalize_cjk_punctuation": true,
+    "fix_cjk_punct_spacing": true,
+    "normalize_quotes": true
+  },
+  "llm": {
+    "temperature": 0.0,
+    "timeout_seconds": 180.0,
+    "extra_params": null
+  }
+}

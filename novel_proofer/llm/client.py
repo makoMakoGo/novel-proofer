@@ -404,9 +404,8 @@ def _strip_think_tags_keep_content(text: str) -> str:
     return text
 
 
-def _maybe_filter_think_tags(cfg: LLMConfig, raw_content: str, *, input_text: str | None = None) -> str:
-    if not cfg.filter_think_tags:
-        return raw_content
+def _maybe_filter_think_tags(_cfg: LLMConfig, raw_content: str, *, input_text: str | None = None) -> str:
+    # Think tag filtering is always enabled (safe-by-default).
 
     if not raw_content:
         return raw_content

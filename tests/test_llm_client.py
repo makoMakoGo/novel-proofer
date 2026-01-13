@@ -93,7 +93,6 @@ def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch
         model="m",
         system_prompt="S",
         extra_params=None,
-        filter_think_tags=False,
     )
     out = llm_client._call_openai_compatible(cfg, "U", should_stop=lambda: False)
 
@@ -122,7 +121,6 @@ def test_call_openai_compatible_merges_extra_params(monkeypatch: pytest.MonkeyPa
         base_url="http://example.com",
         model="m",
         extra_params={"max_tokens": 123, "temperature": 0.7},
-        filter_think_tags=False,
     )
     _ = llm_client._call_openai_compatible(cfg, "U")
 

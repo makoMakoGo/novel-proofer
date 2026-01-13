@@ -1,0 +1,8 @@
+{
+  "name": "scene_01_messy_dialogue",
+  "description": "虚构小说片段 + 常见排版错误：半角标点/空格、破折号/省略号变体、缩进不一致、空行过多；覆盖 per-chunk→merge 全流程。",
+  "format": {
+    "max_chunk_chars": 220
+  }
+}
+

@@ -12,11 +12,16 @@ htmlcov/
 # Virtual environments
 .venv/
 
+# Local env files
+.env
+.env.*
+
 # App outputs
 output/
 
 # Editor / tooling
 .playwright-mcp/
+tmpclaude-*
 
 # OS
 .DS_Store
@@ -25,6 +30,7 @@ desktop.ini
 
 ## AI config not wanted
 .claude/specs/
+.claude/settings.local.json
 
 # Local agent notes
 AGENTS.md

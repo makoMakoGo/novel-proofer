@@ -1,0 +1,8 @@
+{
+  "name": "scene_02_blank_runs",
+  "description": "虚构小说片段 + 大量连续空行/空白行（含仅空格/Tab 的行），覆盖 normalize_blank_lines 与 merge 在分片边界的空行收敛。",
+  "format": {
+    "max_chunk_chars": 260
+  }
+}
+

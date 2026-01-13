@@ -1,0 +1,21 @@
+{
+  "name": "blank_lines_boundaries",
+  "description": "多余空行、分片边界处段落粘连/缺空行；验证 merge 补空行与单空行收敛。",
+  "format": {
+    "max_chunk_chars": 220,
+    "paragraph_indent": true,
+    "indent_with_fullwidth_space": true,
+    "normalize_blank_lines": true,
+    "trim_trailing_spaces": true,
+    "normalize_ellipsis": true,
+    "normalize_em_dash": true,
+    "normalize_cjk_punctuation": true,
+    "fix_cjk_punct_spacing": true,
+    "normalize_quotes": false
+  },
+  "llm": {
+    "temperature": 0.0,
+    "timeout_seconds": 180.0,
+    "extra_params": null
+  }
+}

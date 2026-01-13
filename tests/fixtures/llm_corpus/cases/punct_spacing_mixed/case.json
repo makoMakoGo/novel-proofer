@@ -1,0 +1,21 @@
+{
+  "name": "punct_spacing_mixed",
+  "description": "中英文标点混用、逗号句号半角、数字小数点/千分位不应被误转；期望整体格式稳定。",
+  "format": {
+    "max_chunk_chars": 700,
+    "paragraph_indent": true,
+    "indent_with_fullwidth_space": true,
+    "normalize_blank_lines": true,
+    "trim_trailing_spaces": true,
+    "normalize_ellipsis": true,
+    "normalize_em_dash": true,
+    "normalize_cjk_punctuation": true,
+    "fix_cjk_punct_spacing": true,
+    "normalize_quotes": false
+  },
+  "llm": {
+    "temperature": 0.0,
+    "timeout_seconds": 180.0,
+    "extra_params": null
+  }
+}

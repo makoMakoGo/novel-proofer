@@ -1,0 +1,21 @@
+{
+  "name": "whitespace_only_chunk",
+  "description": "输入包含大量空白行导致产生空白分片；应跳过 LLM 调用且最终输出保持空白结构。",
+  "format": {
+    "max_chunk_chars": 200,
+    "paragraph_indent": true,
+    "indent_with_fullwidth_space": true,
+    "normalize_blank_lines": false,
+    "trim_trailing_spaces": true,
+    "normalize_ellipsis": true,
+    "normalize_em_dash": true,
+    "normalize_cjk_punctuation": true,
+    "fix_cjk_punct_spacing": true,
+    "normalize_quotes": false
+  },
+  "llm": {
+    "temperature": 0.0,
+    "timeout_seconds": 180.0,
+    "extra_params": null
+  }
+}

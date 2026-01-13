@@ -124,7 +124,6 @@ class LLMOptions(BaseModel):
     timeout_seconds: float = 180.0
     max_concurrency: int = 20
     extra_params: dict[str, Any] | None = None
-    filter_think_tags: bool = True
 
 
 class FormatOptions(BaseModel):
@@ -285,7 +284,6 @@ def _llm_from_options(opts: LLMOptions) -> LLMConfig:
         timeout_seconds=float(opts.timeout_seconds),
         max_concurrency=int(opts.max_concurrency),
         extra_params=opts.extra_params,
-        filter_think_tags=bool(opts.filter_think_tags),
     )
 
 

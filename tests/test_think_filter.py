@@ -162,27 +162,26 @@ class TestFilterThinkTagsFunction:
 
 class TestMaybeFilterThinkTags:
     def test_unclosed_returns_raw_stripped_tags(self):
-        cfg = LLMConfig(filter_think_tags=True)
+        cfg = LLMConfig()
         raw = "before<think>no close\nAFTER"
         assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 1000) == "beforeno close\nAFTER"
 
     def test_balanced_filters(self):
-        cfg = LLMConfig(filter_think_tags=True)
+        cfg = LLMConfig()
         raw = "A<think>hidden</think>B"
         assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 10) == "AB"
 
     def test_balanced_filters_can_fall_back_to_stripping(self):
-        cfg = LLMConfig(filter_think_tags=True)
+        cfg = LLMConfig()
         raw = "A<think>hidden</think>B"
         assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 10_000) == "AhiddenB"
 
-    def test_disabled_returns_raw(self):
-        cfg = LLMConfig(filter_think_tags=False)
+    def test_filtering_is_always_on_does_not_return_raw(self):
         raw = "A<think>hidden</think>B"
-        assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 1000) == raw
+        assert _maybe_filter_think_tags(LLMConfig(), raw, input_text="x" * 1000) != raw
 
     def test_low_output_ratio_falls_back_to_stripping_tags(self):
-        cfg = LLMConfig(filter_think_tags=True)
+        cfg = LLMConfig()
         raw = "<think>hidden</think>VISIBLE"
         # Simulate a filter bug/edge where output becomes too small vs input.
         assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 10_000) == "hiddenVISIBLE"

@@ -1,0 +1,21 @@
+{
+  "name": "dialogue_paragraphs",
+  "description": "对话与叙述挤在一起；期望 LLM 分段并保持标题不缩进、正文段首缩进。",
+  "format": {
+    "max_chunk_chars": 600,
+    "paragraph_indent": true,
+    "indent_with_fullwidth_space": true,
+    "normalize_blank_lines": true,
+    "trim_trailing_spaces": true,
+    "normalize_ellipsis": true,
+    "normalize_em_dash": true,
+    "normalize_cjk_punctuation": true,
+    "fix_cjk_punct_spacing": true,
+    "normalize_quotes": false
+  },
+  "llm": {
+    "temperature": 0.0,
+    "timeout_seconds": 180.0,
+    "extra_params": null
+  }
+}

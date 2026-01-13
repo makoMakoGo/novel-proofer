@@ -155,13 +155,9 @@
       <!-- Progress Tab -->
       <div id="tab-progress" class="tab-content active">
 
+        <label>分片大小（字符数）</label>
         <div class="row">
           <div>
-            <label>输出后缀</label>
-            <input name="suffix" type="text" value="_rev" />
-          </div>
-          <div>
-            <label>分片大小（字符数）</label>
             <input name="max_chunk_chars" type="number" min="200" max="4000" step="100" value="2000" />
           </div>
         </div>
@@ -208,12 +204,6 @@
             <input name="llm_max_concurrency" type="number" min="1" step="1" value="20" />
           </div>
         </div>
-        <div class="row">
-          <div>
-            <input type="hidden" name="llm_filter_think_tags" value="0" />
-            <label><input type="checkbox" name="llm_filter_think_tags" value="1" checked />过滤 &lt;think&gt;…&lt;/think&gt;（默认）</label>
-          </div>
-        </div>
 
         <label>调试</label>
         <div class="row">
@@ -236,11 +226,6 @@
           <div class="stat"><span class="stat-label">完成:</span> <span class="stat-value" id="statDone">0</span></div>
           <div class="stat"><span class="stat-label">错误:</span> <span class="stat-value" id="statError">0</span></div>
           <div class="stat"><span class="stat-label">重试:</span> <span class="stat-value" id="statRetrying">0</span></div>
-        </div>
-
-        <div class="filter-bar">
-          <button type="button" class="filter-btn active" data-filter="all">全部</button>
-          <button type="button" class="filter-btn" data-filter="error">仅错误</button>
         </div>
 
         <div id="chunksTableWrap">
@@ -587,8 +572,6 @@
     }
 
     function buildLlmOptions(fd, extraParamsValue) {
-      const filterThinkTags = !!document.querySelector('input[type="checkbox"][name="llm_filter_think_tags"]')?.checked;
-
       return {
         base_url: String(fd.get('llm_base_url') || ''),
         api_key: String(fd.get('llm_api_key') || ''),
@@ -597,8 +580,8 @@
         timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
         max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
         extra_params: extraParamsValue,
-        filter_think_tags: filterThinkTags,
       };
+
     }
 
     function buildJobOptions(fd, extraParamsValue) {

@@ -28,9 +28,8 @@ class LLMConfig:
     # Concurrency
     max_concurrency: int = 20
 
-    # Streaming & Think tag filtering
+    # Streaming & Think tag filtering (always on)
     extra_params: dict | None = None  # Optional JSON passthrough for thinking config etc.
-    filter_think_tags: bool = True  # Filter <think>...</think> tags from response
 
     # Prompt
     system_prompt: str = """\

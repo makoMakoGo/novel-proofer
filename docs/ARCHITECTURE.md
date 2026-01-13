@@ -661,5 +661,5 @@ def _merge_chunk_outputs(work_dir, total_chunks, out_path):
 | `temperature` | 0.0 | 确定性输出 |
 | `timeout_seconds` | 180.0 | 单个请求超时 |
 | `max_concurrency` | 20 | 并发分片数 |
-| `filter_think_tags` | True | 过滤 think 标签 |
+| `think_tag_filtering` | Always | 过滤 think 标签（强制开启，不可关闭） |
 | `extra_params` | None | 额外的 OpenAI 参数 |
