@@ -447,6 +447,8 @@ def _call_openai_compatible_with_raw(
         raise LLMError("LLM base_url is empty")
     if not cfg.model:
         raise LLMError("LLM model is empty")
+    if not cfg.api_key:
+        raise LLMError("LLM api_key is empty")
 
     print(f"[LLM] model={cfg.model} (streaming)", flush=True)
     url = cfg.base_url.rstrip("/") + "/v1/chat/completions"

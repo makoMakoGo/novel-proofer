@@ -119,6 +119,7 @@ def test_call_openai_compatible_merges_extra_params(monkeypatch: pytest.MonkeyPa
 
     cfg = LLMConfig(
         base_url="http://example.com",
+        api_key="test-key",
         model="m",
         extra_params={"max_tokens": 123, "temperature": 0.7},
     )

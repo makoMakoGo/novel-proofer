@@ -42,7 +42,7 @@ def _load_dotenv(path: Path) -> None:
         return
 
 
-_load_dotenv(REPO_ROOT / ".env")
+_load_dotenv(REPO_ROOT / ".env.test")
 
 
 def _env_truthy(name: str) -> bool:
