@@ -63,7 +63,9 @@ UI 的「分片大小（字符数）」控制每个 chunk 的目标上限（按"
 
 ### 支持的 LLM 端点
 
-OpenAI-compatible（`{base_url}/v1/chat/completions`，SSE 流式）。
+OpenAI-compatible（`{base_url}/chat/completions`，SSE 流式）。
+
+注：如果你的 API 端点需要 `/v1` 前缀，请在 base_url 中包含，例如 `https://api.openai.com/v1`。
 
 ---
 

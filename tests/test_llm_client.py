@@ -97,7 +97,7 @@ def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch
     out = llm_client._call_openai_compatible(cfg, "U", should_stop=lambda: False)
 
     assert out == "RAW"
-    assert captured["url"] == "http://example.com/v1/chat/completions"
+    assert captured["url"] == "http://example.com/chat/completions"
     assert "max_tokens" not in captured["payload"]
     assert captured["payload"]["stream"] is True
     assert captured["payload"]["messages"][0]["role"] == "system"
