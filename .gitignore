@@ -21,6 +21,9 @@ htmlcov/
 # App outputs
 output/
 
+# Test artifacts
+tests/.artifacts/
+
 # Editor / tooling
 .playwright-mcp/
 tmpclaude-*

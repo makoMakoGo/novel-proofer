@@ -17,5 +17,16 @@
     "temperature": 0.0,
     "timeout_seconds": 180.0,
     "extra_params": null
+  },
+  "assertions": {
+    "ordered_substrings": [
+      "第2章 迷路",
+      "她推开门说",
+      "你怎么在这",
+      "路过",
+      "别装了",
+      "我没有",
+      "走廊里只有脚步声"
+    ]
   }
 }

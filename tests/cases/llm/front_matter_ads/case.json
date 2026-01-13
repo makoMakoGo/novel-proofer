@@ -17,5 +17,23 @@
     "temperature": 0.0,
     "timeout_seconds": 180.0,
     "extra_params": null
+  },
+  "assertions": {
+    "must_contain": [
+      "第1章 七夕",
+      "她说",
+      "皇女问",
+      "她点头"
+    ],
+    "must_not_contain": [
+      "禁忌书屋",
+      "t.me",
+      "免费入群",
+      "标签：",
+      "内容简介",
+      "发布自",
+      "作者：",
+      "===================="
+    ]
   }
 }

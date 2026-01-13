@@ -17,5 +17,18 @@
     "temperature": 0.0,
     "timeout_seconds": 180.0,
     "extra_params": null
+  },
+  "assertions": {
+    "must_contain": [
+      "第3章 数字",
+      "3.14",
+      "1,000,000",
+      "……",
+      "——"
+    ],
+    "must_not_contain": [
+      "...",
+      "--"
+    ]
   }
 }

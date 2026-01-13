@@ -17,5 +17,11 @@
     "temperature": 0.0,
     "timeout_seconds": 180.0,
     "extra_params": null
+  },
+  "assertions": {
+    "must_contain": [
+      "第5章 空白"
+    ],
+    "leading_blank_lines": 4
   }
 }

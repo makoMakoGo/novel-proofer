@@ -17,5 +17,16 @@
     "temperature": 0.0,
     "timeout_seconds": 180.0,
     "extra_params": null
+  },
+  "assertions": {
+    "ordered_substrings": [
+      "第4章 边界",
+      "A段第一行",
+      "B段第一行",
+      "B段第二行",
+      "C段第一行",
+      "D段第一行",
+      "D段第二行"
+    ]
   }
 }

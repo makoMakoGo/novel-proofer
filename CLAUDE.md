@@ -23,7 +23,7 @@ python -m novel_proofer.server          # http://127.0.0.1:18080
 # 运行测试（需先激活虚拟环境）
 pip install -r requirements-dev.txt
 pytest -q                               # 全部测试
-pytest tests/test_formatting_rules.py   # 单个文件
+pytest tests/formatting/test_rules.py   # 单个文件
 pytest -k "test_ellipsis"               # 按名称匹配
 
 # Windows 自检（自动安装 dev 依赖并跑测试）
@@ -70,10 +70,10 @@ novel_proofer/
 
 Tests use pytest with `httpx.AsyncClient` for API tests. Key fixtures in `conftest.py` set up import paths. Test files mirror module structure:
 
-- `test_formatting_rules.py` - Unit tests for each rule transformation
-- `test_api_endpoints.py` - Integration tests for REST endpoints
-- `test_runner_*.py` - Runner orchestration tests
-- `test_llm_client.py` - LLM client with mocked HTTP
+- `tests/formatting/` - Unit tests for formatting rules/chunking
+- `tests/api/` - Integration tests for REST endpoints
+- `tests/runner/` - Runner orchestration tests
+- `tests/llm/test_client.py` - LLM client with mocked HTTP
 
 ## Local Rules Reference
 

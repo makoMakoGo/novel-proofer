@@ -98,7 +98,7 @@ def pytest_addoption(parser):  # noqa: ANN001
 def pytest_configure(config):  # noqa: ANN001
     config.addinivalue_line(
         "markers",
-        "llm_integration: tests that call a real external OpenAI-compatible endpoint (opt-in)",
+        "llm_integration: tests that call a real external OpenAI-compatible endpoint (requires NOVEL_PROOFER_RUN_LLM_TESTS=true or --run-llm-tests)",
     )
 
     # Hard guard: forbid running tests outside the repo venv.
@@ -113,26 +113,17 @@ def pytest_configure(config):  # noqa: ANN001
 
 def pytest_collection_modifyitems(config, items):  # noqa: ANN001
     run_llm_tests = bool(config.getoption("--run-llm-tests")) or _env_truthy("NOVEL_PROOFER_RUN_LLM_TESTS")
-    markexpr = str(getattr(config.option, "markexpr", "") or "")
-    llm_selected = "llm_integration" in markexpr
 
     base_url = str(os.getenv("NOVEL_PROOFER_LLM_BASE_URL", "")).strip()
     model = str(os.getenv("NOVEL_PROOFER_LLM_MODEL", "")).strip()
 
-    skip_marker_required = (
-        "LLM integration tests are opt-in; run with: pytest -m llm_integration ..."
-    )
     skip_not_enabled = (
-        "LLM integration tests are disabled; set NOVEL_PROOFER_RUN_LLM_TESTS=1 or pass --run-llm-tests"
+        "LLM integration tests are disabled; set NOVEL_PROOFER_RUN_LLM_TESTS=true or pass --run-llm-tests"
     )
     skip_missing_cfg = "Missing LLM config; set NOVEL_PROOFER_LLM_BASE_URL and NOVEL_PROOFER_LLM_MODEL"
 
     for item in items:
         if item.get_closest_marker("llm_integration") is None:
-            continue
-
-        if not llm_selected:
-            item.add_marker(pytest.mark.skip(reason=skip_marker_required))
             continue
 
         if not run_llm_tests:

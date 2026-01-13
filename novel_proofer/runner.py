@@ -60,6 +60,48 @@ def _count_trailing_newlines(text: str) -> int:
     return n
 
 
+def _count_leading_blank_lines(text: str) -> int:
+    text = _normalize_newlines(text)
+    n = 0
+    i = 0
+    while True:
+        j = text.find("\n", i)
+        if j < 0:
+            break
+        line = text[i:j]
+        if line.strip() != "":
+            break
+        n += 1
+        i = j + 1
+    return n
+
+
+def _strip_leading_blank_lines(text: str) -> str:
+    text = _normalize_newlines(text)
+    i = 0
+    while True:
+        j = text.find("\n", i)
+        if j < 0:
+            return text
+        line = text[i:j]
+        if line.strip() != "":
+            return text[i:]
+        i = j + 1
+
+
+def _align_leading_blank_lines(reference: str, text: str, *, max_newlines: int = 10) -> str:
+    """Align leading blank lines in `text` to match `reference` (up to max_newlines)."""
+
+    ref = _normalize_newlines(reference)
+    out = _normalize_newlines(text)
+    want = min(_count_leading_blank_lines(ref), max_newlines)
+    have = _count_leading_blank_lines(out)
+    if have == want:
+        return out
+    base = _strip_leading_blank_lines(out)
+    return ("\n" * want) + base
+
+
 def _align_trailing_newlines(reference: str, text: str, *, max_newlines: int = 3) -> str:
     """Align trailing newlines in `text` to match `reference` (up to max_newlines).
 
@@ -285,7 +327,8 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
         _validate_llm_output(pre, filtered_text, allow_shorter=(index == 0))
 
-        final_text = _align_trailing_newlines(pre, filtered_text)
+        final_text = _align_leading_blank_lines(pre, filtered_text)
+        final_text = _align_trailing_newlines(pre, final_text)
         if final_text != filtered_text:
             GLOBAL_JOBS.update_chunk(job_id, index, output_chars=len(final_text))
 
