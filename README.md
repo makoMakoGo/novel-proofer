@@ -1,56 +1,74 @@
+<p align="center">
+  <img src="./images/logo.svg" height="128">
+  <h1 align="center">Novel Proofer</h1>
+  <h4 align="center">小说打样员 - 中文涩涩小说排版校对</h4>
+</p>
 
-<div align="center">
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows" alt="Windows">
+  <img src="https://img.shields.io/badge/Server-FastAPI-009688" alt="FastAPI">
+  <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
+</p>
 
-![header](https://capsule-render.vercel.app/api?type=waving&color=0:3498db,100:2c3e50&height=200&section=header&text=Novel%20Proofer&fontSize=50&fontColor=ffffff&fontAlignY=35&desc=小说打样员&descSize=20&descAlignY=55)
+## Introduction
 
-[![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](https://python.org)
-[![Server](https://img.shields.io/badge/Server-FastAPI%2FUvicorn-009688)](requirements.txt)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+`Novel Proofer` 是一个中文小说排版校对工具，结合本地确定性规则与 LLM 语义理解，自动处理标点符号、段落缩进、空行规范等排版问题。支持大文件分片并发处理，失败分片可单独重试，无需重新上传。
 
-</div>
+## Features
 
-## 功能概述
+- 😎 自动修正缩进、空行、标点符号（中英文标点转换、省略号、破折号等）
+- 👻 接入 LLM 辅助处理处理复杂标点和段落分割
+- ✂️ 大文件自动按行边界分片，多线程并发处理
+- 🔗 失败分片可修改 LLM 配置后单独重试，成功后再合并输出
+- 📌 LLM 配置支持"保存默认"，写入本地 `.env` 并自动预填
+- 🌀 支持"重跑全部（新任务）"，无需重新上传文件
 
-| 功能     | 说明                                         |
-| -------- | -------------------------------------------- |
-| 本地排版 | 修正缩进、空行、标点符号                     |
-| LLM 辅助 | 接入 OpenAI-compatible 处理复杂标点          |
-| 并发处理 | 大文件分片多线程处理                         |
-| 失败重试 | 分片失败后可修改配置并重试，成功后再合并输出 |
-| 默认配置 | LLM 配置支持“保存默认”，写入本地 `.env` 并自动预填 |
-| 全量重跑 | 支持“重跑全部（新任务）”，无需重新上传文件 |
+**If you like this app, please consider giving it a [Star ⭐️](https://github.com/zhu-jl18/novel-proofer), thanks! (^-^)**
 
-校对前后对比：
 
-<div align="center">
-<img src="./images/校正前后对比.png" width="70%" alt="校正前后对比">
-</div>
+## Installation
 
-## 快速启动
+### Configuration 
+
+两种方式配置 LLM 默认参数：
+
+1. 页面保存 - 填写 LLM 配置后点击「保存默认」，写入仓库根目录 `.env`，下次打开自动预填
+2. 手动配置 - 复制 `.env.example` 为 `.env` 并填写
+
+
+### Start the Server
+
+Click the script or run in terminal:
 
 ```bash
 # 一键启动
-start.bat
+.\start.bat
+```
+> [!NOTE]
+> `start.bat` 会自动创建并激活 `.venv` 虚拟环境，无需手动配置。
+> 
+Or Try manual installation and start：
 
-# 或手动执行
+```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 python -m novel_proofer.server
 ```
 
-启动后访问 http://127.0.0.1:18080
+启动后访问 http://127.0.0.1:18080 即可使用。
 
-## LLM 默认配置（可选）
+## Usage
 
-两种方式二选一：
+| Ways     | Description                                 | Preview                                   |
+| -------- | ------------------------------------------- | ----------------------------------------- |
+| 上传文件 | 选择 .txt 文件上传，自动识别 UTF-8/GBK 编码 | <!-- ![](./images/usage-upload.gif) -->   |
+| LLM 配置 | 填写 API 地址、Key、模型名，可保存为默认    | <!-- ![](./images/usage-config.gif) -->   |
+| 处理进度 | 实时显示分片处理状态，支持暂停/继续/取消    | <!-- ![](./images/usage-progress.gif) --> |
+| 失败重试 | 修改配置后重试失败分片，无需重新上传        | <!-- ![](./images/usage-retry.gif) -->    |
 
-1) 打开页面填写 LLM 配置后，点击「保存默认」：会写入仓库根目录 `.env`（已在 `.gitignore` 中忽略），下次打开自动预填。
-2) 复制 `.env.example` 为 `.env` 并手动填写：适合提前准备好默认配置。
-
-注意：`.env` 可能包含 API Key，请勿提交到仓库。
-
-## 处理流程
+## Workflow
 
 ```mermaid
 flowchart TD
@@ -66,19 +84,17 @@ flowchart TD
     R --> E
 ```
 
-## 文档
+## Documentation
 
-| 文档 | 说明 |
-|------|------|
-| [使用指南](docs/USAGE.md) | 安装配置、规则说明、异常处理、调试方法 |
-| [技术架构](docs/ARCHITECTURE.md) | 系统设计原理（Why + How） |
-| [测试用例](docs/TESTCASES.md) | 测试覆盖说明 |
+- 📖 [ Complete Usage Guide ](docs/USAGE.md) - 安装配置、规则说明、异常处理、调试方法
+- 🔧 [Detailed Architecture Doc](docs/ARCHITECTURE.md) - 系统设计原理（Why + How）
+- ⚔️ [Full Testcase Instructions](docs/TESTCASES.md) - 测试覆盖说明
 
-## 已知问题
+## Known Issues
 
 - 偶尔出现乱码，经检查原文件并无乱码
 
-## 待办
+## Roadmap
 
 - [ ] 识别原文件不同编码格式并最终统一为 UTF-8
 - [ ] 补充 LLM 边缘情况的单元测试
