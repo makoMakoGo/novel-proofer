@@ -29,8 +29,8 @@
 
     .row { display: flex; gap: 16px; flex-wrap: wrap; }
     label { display: block; font-size: 13px; color: var(--text-muted); margin: 12px 0 5px; font-weight: 500; }
-    input[type="text"], input[type="number"] { width: 180px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
-    input[type="text"]:focus, input[type="number"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
+    input[type="text"], input[type="number"], input[type="password"] { width: 180px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
+    input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
     textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; transition: border-color .15s, box-shadow .15s; resize: vertical; min-height: 60px; }
     textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
     input[type="file"] { width: 100%; padding: 10px; border: 2px dashed var(--border); border-radius: var(--radius-sm); background: var(--input-bg); cursor: pointer; transition: border-color .15s; }
@@ -48,6 +48,9 @@
     .btns { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
     .ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
     .ghost:hover { background: var(--input-bg); border-color: #ccc; }
+    .btn-mini { margin-top: 0; padding: 8px 12px; font-size: 12px; }
+    .inline-hint { font-size: 12px; color: var(--text-muted); }
+    .inline-hint.dirty { color: #f59e0b; font-weight: 600; }
 
     .hint { color: var(--text-muted); font-size: 12px; margin-top: 20px; line-height: 1.7; }
     .out { margin-top: 16px; padding: 14px; background: var(--input-bg); border-radius: var(--radius-sm); }
@@ -123,6 +126,7 @@
         <button type="button" class="ghost" id="btnPause" style="display:none" disabled>暂停</button>
         <button type="button" class="ghost" id="btnCancel" style="display:none" disabled>取消</button>
         <button type="button" class="ghost" id="btnRetry" style="display:none" disabled>重试失败部分</button>
+        <button type="button" class="ghost" id="btnRerunAll" style="display:none" disabled>重跑全部（新任务）</button>
         <button type="button" class="ghost" id="btnCleanup" style="display:none" disabled>清理中间文件</button>
       </div>
 
@@ -187,7 +191,10 @@
           </div>
           <div>
             <label>API Key（可留空）</label>
-            <input name="llm_api_key" type="text" placeholder="sk-..." />
+            <div style="display:flex; gap:8px; align-items:center">
+              <input name="llm_api_key" type="password" placeholder="sk-..." style="flex:1; min-width:0" />
+              <button type="button" class="ghost btn-mini" id="btnToggleApiKey">显示</button>
+            </div>
           </div>
         </div>
         <div class="row">
@@ -215,6 +222,10 @@
         <div>
           <label>额外参数（JSON，可选，透传给 LLM）</label>
           <textarea name="llm_extra_params" placeholder='例如：{"max_tokens": 4096}'></textarea>
+        </div>
+        <div class="row" style="align-items:center; gap:10px; margin-top:8px">
+          <button type="button" class="ghost btn-mini" id="btnSaveLlmDefaults">保存默认</button>
+          <span id="llmDirtyHint" class="inline-hint dirty" style="display:none">未保存更改</span>
         </div>
       </div>
       </form>
@@ -264,7 +275,11 @@
     const btnPause = document.getElementById('btnPause');
     const btnCancel = document.getElementById('btnCancel');
     const btnRetry = document.getElementById('btnRetry');
+    const btnRerunAll = document.getElementById('btnRerunAll');
     const btnCleanup = document.getElementById('btnCleanup');
+    const btnSaveLlmDefaults = document.getElementById('btnSaveLlmDefaults');
+    const llmDirtyHint = document.getElementById('llmDirtyHint');
+    const btnToggleApiKey = document.getElementById('btnToggleApiKey');
 
     // Debug tab elements
     const chunksBody = document.getElementById('chunksBody');
@@ -529,6 +544,8 @@
       if (busy) {
         btnRetry.style.display = 'none';
         btnRetry.disabled = true;
+        btnRerunAll.style.display = 'none';
+        btnRerunAll.disabled = true;
         btnCleanup.style.display = 'none';
         btnCleanup.disabled = true;
       }
@@ -543,6 +560,8 @@
       btnCancel.disabled = !paused;
       btnRetry.style.display = 'none';
       btnRetry.disabled = true;
+      btnRerunAll.style.display = 'none';
+      btnRerunAll.disabled = true;
       btnCleanup.style.display = 'none';
       btnCleanup.disabled = true;
     }
@@ -552,10 +571,135 @@
       btnRetry.disabled = !visible;
     }
 
+    function setRerunAllVisible(visible) {
+      btnRerunAll.style.display = visible ? 'inline-block' : 'none';
+      btnRerunAll.disabled = !visible;
+    }
+
     function setCleanupVisible(visible) {
       btnCleanup.style.display = visible ? 'inline-block' : 'none';
       btnCleanup.disabled = !visible;
     }
+
+    function _llmSnapshot() {
+      const fd = new FormData(form);
+      return JSON.stringify({
+        base_url: String(fd.get('llm_base_url') || ''),
+        model: String(fd.get('llm_model') || ''),
+        api_key: String(fd.get('llm_api_key') || ''),
+        temperature: String(fd.get('llm_temperature') || ''),
+        timeout_seconds: String(fd.get('llm_timeout_seconds') || ''),
+        max_concurrency: String(fd.get('llm_max_concurrency') || ''),
+        extra_params: String(fd.get('llm_extra_params') || '').trim(),
+      });
+    }
+
+    let _llmSavedSnapshot = null;
+
+    function _setLlmDirty(dirty) {
+      llmDirtyHint.style.display = dirty ? 'inline' : 'none';
+      btnSaveLlmDefaults.disabled = !dirty;
+    }
+
+    function _refreshLlmDirty() {
+      if (_llmSavedSnapshot == null) return;
+      _setLlmDirty(_llmSnapshot() !== _llmSavedSnapshot);
+    }
+
+    async function loadLlmDefaults() {
+      try {
+        const res = await fetch('api/v1/settings/llm');
+        const data = await res.json();
+        if (!res.ok) {
+          show(data);
+          return;
+        }
+        const llm = data?.llm || {};
+        const setIfProvided = (name, value) => {
+          if (value === undefined || value === null) return;
+          const el = form.querySelector(`[name="${name}"]`);
+          if (!el) return;
+          el.value = String(value);
+        };
+
+        setIfProvided('llm_base_url', llm.base_url);
+        setIfProvided('llm_model', llm.model);
+        setIfProvided('llm_api_key', llm.api_key);
+        if (llm.temperature !== undefined && llm.temperature !== null) setIfProvided('llm_temperature', llm.temperature);
+        if (llm.timeout_seconds !== undefined && llm.timeout_seconds !== null) setIfProvided('llm_timeout_seconds', llm.timeout_seconds);
+        if (llm.max_concurrency !== undefined && llm.max_concurrency !== null) setIfProvided('llm_max_concurrency', llm.max_concurrency);
+        if (llm.extra_params !== undefined && llm.extra_params !== null) {
+          const el = form.querySelector('[name="llm_extra_params"]');
+          if (el) el.value = JSON.stringify(llm.extra_params, null, 2);
+        }
+      } catch (e) {
+        show(String(e));
+      } finally {
+        _llmSavedSnapshot = _llmSnapshot();
+        _setLlmDirty(false);
+      }
+    }
+
+    async function requestSaveLlmDefaults() {
+      const fd = new FormData(form);
+      const extra = parseExtraParamsFromFormData(fd);
+      if (!extra.ok) return { ok: false, error: extra.error };
+      const payload = {
+        llm: {
+          base_url: String(fd.get('llm_base_url') || ''),
+          api_key: String(fd.get('llm_api_key') || ''),
+          model: String(fd.get('llm_model') || ''),
+          temperature: Number(fd.get('llm_temperature') || 0),
+          timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
+          max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
+          extra_params: extra.value,
+        }
+      };
+      try {
+        const res = await fetch('api/v1/settings/llm', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) return { ok: false, error: data };
+        return { ok: true, data };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }
+
+    btnSaveLlmDefaults.addEventListener('click', async () => {
+      btnSaveLlmDefaults.disabled = true;
+      const r = await requestSaveLlmDefaults();
+      if (!r.ok) {
+        show(r.error);
+        _refreshLlmDirty();
+        return;
+      }
+      show('默认 LLM 配置已保存。');
+      _llmSavedSnapshot = _llmSnapshot();
+      _setLlmDirty(false);
+    });
+
+    ['llm_base_url', 'llm_model', 'llm_api_key', 'llm_temperature', 'llm_timeout_seconds', 'llm_max_concurrency', 'llm_extra_params'].forEach((name) => {
+      const el = form.querySelector(`[name="${name}"]`);
+      if (!el) return;
+      el.addEventListener('input', _refreshLlmDirty);
+      el.addEventListener('change', _refreshLlmDirty);
+    });
+
+    btnToggleApiKey.addEventListener('click', () => {
+      const el = form.querySelector('[name="llm_api_key"]');
+      if (!el) return;
+      if (el.type === 'password') {
+        el.type = 'text';
+        btnToggleApiKey.textContent = '隐藏';
+      } else {
+        el.type = 'password';
+        btnToggleApiKey.textContent = '显示';
+      }
+    });
 
     function parseExtraParamsFromFormData(fd) {
       const raw = String(fd.get('llm_extra_params') || '').trim();
@@ -719,16 +863,82 @@
       show('准备重试失败分片…');
       setBusy(true);
       setRetryVisible(false);
+      setRerunAllVisible(false);
       setCleanupVisible(false);
       const r = await requestRetryFailed(jobId);
       if (!r.ok) {
         show(r.error);
         setBusy(false);
         setRetryVisible(true);
+        setRerunAllVisible(true);
         setCleanupVisible(true);
         return;
       }
       await poll(jobId);
+    });
+
+    async function requestRerunAll(jobId, options) {
+      if (!jobId) return { ok: false, error: 'missing job_id' };
+      try {
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/rerun-all`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(options),
+        });
+        const data = await res.json();
+        if (!res.ok) return { ok: false, error: data };
+        return { ok: true, data };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }
+
+    btnRerunAll.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      const ok = confirm('确认重跑全部分片（新任务）？该操作不会修改旧任务，但会创建一个新任务并从头开始处理。');
+      if (!ok) return;
+
+      const fd = new FormData(form);
+      const extra = parseExtraParamsFromFormData(fd);
+      if (!extra.ok) {
+        show(extra.error);
+        return;
+      }
+
+      show('正在创建新任务并重跑全部分片…');
+      setBusy(true);
+      setRetryVisible(false);
+      setRerunAllVisible(false);
+      setCleanupVisible(false);
+
+      const opts = buildJobOptions(fd, extra.value);
+      const r = await requestRerunAll(jobId, opts);
+      if (!r.ok) {
+        show(r.error);
+        setBusy(false);
+        setRetryVisible(true);
+        setRerunAllVisible(true);
+        setCleanupVisible(true);
+        return;
+      }
+
+      const newJobId = r?.data?.job?.id;
+      if (!newJobId) {
+        show(r.data);
+        setBusy(false);
+        setRetryVisible(true);
+        setRerunAllVisible(true);
+        setCleanupVisible(true);
+        return;
+      }
+
+      currentJobId = newJobId;
+      currentJobState = 'queued';
+      chunksData = [];
+      updateStats();
+      renderChunksTable();
+      await poll(newJobId);
     });
 
     async function requestCleanup(jobId) {
@@ -746,7 +956,7 @@
     btnCleanup.addEventListener('click', async () => {
       const jobId = currentJobId;
       if (!jobId) return;
-      const ok = confirm('确认清理中间文件？清理后将无法继续重试失败部分。');
+      const ok = confirm('确认清理中间文件？清理后将无法继续重试失败部分或重跑全部。');
       if (!ok) return;
 
       btnCleanup.disabled = true;
@@ -760,6 +970,7 @@
 
       show('已清理中间文件。');
       setRetryVisible(false);
+      setRerunAllVisible(false);
       setCleanupVisible(false);
       currentJobId = null;
       currentJobState = null;
@@ -796,6 +1007,7 @@
           currentJobId = null;
           currentJobState = null;
           setRetryVisible(false);
+          setRerunAllVisible(false);
           setCleanupVisible(false);
           return;
         }
@@ -806,6 +1018,7 @@
           currentJobId = null;
           currentJobState = null;
           setRetryVisible(false);
+          setRerunAllVisible(false);
           setCleanupVisible(false);
           return;
         }
@@ -815,6 +1028,7 @@
           setBusy(false);
           setPaused(true);
           setRetryVisible(false);
+          setRerunAllVisible(false);
           setCleanupVisible(false);
           return;
         }
@@ -823,6 +1037,7 @@
           show(data?.job?.error || data);
           setBusy(false);
           setRetryVisible(true);
+          setRerunAllVisible(true);
           setCleanupVisible(true);
           return;
         }
@@ -842,6 +1057,7 @@
       currentJobId = null;
       currentJobState = null;
       setRetryVisible(false);
+      setRerunAllVisible(false);
       setCleanupVisible(false);
 
       const fd = new FormData(form);
@@ -882,6 +1098,8 @@
       currentJobState = 'queued';
       await poll(currentJobId);
     });
+
+    loadLlmDefaults();
   </script>
 </body>
 </html>

@@ -13,6 +13,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from novel_proofer.dotenv_store import (
+    LLMDefaults,
+    dotenv_path as dotenv_path,
+    llm_env_updates_from_defaults_patch,
+    read_llm_defaults,
+    update_llm_defaults,
+)
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import GLOBAL_JOBS, ChunkStatus, JobStatus
 from novel_proofer.llm.config import LLMConfig
@@ -75,6 +82,49 @@ def _rel_debug_dir(job_id: str) -> str:
     return f"output/.jobs/{job_id}/"
 
 
+def _input_cache_root() -> Path:
+    return OUTPUT_DIR / ".inputs"
+
+
+def _input_cache_path(job_id: str) -> Path:
+    job_id = (job_id or "").strip()
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("invalid job_id")
+    return _input_cache_root() / f"{job_id}.txt"
+
+
+def _write_input_cache(job_id: str, text: str) -> None:
+    p = _input_cache_path(job_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text, encoding="utf-8")
+
+
+def _read_input_cache(job_id: str) -> str:
+    p = _input_cache_path(job_id)
+    if not p.exists():
+        raise FileNotFoundError(str(p))
+    return p.read_text(encoding="utf-8")
+
+
+def _cleanup_input_cache(job_id: str) -> bool:
+    """Delete output/.inputs/<job_id>.txt (best-effort, safe-guarded)."""
+
+    job_id = (job_id or "").strip()
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("invalid job_id")
+
+    root = _input_cache_root().resolve()
+    target = _input_cache_path(job_id).resolve()
+    if target == root or root not in target.parents:
+        raise ValueError("invalid job_id")
+
+    if not target.exists():
+        return False
+
+    target.unlink()
+    return True
+
+
 def _cleanup_job_dir(job_id: str) -> bool:
     """Delete output/.jobs/<job_id>/ directory (best-effort, safe-guarded)."""
 
@@ -124,6 +174,24 @@ class LLMOptions(BaseModel):
     timeout_seconds: float = 180.0
     max_concurrency: int = 20
     extra_params: dict[str, Any] | None = None
+
+
+class LLMSettings(BaseModel):
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    temperature: float | None = None
+    timeout_seconds: float | None = None
+    max_concurrency: int | None = None
+    extra_params: dict[str, Any] | None = None
+
+
+class LLMSettingsResponse(BaseModel):
+    llm: LLMSettings
+
+
+class LLMSettingsPutRequest(BaseModel):
+    llm: LLMSettings = Field(default_factory=LLMSettings)
 
 
 class FormatOptions(BaseModel):
@@ -302,6 +370,18 @@ def _format_from_options(opts: FormatOptions) -> FormatConfig:
     )
 
 
+def _llm_settings_from_defaults(d: LLMDefaults) -> LLMSettings:
+    return LLMSettings(
+        base_url=d.base_url,
+        api_key=d.api_key,
+        model=d.model,
+        temperature=d.temperature,
+        timeout_seconds=d.timeout_seconds,
+        max_concurrency=d.max_concurrency,
+        extra_params=d.extra_params,
+    )
+
+
 app = FastAPI()
 
 
@@ -340,6 +420,32 @@ async def healthz():
     return {"ok": True}
 
 
+@app.get("/api/v1/settings/llm", response_model=LLMSettingsResponse)
+async def get_llm_settings():
+    path = dotenv_path(workdir=WORKDIR)
+    try:
+        defaults = read_llm_defaults(path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return LLMSettingsResponse(llm=_llm_settings_from_defaults(defaults))
+
+
+@app.put("/api/v1/settings/llm", response_model=LLMSettingsResponse)
+async def put_llm_settings(body: LLMSettingsPutRequest = Body(...)):
+    path = dotenv_path(workdir=WORKDIR)
+    patch = LLMDefaults(**body.llm.model_dump())
+    updates = llm_env_updates_from_defaults_patch(patch, fields_set=set(body.llm.model_fields_set))
+    try:
+        if updates:
+            update_llm_defaults(path, updates=updates)
+        defaults = read_llm_defaults(path)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+    return LLMSettingsResponse(llm=_llm_settings_from_defaults(defaults))
+
+
 @app.post("/api/v1/jobs", response_model=JobCreateResponse, status_code=201)
 async def create_job(file: UploadFile = File(...), options: str = Form(...)):
     if file is None:
@@ -362,8 +468,64 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
         cleanup_debug_dir=bool(opts.output.cleanup_debug_dir),
     )
 
+    try:
+        _write_input_cache(job.job_id, input_text)
+    except Exception as e:
+        GLOBAL_JOBS.delete(job.job_id)
+        raise HTTPException(status_code=500, detail=f"failed to cache input: {e}") from e
+
     fmt = _format_from_options(opts.format)
     llm = _llm_from_options(opts.llm)
+
+    t = threading.Thread(
+        target=run_job,
+        args=(job.job_id, input_text, fmt, llm),
+        daemon=True,
+    )
+    t.start()
+
+    st = GLOBAL_JOBS.get(job.job_id)
+    if st is None:
+        raise HTTPException(status_code=500, detail="job store error")
+    return JobCreateResponse(job=_job_to_out(st))
+
+
+@app.post("/api/v1/jobs/{job_id}/rerun-all", response_model=JobCreateResponse, status_code=201)
+async def rerun_all(job_id: str, options: JobOptions = Body(...)):
+    st0 = GLOBAL_JOBS.get(job_id)
+    if st0 is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    try:
+        input_text = _read_input_cache(job_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail="job input cache not found") from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    out_name = _derive_output_filename(st0.input_filename or "input.txt", options.output.suffix)
+
+    job = GLOBAL_JOBS.create(st0.input_filename or "input.txt", out_name, total_chunks=0)
+    output_abs = OUTPUT_DIR / f"{job.job_id}_{out_name}"
+    work_dir = JOBS_DIR / job.job_id
+    GLOBAL_JOBS.update(
+        job.job_id,
+        output_filename=output_abs.name,
+        output_path=str(output_abs),
+        work_dir=str(work_dir),
+        cleanup_debug_dir=bool(options.output.cleanup_debug_dir),
+    )
+
+    try:
+        _write_input_cache(job.job_id, input_text)
+    except Exception as e:
+        GLOBAL_JOBS.delete(job.job_id)
+        raise HTTPException(status_code=500, detail=f"failed to cache input: {e}") from e
+
+    fmt = _format_from_options(options.format)
+    llm = _llm_from_options(options.llm)
 
     t = threading.Thread(
         target=run_job,
@@ -504,6 +666,7 @@ async def cleanup_debug(job_id: str):
 
     try:
         _cleanup_job_dir(job_id)
+        _cleanup_input_cache(job_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

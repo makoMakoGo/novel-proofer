@@ -15,6 +15,7 @@ htmlcov/
 # Local env files
 .env
 .env.*
+!.env.example
 !.env.test.example
 
 # App outputs

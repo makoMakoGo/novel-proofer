@@ -1,6 +1,6 @@
 # 测试用例说明
 
-在仓库根目录执行 `.venv\Scripts\python.exe -m pytest --collect-only -q`，pytest 当前共收集到 **103** 个测试用例（包含参数化展开）。本文档按文件列出每个用例的覆盖点，便于快速定位“在测什么”。
+在仓库根目录执行 `.venv\Scripts\python.exe -m pytest --collect-only -q`，pytest 会收集到若干测试用例（包含参数化展开；具体数量以本地输出为准）。本文档按文件列出每个用例的覆盖点，便于快速定位“在测什么”。
 
 如需运行全部测试：`pytest -q`。
 
@@ -13,7 +13,9 @@
 | `tests/test_api_endpoints.py::test_get_job_chunk_filter_and_paging` | 创建多分片任务后，用 `chunks=1&chunk_state=done&limit=1&offset=0` 拉取分片列表；验证分页 `has_more`、返回数量与 `chunk_counts.done` 统计。 |
 | `tests/test_api_endpoints.py::test_job_not_found_error_envelope` | 查询不存在的任务时返回 `404`，并使用统一错误信封（`error.code == "not_found"`）。 |
 | `tests/test_api_endpoints.py::test_create_job_llm_enabled_requires_base_url_and_model` | LLM 配置缺失（`base_url/model` 为空）时，创建任务仍返回 `201`，但任务最终进入 `error` 状态。 |
-| `tests/test_api_endpoints.py::test_job_actions_cancel_pause_resume_retry_cleanup` | 覆盖任务动作接口：`cancel/pause/resume/retry-failed/cleanup-debug` 的返回值、状态流转与调试目录清理。 |
+| `tests/test_api_endpoints.py::test_job_actions_cancel_pause_resume_retry_cleanup` | 覆盖任务动作接口：`cancel/pause/resume/retry-failed/cleanup-debug` 的返回值、状态流转；并验证 `cleanup-debug` 会同时删除输入缓存，且清理后无法 `rerun-all`。 |
+| `tests/test_api_endpoints.py::test_llm_settings_get_put_preserves_unknown_lines` | 覆盖 LLM 默认配置接口：`GET/PUT /api/v1/settings/llm`；验证写入 `.env` 时保留未知键/注释，并能读回保存的 LLM 字段。 |
+| `tests/test_api_endpoints.py::test_rerun_all_creates_new_job_without_reupload` | 覆盖 `POST /api/v1/jobs/{job_id}/rerun-all`：基于输入缓存创建新任务并从头跑完整流程，且不需要重新上传文件。 |
 
 ## tests/test_formatting_chunking.py
 

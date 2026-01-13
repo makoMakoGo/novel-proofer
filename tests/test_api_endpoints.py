@@ -153,23 +153,34 @@ def test_job_not_found_error_envelope():
     assert body.get("error", {}).get("code") == "not_found"
 
 
-def test_create_job_llm_enabled_requires_base_url_and_model():
-    client = TestClient(api.app)
-    options = {"format": {"max_chunk_chars": 2000}, "llm": {"base_url": "", "model": ""}}
-    r = client.post(
-        "/api/v1/jobs",
-        data={"options": json.dumps(options, ensure_ascii=False)},
-        files={"file": ("x.txt", "x\n", "text/plain; charset=utf-8")},
-    )
-    assert r.status_code == 201, r.text
-    job_id = (r.json().get("job") or {}).get("id")
-    assert isinstance(job_id, str) and len(job_id) == 32
+def test_create_job_llm_enabled_requires_base_url_and_model(monkeypatch: pytest.MonkeyPatch):
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        out_dir = base / "output"
+        jobs_dir = out_dir / ".jobs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        jobs_dir.mkdir(parents=True, exist_ok=True)
 
-    try:
-        final = _wait_job_done(client, job_id, timeout_seconds=5.0)
-        assert (final.get("job") or {}).get("state") == "error"
-    finally:
-        GLOBAL_JOBS.delete(str(job_id))
+        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+
+        client = TestClient(api.app)
+        options = {"format": {"max_chunk_chars": 2000}, "llm": {"base_url": "", "model": ""}}
+
+        r = client.post(
+            "/api/v1/jobs",
+            data={"options": json.dumps(options, ensure_ascii=False)},
+            files={"file": ("x.txt", "x\n", "text/plain; charset=utf-8")},
+        )
+        assert r.status_code == 201, r.text
+        job_id = (r.json().get("job") or {}).get("id")
+        assert isinstance(job_id, str) and len(job_id) == 32
+
+        try:
+            final = _wait_job_done(client, job_id, timeout_seconds=5.0)
+            assert (final.get("job") or {}).get("state") == "error"
+        finally:
+            GLOBAL_JOBS.delete(str(job_id))
 
 
 def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.MonkeyPatch):
@@ -220,8 +231,13 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
 
     # Cleanup-debug deletes job + debug dir.
     with tempfile.TemporaryDirectory() as td:
-        jobs_dir = Path(td) / ".jobs"
+        base = Path(td)
+        out_dir = base / "output"
+        jobs_dir = out_dir / ".jobs"
+        out_dir.mkdir(parents=True, exist_ok=True)
         jobs_dir.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
         monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
 
         job4 = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
@@ -230,8 +246,114 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         (job4_dir / "x.txt").write_text("x", encoding="utf-8")
         GLOBAL_JOBS.update(job4.job_id, state="done")
 
+        input_cache = out_dir / ".inputs" / f"{job4.job_id}.txt"
+        input_cache.parent.mkdir(parents=True, exist_ok=True)
+        input_cache.write_text("cached", encoding="utf-8")
+
         r = client.post(f"/api/v1/jobs/{job4.job_id}/cleanup-debug")
         assert r.status_code == 200
         assert r.json().get("ok") is True
         assert not job4_dir.exists()
+        assert not input_cache.exists()
         assert GLOBAL_JOBS.get(job4.job_id) is None
+
+        # After cleanup, rerun-all is unavailable.
+        r2 = client.post(f"/api/v1/jobs/{job4.job_id}/rerun-all", json={"format": {"max_chunk_chars": 2000}})
+        assert r2.status_code == 404
+
+
+def test_llm_settings_get_put_preserves_unknown_lines(monkeypatch: pytest.MonkeyPatch):
+    client = TestClient(api.app)
+    with tempfile.TemporaryDirectory() as td:
+        dotenv = Path(td) / ".env"
+        dotenv.write_text("# keep\nFOO=bar\nNOVEL_PROOFER_LLM_BASE_URL=http://old\n", encoding="utf-8")
+        monkeypatch.setenv("NOVEL_PROOFER_DOTENV_PATH", str(dotenv))
+
+        r0 = client.get("/api/v1/settings/llm")
+        assert r0.status_code == 200
+
+        payload = {
+            "llm": {
+                "base_url": "http://new",
+                "model": "m",
+                "api_key": "k",
+                "temperature": 0.1,
+                "timeout_seconds": 12,
+                "max_concurrency": 3,
+                "extra_params": {"max_tokens": 4096},
+            }
+        }
+        r1 = client.put("/api/v1/settings/llm", json=payload)
+        assert r1.status_code == 200, r1.text
+        body = r1.json()
+        assert (body.get("llm") or {}).get("base_url") == "http://new"
+        assert (body.get("llm") or {}).get("model") == "m"
+        assert (body.get("llm") or {}).get("api_key") == "k"
+        assert (body.get("llm") or {}).get("extra_params", {}).get("max_tokens") == 4096
+
+        raw = dotenv.read_text(encoding="utf-8")
+        assert "# keep" in raw
+        assert "FOO=bar" in raw
+        assert "NOVEL_PROOFER_LLM_BASE_URL=http://new" in raw
+
+
+def test_rerun_all_creates_new_job_without_reupload(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        runner,
+        "call_llm_text_resilient_with_meta_and_raw",
+        lambda cfg, input_text, *, should_stop=None, on_retry=None: (
+            LLMTextResult(text=input_text, raw_text="RAW"),
+            0,
+            None,
+            None,
+        ),
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        out_dir = base / "output"
+        jobs_dir = out_dir / ".jobs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+
+        client = TestClient(api.app)
+        options = {
+            "format": {"max_chunk_chars": 2000},
+            "llm": {"base_url": "http://example.com", "model": "m", "max_concurrency": 1},
+            "output": {"suffix": "_rev", "cleanup_debug_dir": True},
+        }
+
+        r = client.post(
+            "/api/v1/jobs",
+            data={"options": json.dumps(options, ensure_ascii=False)},
+            files={"file": ("in.txt", "第1章\n\n正文一。\n正文二。\n", "text/plain; charset=utf-8")},
+        )
+        assert r.status_code == 201, r.text
+        job_id = (r.json().get("job") or {}).get("id")
+        assert isinstance(job_id, str) and len(job_id) == 32
+
+        try:
+            final = _wait_job_done(client, job_id, timeout_seconds=5.0)
+            assert (final.get("job") or {}).get("state") == "done"
+
+            input_cache = out_dir / ".inputs" / f"{job_id}.txt"
+            assert input_cache.exists()
+
+            r2 = client.post(f"/api/v1/jobs/{job_id}/rerun-all", json=options)
+            assert r2.status_code == 201, r2.text
+            job_id2 = (r2.json().get("job") or {}).get("id")
+            assert isinstance(job_id2, str) and len(job_id2) == 32 and job_id2 != job_id
+
+            final2 = _wait_job_done(client, job_id2, timeout_seconds=5.0)
+            assert (final2.get("job") or {}).get("state") == "done"
+            assert (out_dir / (final2.get("job") or {}).get("output_filename")).exists()
+        finally:
+            GLOBAL_JOBS.delete(str(job_id))
+            # Best-effort: rerun job may or may not exist if creation failed.
+            try:
+                GLOBAL_JOBS.delete(str(job_id2))  # type: ignore[name-defined]
+            except Exception:
+                pass

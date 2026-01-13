@@ -42,6 +42,7 @@
 novel_proofer/
 ├── server.py          # 入口：uvicorn CLI 包装
 ├── api.py             # REST 端点、请求验证、响应序列化
+├── dotenv_store.py    # 本地 .env 读写（LLM 默认配置）
 ├── jobs.py            # JobStore：线程安全的 job/chunk 状态管理
 ├── runner.py          # 编排器：chunking → local rules → LLM → merge
 └── formatting/
@@ -57,6 +58,7 @@ novel_proofer/
 | 模块 | 职责 | 关键方法 |
 |------|------|---------|
 | `api.py` | REST 端点、请求验证 | `create_job()`, `get_job()`, `pause_job()` |
+| `dotenv_store.py` | 本地 `.env` 读写（保留未知键/注释） | `read_llm_defaults()`, `update_llm_defaults()` |
 | `jobs.py` | 线程安全状态管理 | `create()`, `update()`, `update_chunk()` |
 | `runner.py` | 流程编排 | `run_job()`, `_llm_worker()`, `_finalize_job()` |
 | `formatting/rules.py` | 本地规则 | `apply_rules()` |
@@ -70,6 +72,8 @@ novel_proofer/
 上传文件 (POST /api/v1/jobs)
     ↓
 文件解码 (UTF-8/GBK/GB18030)
+    ↓
+输入缓存（保存到 output/.inputs/{job_id}.txt，用于“重跑全部（新任务）无需重新上传”）
     ↓
 分片 (chunk_by_lines_with_first_chunk_max)
     ↓
