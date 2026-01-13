@@ -36,8 +36,13 @@ def _is_chapter_title(line: str) -> bool:
     if _chapter_like_re.match(line):
         return True
     # Also accept short all-caps-like headings (rare in cn novels).
-    # Only apply this to lines with ASCII letters (not pure CJK).
-    if len(s) <= 40 and s.upper() == s and any(c.isascii() and c.isalpha() for c in s):
+    # Only apply this to lines with ASCII letters and NO CJK (avoid misclassifying cn paragraphs like "（你纯M啊）").
+    if (
+        len(s) <= 40
+        and s.upper() == s
+        and any(c.isascii() and c.isalpha() for c in s)
+        and not _has_cjk(s)
+    ):
         return True
     return False
 

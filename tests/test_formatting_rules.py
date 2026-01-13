@@ -148,3 +148,19 @@ def test_paragraph_indent_after_blank_line() -> None:
     # Second paragraph should be indented (after blank).
     assert lines[2].startswith("\u3000\u3000")
 
+
+def test_paragraph_indent_mixed_cjk_ascii_not_title() -> None:
+    """Mixed CJK + ASCII (e.g., '（你纯M啊）') should NOT be treated as an English all-caps title."""
+    cfg = FormatConfig(
+        max_chunk_chars=2000,
+        paragraph_indent=True,
+        indent_with_fullwidth_space=True,
+    )
+    text = (
+        "　　上一段。\n"
+        "\n"
+        "（你纯M啊）\n"
+    )
+    out, _ = apply_rules(text, cfg)
+    lines = out.rstrip("\n").split("\n")
+    assert lines[2].startswith("\u3000\u3000（你纯M啊）")

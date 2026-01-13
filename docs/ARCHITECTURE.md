@@ -214,7 +214,7 @@ def _normalize_paragraph_indent(text: str, config: FormatConfig) -> tuple[str, b
 **章节标题检测** (`_is_chapter_title`)：
 - 书名号格式：`《标题》`、`【标题】`
 - 章节模式：`第X章`、`序章`、`番外`、`后记`、`尾声`
-- 全大写英文标题（罕见）
+- 全大写英文标题（罕见；仅当该行不含 CJK 字符时生效，避免误判中文段落里的单个字母）
 
 ---
 
