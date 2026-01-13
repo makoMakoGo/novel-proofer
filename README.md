@@ -1,7 +1,7 @@
 
 <div align="center">
 
-![header](https://capsule-render.vercel.app/api?type=waving&color=0:3498db,100:2c3e50&height=200&section=header&text=Novel%20Proofer&fontSize=50&fontColor=ffffff&fontAlignY=35&desc=中文涩涩小说排版校对器&descSize=20&descAlignY=55)
+![header](https://capsule-render.vercel.app/api?type=waving&color=0:3498db,100:2c3e50&height=200&section=header&text=Novel%20Proofer&fontSize=50&fontColor=ffffff&fontAlignY=35&desc=小说打样员&descSize=20&descAlignY=55)
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)](https://python.org)
 [![Server](https://img.shields.io/badge/Server-FastAPI%2FUvicorn-009688)](requirements.txt)
