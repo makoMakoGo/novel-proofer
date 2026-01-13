@@ -8,6 +8,7 @@ import pytest
 import novel_proofer.runner as runner
 from novel_proofer.formatting.chunking import chunk_by_lines_with_first_chunk_max
 from novel_proofer.formatting.config import FormatConfig
+from novel_proofer.formatting.rules import is_separator_line
 from novel_proofer.llm.client import LLMTextResult
 from novel_proofer.llm.config import LLMConfig
 from tests.conftest import should_update_golden
@@ -49,7 +50,9 @@ def test_pipeline_corpus_golden(case_dir: Path, pytestconfig: pytest.Config, mon
     llm = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
 
     def fake_call(_cfg: LLMConfig, input_text: str, *, should_stop=None, on_retry=None):  # noqa: ANN001
-        return (LLMTextResult(text=input_text, raw_text="RAW"), 0, None, None)
+        # Mimic the global prompt cleanup: remove obvious separator lines such as "====".
+        cleaned = "".join(line for line in input_text.splitlines(keepends=True) if not is_separator_line(line))
+        return (LLMTextResult(text=cleaned, raw_text="RAW"), 0, None, None)
 
     monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_call)
 
@@ -80,4 +83,3 @@ def test_pipeline_corpus_golden(case_dir: Path, pytestconfig: pytest.Config, mon
         )
         (art_dir / "expected.txt").write_text(expected, encoding="utf-8")
         raise AssertionError(f"{e}\n\nArtifacts: {art_dir}") from e
-

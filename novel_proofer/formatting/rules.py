@@ -47,6 +47,14 @@ def _is_chapter_title(line: str) -> bool:
     return False
 
 
+_SEPARATOR_CHARS = "-=*_—"
+
+
+def is_separator_line(line: str) -> bool:
+    stripped = line.strip()
+    return bool(stripped) and len(stripped) >= 3 and all(ch in _SEPARATOR_CHARS for ch in stripped)
+
+
 _ellipsis_ascii_re = re.compile(r"\.{3,}")
 _ellipsis_cn_re = re.compile(r"[。．｡]{3,}")
 _em_dash_re = re.compile(r"[-—]{2,}")
@@ -243,8 +251,7 @@ def _normalize_paragraph_indent(text: str, config: FormatConfig) -> tuple[str, b
             continue
 
         # Skip lines that look like separators.
-        stripped = line.strip()
-        if stripped and all(ch in "-=*_—" for ch in stripped) and len(stripped) >= 3:
+        if is_separator_line(line):
             continue
 
         # Only indent at paragraph start (first line or after blank line).

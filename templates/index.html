@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Novel Proofer</title>
+  <title>小说排版校对器</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M19.8978 16H7.89778C6.96781 16 6.50282 16 6.12132 16.1022C5.08604 16.3796 4.27740 17.1883 4 18.2235' stroke='%231C274D' stroke-width='1.5'/%3E%3Cpath d='M8 7H16' stroke='%231C274D' stroke-width='1.5' stroke-linecap='round'/%3E%3Cpath d='M8 10.5H13' stroke='%231C274D' stroke-width='1.5' stroke-linecap='round'/%3E%3Cpath d='M10 22C7.17157 22 5.75736 22 4.87868 21.1213C4 20.2426 4 18.8284 4 16V8C4 5.17157 4 3.75736 4.87868 2.87868C5.75736 2 7.17157 2 10 2H14C16.8284 2 18.2426 2 19.1213 2.87868C20 3.75736 20 5.17157 20 8M14 22C16.8284 22 18.2426 22 19.1213 21.1213C20 20.2426 20 18.8284 20 16V12' stroke='%231C274D' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E" />
   <style>
     :root {
@@ -33,8 +33,14 @@
     input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
     textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; transition: border-color .15s, box-shadow .15s; resize: vertical; min-height: 60px; }
     textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
-    input[type="file"] { width: 100%; padding: 10px; border: 2px dashed var(--border); border-radius: var(--radius-sm); background: var(--input-bg); cursor: pointer; transition: border-color .15s; }
-    input[type="file"]:hover { border-color: #ccc; }
+
+    /* File drop */
+    .file-drop { width: 100%; padding: 12px; border: 2px dashed var(--border); border-radius: var(--radius-sm); background: var(--input-bg); position: relative; transition: border-color .15s, background .15s, box-shadow .15s; }
+    .file-drop:hover { border-color: #ccc; }
+    .file-drop.dragover { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
+    .file-drop-title { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+    .file-drop-name { margin-top: 6px; font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-drop input[type="file"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 
     .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-top: 8px; }
     .checks label { margin: 0; display: flex; gap: 10px; align-items: center; font-weight: 400; color: var(--text); cursor: pointer; padding: 6px 10px; border-radius: var(--radius-sm); transition: background .15s; }
@@ -51,6 +57,7 @@
     .btn-mini { margin-top: 0; padding: 8px 12px; font-size: 12px; }
     .inline-hint { font-size: 12px; color: var(--text-muted); }
     .inline-hint.dirty { color: #f59e0b; font-weight: 600; }
+    .preview { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
     .hint { color: var(--text-muted); font-size: 12px; margin-top: 20px; line-height: 1.7; }
     .out { margin-top: 16px; padding: 14px; background: var(--input-bg); border-radius: var(--radius-sm); }
@@ -113,12 +120,16 @@
   </style>
 </head>
 <body>
-  <div class="wrap">
+    <div class="wrap">
     <div class="card">
-      <h1><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: -3px; margin-right: 8px;"><path d="M19.8978 16H7.89778C6.96781 16 6.50282 16 6.12132 16.1022C5.08604 16.3796 4.27740 17.1883 4 18.2235" stroke="currentColor" stroke-width="1.5"/><path d="M8 7H16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 10.5H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M10 22C7.17157 22 5.75736 22 4.87868 21.1213C4 20.2426 4 18.8284 4 16V8C4 5.17157 4 3.75736 4.87868 2.87868C5.75736 2 7.17157 2 10 2H14C16.8284 2 18.2426 2 19.1213 2.87868C20 3.75736 20 5.17157 20 8M14 22C16.8284 22 18.2426 22 19.1213 21.1213C20 20.2426 20 18.8284 20 16V12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>Novel Proofer</h1>
+      <h1><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: -3px; margin-right: 8px;"><path d="M19.8978 16H7.89778C6.96781 16 6.50282 16 6.12132 16.1022C5.08604 16.3796 4.27740 17.1883 4 18.2235" stroke="currentColor" stroke-width="1.5"/><path d="M8 7H16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 10.5H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M10 22C7.17157 22 5.75736 22 4.87868 21.1213C4 20.2426 4 18.8284 4 16V8C4 5.17157 4 3.75736 4.87868 2.87868C5.75736 2 7.17157 2 10 2H14C16.8284 2 18.2426 2 19.1213 2.87868C20 3.75736 20 5.17157 20 8M14 22C16.8284 22 18.2426 22 19.1213 21.1213C20 20.2426 20 18.8284 20 16V12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>小说排版校对器</h1>
       <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
       <label>上传 TXT</label>
-      <input name="file" type="file" accept=".txt,text/plain" required />
+      <div class="file-drop" id="fileDrop">
+        <div class="file-drop-title">点击选择或拖拽 TXT 文件到此处</div>
+        <div class="file-drop-name" id="fileName">未选择任何文件</div>
+        <input name="file" type="file" accept=".txt,text/plain" required />
+      </div>
 
       <!-- Action Area (always visible) -->
       <div class="btns">
@@ -147,6 +158,7 @@
         <div>如果部分分片失败，可修改 LLM 配置后点击"重试失败部分"。</div>
         <div>如遇到 token limit / 输出过短，可在"额外参数"里尝试设置输出上限（例如 <code>{"max_tokens": 4096}</code>；不同服务参数名可能不同）。</div>
         <div>如需排查中间结果，可取消勾选"完成后删除调试中间文件"；中间文件位于 <code>output/.jobs/</code>。</div>
+        <div>可通过"输出后缀"自定义输出文件名（预览里会显示最终路径格式）。</div>
         <div>完成后结果会写入项目 <code>output/</code> 目录。</div>
       </div>
 
@@ -159,10 +171,21 @@
       <!-- Progress Tab -->
       <div id="tab-progress" class="tab-content active">
 
-        <label>分片大小（字符数）</label>
+        <label>输出与分片</label>
         <div class="row">
           <div>
+            <label>输出后缀</label>
+            <input name="suffix" type="text" value="_rev" placeholder="_rev" style="width:120px" />
+            <div class="inline-hint">追加到输出文件名（默认 <code>_rev</code>）</div>
+          </div>
+          <div>
+            <label>分片大小（字符数）</label>
             <input name="max_chunk_chars" type="number" min="200" max="4000" step="100" value="2000" />
+            <div class="inline-hint">200–4000；越小越稳但更慢</div>
+          </div>
+          <div style="flex:1; min-width:260px">
+            <label>输出预览</label>
+            <div class="preview" id="outputPreview">output/&lt;job_id&gt;_input_rev.txt</div>
           </div>
         </div>
 
@@ -183,18 +206,19 @@
         <div class="row">
           <div>
             <label>Base URL</label>
-            <input name="llm_base_url" type="text" value="https://juya.owl.ci" />
+            <input name="llm_base_url" type="text" value="" placeholder="https://api.openai.com/v1" />
           </div>
           <div>
             <label>Model</label>
-            <input name="llm_model" type="text" value="DeepSeek-V3.2-Exp" />
+            <input name="llm_model" type="text" value="" placeholder="DeepSeek-V3 / gpt-4o-mini / ..." />
           </div>
           <div>
-            <label>API Key（可留空）</label>
+            <label>API Key（可选）</label>
             <div style="display:flex; gap:8px; align-items:center">
               <input name="llm_api_key" type="password" placeholder="sk-..." style="flex:1; min-width:0" />
               <button type="button" class="ghost btn-mini" id="btnToggleApiKey">显示</button>
             </div>
+            <div class="inline-hint">OpenAI 官方端点一般必填；本地/内网端点可留空</div>
           </div>
         </div>
         <div class="row">
@@ -280,6 +304,11 @@
     const btnSaveLlmDefaults = document.getElementById('btnSaveLlmDefaults');
     const llmDirtyHint = document.getElementById('llmDirtyHint');
     const btnToggleApiKey = document.getElementById('btnToggleApiKey');
+    const fileInput = form.querySelector('input[name="file"]');
+    const suffixInput = form.querySelector('input[name="suffix"]');
+    const outputPreview = document.getElementById('outputPreview');
+    const fileDrop = document.getElementById('fileDrop');
+    const fileName = document.getElementById('fileName');
 
     // Debug tab elements
     const chunksBody = document.getElementById('chunksBody');
@@ -299,6 +328,81 @@
     let chunkCounts = null;
     let totalChunksFromServer = 0;
     let chunksFetchInFlight = false;
+
+    const UI_STATE_KEY = 'novel_proofer.ui_state.v1';
+    const UI_STATE_FIELDS = [
+      'suffix',
+      'max_chunk_chars',
+      'paragraph_indent',
+      'indent_with_fullwidth_space',
+      'normalize_blank_lines',
+      'trim_trailing_spaces',
+      'normalize_ellipsis',
+      'normalize_em_dash',
+      'normalize_cjk_punctuation',
+      'fix_cjk_punct_spacing',
+      'normalize_quotes',
+      'cleanup_debug_dir',
+    ];
+
+    function _uiStateElement(name) {
+      if (name === 'cleanup_debug_dir') {
+        return form.querySelector('input[type="checkbox"][name="cleanup_debug_dir"]');
+      }
+      return form.querySelector(`[name="${name}"]`);
+    }
+
+    function loadUiState() {
+      try {
+        const raw = localStorage.getItem(UI_STATE_KEY);
+        if (!raw) return;
+        const state = JSON.parse(raw);
+        if (!state || typeof state !== 'object') return;
+        for (const name of UI_STATE_FIELDS) {
+          const el = _uiStateElement(name);
+          if (!el) continue;
+          if (el.type === 'checkbox') {
+            el.checked = !!state[name];
+          } else if (state[name] != null) {
+            el.value = String(state[name]);
+          }
+        }
+      } catch (e) {}
+    }
+
+    function saveUiState() {
+      try {
+        const state = {};
+        for (const name of UI_STATE_FIELDS) {
+          const el = _uiStateElement(name);
+          if (!el) continue;
+          state[name] = (el.type === 'checkbox') ? !!el.checked : String(el.value || '');
+        }
+        localStorage.setItem(UI_STATE_KEY, JSON.stringify(state));
+      } catch (e) {}
+    }
+
+    function _previewOutputPath() {
+      const file = fileInput?.files?.[0];
+      const rawName = String(file?.name || 'input.txt');
+      const name = rawName.split(/[\\/]/).pop() || 'input.txt';
+      const dot = name.lastIndexOf('.');
+      const stem = (dot > 0) ? name.slice(0, dot) : name;
+      const ext = (dot > 0) ? name.slice(dot) : '.txt';
+      const suffix = String(suffixInput?.value || '_rev').trim() || '_rev';
+      return `output/<job_id>_${stem}${suffix}${ext}`;
+    }
+
+    function refreshOutputPreview() {
+      if (!outputPreview) return;
+      outputPreview.textContent = _previewOutputPath();
+    }
+
+    function refreshFileName() {
+      const file = fileInput?.files?.[0];
+      if (fileName) fileName.textContent = file ? file.name : '未选择任何文件';
+      refreshOutputPreview();
+    }
 
     // Tab switching
     const tabBtns = document.querySelectorAll('.tab-btn');
@@ -322,6 +426,33 @@
     // Restore tab from localStorage
     const savedTab = localStorage.getItem('activeTab');
     switchTab(savedTab || 'progress');
+
+    loadUiState();
+    refreshFileName();
+    UI_STATE_FIELDS.forEach((name) => {
+      const el = _uiStateElement(name);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        saveUiState();
+        if (name === 'suffix') refreshOutputPreview();
+      });
+      el.addEventListener('change', () => {
+        saveUiState();
+        if (name === 'suffix') refreshOutputPreview();
+      });
+    });
+    fileInput?.addEventListener('change', refreshFileName);
+    if (fileInput && fileDrop) {
+      const addDrag = () => fileDrop.classList.add('dragover');
+      const rmDrag = () => fileDrop.classList.remove('dragover');
+      fileInput.addEventListener('dragenter', addDrag);
+      fileInput.addEventListener('dragleave', rmDrag);
+      fileInput.addEventListener('drop', () => {
+        rmDrag();
+        // Let the browser populate input.files, then refresh UI.
+        setTimeout(refreshFileName, 0);
+      });
+    }
 
     // Filter buttons
     const filterBtns = document.querySelectorAll('.filter-btn');
