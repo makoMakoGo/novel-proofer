@@ -1,7 +1,7 @@
 <p align="center">
   <img src="./images/logo.svg" height="128">
   <h1 align="center">Novel Proofer</h1>
-  <h4 align="center">小说打样员 - 中文涩涩小说排版校对</h4>
+  <h4 align="center">帮你轻松校对中文涩涩小说</h4>
 </p>
 
 <p align="center">
@@ -11,9 +11,17 @@
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
 </p>
 
-## Introduction
+## Novel Proofer
 
-`Novel Proofer` 是一个中文小说排版校对工具，结合本地确定性规则与 LLM 语义理解，自动处理标点符号、段落缩进、空行规范等排版问题。支持大文件分片并发处理，失败分片可单独重试，无需重新上传。
+`Novel Proofer` 即“小说打样员”，是专为中文涩涩小说排版校对设计的工具。它帮助你轻松优雅地完成对涩涩小说的排版校对工作。
+
+此工具的设计思路融合了基于确定性规则启发式的算法 和 LLM 强大的语义理解能力：首先对小说进行分片处理，通过启发式算法进行粗处理，随后交由LLM进行精细化调整，最后在本地二次校验并拼接完整输出。
+
+**Recommended free api services**: [Cerebras](https://cloud.cerebras.ai/), [Nvidia](https://build.nvidia.com/) and [Juya 公益站](https://connect-with-me.com).
+
+<!-- ![](./images/UI-01.png) -->  
+<!-- ![](./images/UI-02.png) -->  
+
 
 ## Features
 
@@ -24,31 +32,35 @@
 - 📌 LLM 配置支持"保存默认"，写入本地 `.env` 并自动预填
 - 🌀 支持"重跑全部（新任务）"，无需重新上传文件
 
-**If you like this app, please consider giving it a [Star ⭐️](https://github.com/zhu-jl18/novel-proofer), thanks! (^-^)**
+**If you like this app, please consider giving it a [Star](https://github.com/zhu-jl18/novel-proofer) ⭐️, thanks! (^-^)**
+
+
 
 
 ## Installation
 
-### Configuration 
+### 1. Configuration 
 
-两种方式配置 LLM 默认参数：
+手动配置： 复制 `.env.example` 为 `.env` 并填写：
 
-1. 页面保存 - 填写 LLM 配置后点击「保存默认」，写入仓库根目录 `.env`，下次打开自动预填
-2. 手动配置 - 复制 `.env.example` 为 `.env` 并填写
+```bash
+cp .env.example .env
+```
 
+或启动服务后在 Web UI 填写 LLM 配置后点击「保存默认」，会写入仓库根目录 `.env`，下次打开自动预填。
 
-### Start the Server
+### 2. Start the Server
 
 Click the script or run in terminal:
 
 ```bash
-# 一键启动
 .\start.bat
 ```
 > [!NOTE]
-> `start.bat` 会自动创建并激活 `.venv` 虚拟环境，无需手动配置。
+> `start.bat` 会自动创建并激活 `.venv` 虚拟环境，无需手动配置。其等价于下边手动启动过程👇
 > 
-Or Try manual installation and start：
+
+Try manual installation and start alternatively:
 
 ```bash
 python -m venv .venv
@@ -64,7 +76,7 @@ python -m novel_proofer.server
 | Ways     | Description                                 | Preview                                   |
 | -------- | ------------------------------------------- | ----------------------------------------- |
 | 上传文件 | 选择 .txt 文件上传，自动识别 UTF-8/GBK 编码 | <!-- ![](./images/usage-upload.gif) -->   |
-| LLM 配置 | 填写 API 地址、Key、模型名，可保存为默认    | <!-- ![](./images/usage-config.gif) -->   |
+| LLM 配置 | 填写 API 地址、Key、模型名，可保存为默认    | ![LLM-config](./images/UI-01.png)         |
 | 处理进度 | 实时显示分片处理状态，支持暂停/继续/取消    | <!-- ![](./images/usage-progress.gif) --> |
 | 失败重试 | 修改配置后重试失败分片，无需重新上传        | <!-- ![](./images/usage-retry.gif) -->    |
 
@@ -86,15 +98,11 @@ flowchart TD
 
 ## Documentation
 
-- 📖 [ Complete Usage Guide ](docs/USAGE.md) - 安装配置、规则说明、异常处理、调试方法
+- 📖 [Complete Usage Guide](docs/USAGE.md) - 安装配置、规则说明、异常处理、调试方法
 - 🔧 [Detailed Architecture Doc](docs/ARCHITECTURE.md) - 系统设计原理（Why + How）
-- ⚔️ [Full Testcase Instructions](docs/TESTCASES.md) - 测试覆盖说明
+- ⚔️ [Full Testcase Instructions](docs/TESTCASES.md) 
 
 ## Known Issues
 
 - 偶尔出现乱码，经检查原文件并无乱码
 
-## Roadmap
-
-- [ ] 识别原文件不同编码格式并最终统一为 UTF-8
-- [ ] 补充 LLM 边缘情况的单元测试
