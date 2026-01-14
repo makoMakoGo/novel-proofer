@@ -49,7 +49,7 @@ def test_pipeline_corpus_golden(case_dir: Path, pytestconfig: pytest.Config, mon
 
     llm = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
 
-    def fake_call(_cfg: LLMConfig, input_text: str, *, should_stop=None, on_retry=None):  # noqa: ANN001
+    def fake_call(_cfg: LLMConfig, input_text: str, *, should_stop=None, on_retry=None):
         # Mimic the global prompt cleanup: remove obvious separator lines such as "====".
         cleaned = "".join(line for line in input_text.splitlines(keepends=True) if not is_separator_line(line))
         return (LLMTextResult(text=cleaned, raw_text="RAW"), 0, None, None)

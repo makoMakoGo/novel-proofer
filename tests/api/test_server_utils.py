@@ -47,7 +47,7 @@ def test_cleanup_job_dir_validation_and_removal(monkeypatch: pytest.MonkeyPatch)
 def test_server_main_parses_and_calls_uvicorn(monkeypatch: pytest.MonkeyPatch):
     captured: dict[str, object] = {}
 
-    def fake_run(app, *, host, port, log_level, reload):  # noqa: ANN001
+    def fake_run(app, *, host, port, log_level, reload):
         captured["app"] = app
         captured["host"] = host
         captured["port"] = port
@@ -61,4 +61,3 @@ def test_server_main_parses_and_calls_uvicorn(monkeypatch: pytest.MonkeyPatch):
     assert captured["port"] == 12345
     assert captured["log_level"] == "warning"
     assert captured["reload"] is False
-

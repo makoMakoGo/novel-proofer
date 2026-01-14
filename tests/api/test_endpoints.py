@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -207,7 +208,9 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         st = GLOBAL_JOBS.get(job2.job_id)
         assert st is not None and st.state == "paused"
 
-        r2 = client.post(f"/api/v1/jobs/{job2.job_id}/resume", json={"llm": {"base_url": "http://example.com", "model": "m"}})
+        r2 = client.post(
+            f"/api/v1/jobs/{job2.job_id}/resume", json={"llm": {"base_url": "http://example.com", "model": "m"}}
+        )
         assert r2.status_code == 200
         assert r2.json().get("ok") is True
         st2 = GLOBAL_JOBS.get(job2.job_id)
@@ -260,6 +263,30 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         # After cleanup, rerun-all is unavailable.
         r2 = client.post(f"/api/v1/jobs/{job4.job_id}/rerun-all", json={"format": {"max_chunk_chars": 2000}})
         assert r2.status_code == 404
+
+
+def test_resume_job_returns_409_when_background_submit_rejects(monkeypatch: pytest.MonkeyPatch):
+    client = TestClient(api.app)
+
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    try:
+        r0 = client.post(f"/api/v1/jobs/{job.job_id}/pause")
+        assert r0.status_code == 200
+
+        def _boom(*_a, **_k):
+            raise ValueError("job_id is already in flight")
+
+        monkeypatch.setattr(api, "submit_background_job", _boom)
+
+        r = client.post(
+            f"/api/v1/jobs/{job.job_id}/resume",
+            json={"llm": {"base_url": "http://example.com", "model": "m"}},
+        )
+        assert r.status_code == 409
+        st = GLOBAL_JOBS.get(job.job_id)
+        assert st is not None and st.state == "paused"
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
 
 
 def test_llm_settings_get_put_preserves_unknown_lines(monkeypatch: pytest.MonkeyPatch):
@@ -353,7 +380,5 @@ def test_rerun_all_creates_new_job_without_reupload(monkeypatch: pytest.MonkeyPa
         finally:
             GLOBAL_JOBS.delete(str(job_id))
             # Best-effort: rerun job may or may not exist if creation failed.
-            try:
+            with suppress(Exception):
                 GLOBAL_JOBS.delete(str(job_id2))  # type: ignore[name-defined]
-            except Exception:
-                pass

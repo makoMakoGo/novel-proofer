@@ -8,7 +8,7 @@ from novel_proofer.llm.config import FIRST_CHUNK_SYSTEM_PROMPT_PREFIX, LLMConfig
 
 
 def test_format_txt_llm_enabled_calls_llm_and_counts(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_call_llm_text_resilient(cfg: LLMConfig, input_text: str, *, should_stop=None, on_retry=None):  # noqa: ANN001
+    def fake_call_llm_text_resilient(cfg: LLMConfig, input_text: str, *, should_stop=None, on_retry=None):
         return input_text + "LLM"
 
     monkeypatch.setattr(fixer, "call_llm_text_resilient", fake_call_llm_text_resilient)
@@ -26,7 +26,7 @@ def test_format_txt_llm_enabled_keeps_front_matter_in_first_chunk_when_chunk_siz
 ) -> None:
     calls: list[tuple[str, str]] = []
 
-    def fake_call_llm_text_resilient(cfg: LLMConfig, input_text: str, *, should_stop=None, on_retry=None):  # noqa: ANN001
+    def fake_call_llm_text_resilient(cfg: LLMConfig, input_text: str, *, should_stop=None, on_retry=None):
         calls.append((cfg.system_prompt, input_text))
         return input_text
 

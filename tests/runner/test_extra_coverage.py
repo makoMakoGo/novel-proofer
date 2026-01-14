@@ -19,8 +19,13 @@ def _mk_job(work_dir: Path, out_path: Path, *, total_chunks: int = 1, cleanup_de
     return job_id
 
 
+def _write_input(path: Path, text: str) -> Path:
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def test_llm_worker_records_retries_and_aligns_newlines(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_call(  # noqa: ANN001
+    def fake_call(
         cfg: LLMConfig,
         input_text: str,
         *,
@@ -81,7 +86,8 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
         # Cancel after LLM returns -> return before writing resp/out.
         job_id2 = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         try:
-            def fake_cancel_then_return(  # noqa: ANN001
+
+            def fake_cancel_then_return(
                 cfg: LLMConfig,
                 input_text: str,
                 *,
@@ -102,7 +108,8 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
         # Cancelled inside LLMError handler -> early return (no chunk error state set).
         job_id3 = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         try:
-            def fake_cancel_then_raise(  # noqa: ANN001
+
+            def fake_cancel_then_raise(
                 cfg: LLMConfig,
                 input_text: str,
                 *,
@@ -211,11 +218,12 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
         try:
             work_dir = base / "w1"
             out_path = base / "o1.txt"
+            input_path = _write_input(base / "i1.txt", ("x\n" * 3000))
             GLOBAL_JOBS.update(job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
 
             calls = 0
 
-            def cancel_after_first(chunk: str, _cfg):  # noqa: ANN001
+            def cancel_after_first(chunk: str, _cfg):
                 nonlocal calls
                 calls += 1
                 if calls == 1:
@@ -223,7 +231,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
                 return chunk, {}
 
             monkeypatch.setattr(runner, "apply_rules", cancel_after_first)
-            runner.run_job(job_id, ("x\n" * 3000), fmt, llm)
+            runner.run_job(job_id, input_path, fmt, llm)
             st = GLOBAL_JOBS.get(job_id)
             assert st is not None and st.state == "cancelled"
         finally:
@@ -234,14 +242,15 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
         try:
             work_dir = base / "w2"
             out_path = base / "o2.txt"
+            input_path = _write_input(base / "i2.txt", "x\n")
             GLOBAL_JOBS.update(job2_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
 
-            def cancel_during_apply(chunk: str, _cfg):  # noqa: ANN001
+            def cancel_during_apply(chunk: str, _cfg):
                 GLOBAL_JOBS.cancel(job2_id)
                 return chunk, {}
 
             monkeypatch.setattr(runner, "apply_rules", cancel_during_apply)
-            runner.run_job(job2_id, "x\n", fmt, llm)
+            runner.run_job(job2_id, input_path, fmt, llm)
             st = GLOBAL_JOBS.get(job2_id)
             assert st is not None and st.state == "cancelled"
         finally:
@@ -252,9 +261,10 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
         try:
             work_dir = base / "w3"
             out_path = base / "o3.txt"
+            input_path = _write_input(base / "i3.txt", "x\n")
             GLOBAL_JOBS.update(job3_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "paused")
-            runner.run_job(job3_id, "x\n", fmt, llm)
+            runner.run_job(job3_id, input_path, fmt, llm)
             st = GLOBAL_JOBS.get(job3_id)
             assert st is not None and st.state == "paused"
         finally:
@@ -264,9 +274,10 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
         try:
             work_dir = base / "w4"
             out_path = base / "o4.txt"
+            input_path = _write_input(base / "i4.txt", "x\n")
             GLOBAL_JOBS.update(job4_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "cancelled")
-            runner.run_job(job4_id, "x\n", fmt, llm)
+            runner.run_job(job4_id, input_path, fmt, llm)
             st = GLOBAL_JOBS.get(job4_id)
             assert st is not None and st.state == "cancelled"
         finally:
@@ -280,6 +291,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
         try:
             work_dir = base / "w5"
             out_path = base / "o5.txt"
+            input_path = _write_input(base / "i5.txt", ("x\n" * 3000))
             GLOBAL_JOBS.update(job5_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
 
             monkeypatch.setattr(
@@ -304,7 +316,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
                     GLOBAL_JOBS.cancel(job5_id)
 
             monkeypatch.setattr(runner, "_atomic_write_text", atomic_and_cancel)
-            runner.run_job(job5_id, ("x\n" * 3000), fmt, llm)
+            runner.run_job(job5_id, input_path, fmt, llm)
             st = GLOBAL_JOBS.get(job5_id)
             assert st is not None and st.state == "cancelled"
         finally:
@@ -315,13 +327,14 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
         try:
             work_dir = base / "w6"
             out_path = base / "o6.txt"
+            input_path = _write_input(base / "i6.txt", "x\n")
             GLOBAL_JOBS.update(job6_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
             monkeypatch.setattr(
                 runner,
-                "chunk_by_lines_with_first_chunk_max",
+                "iter_chunks_by_lines_with_first_chunk_max_from_file",
                 lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
             )
-            runner.run_job(job6_id, "x\n", fmt, llm)
+            runner.run_job(job6_id, input_path, fmt, llm)
             st = GLOBAL_JOBS.get(job6_id)
             assert st is not None and st.state == "error"
             assert "boom" in (st.error or "")
@@ -351,7 +364,9 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
         # No chunk statuses.
         job2_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0).job_id
         try:
-            GLOBAL_JOBS.update(job2_id, work_dir=str(base / "w1"), output_path=str(base / "o1.txt"), cleanup_debug_dir=False)
+            GLOBAL_JOBS.update(
+                job2_id, work_dir=str(base / "w1"), output_path=str(base / "o1.txt"), cleanup_debug_dir=False
+            )
             runner.retry_failed_chunks(job2_id, llm)
             runner.resume_paused_job(job2_id, llm)
             st = GLOBAL_JOBS.get(job2_id)
@@ -376,7 +391,9 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
         # Outcome paused/cancelled branches.
         job4_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1).job_id
         try:
-            GLOBAL_JOBS.update(job4_id, work_dir=str(base / "w3"), output_path=str(base / "o3.txt"), cleanup_debug_dir=False)
+            GLOBAL_JOBS.update(
+                job4_id, work_dir=str(base / "w3"), output_path=str(base / "o3.txt"), cleanup_debug_dir=False
+            )
             GLOBAL_JOBS.init_chunks(job4_id, total_chunks=1)
             GLOBAL_JOBS.update_chunk(job4_id, 0, state="error", last_error_message="x")
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "paused")
@@ -388,7 +405,9 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
 
         job5_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1).job_id
         try:
-            GLOBAL_JOBS.update(job5_id, work_dir=str(base / "w4"), output_path=str(base / "o4.txt"), cleanup_debug_dir=False)
+            GLOBAL_JOBS.update(
+                job5_id, work_dir=str(base / "w4"), output_path=str(base / "o4.txt"), cleanup_debug_dir=False
+            )
             GLOBAL_JOBS.init_chunks(job5_id, total_chunks=1)
             GLOBAL_JOBS.update_chunk(job5_id, 0, state="error", last_error_message="x")
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "cancelled")
@@ -404,7 +423,9 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             work_dir = base / "w5"
             (work_dir / "out").mkdir(parents=True, exist_ok=True)
             (work_dir / "out" / "000000.txt").write_text("x", encoding="utf-8")
-            GLOBAL_JOBS.update(job6_id, work_dir=str(work_dir), output_path=str(base / "o5.txt"), cleanup_debug_dir=False)
+            GLOBAL_JOBS.update(
+                job6_id, work_dir=str(work_dir), output_path=str(base / "o5.txt"), cleanup_debug_dir=False
+            )
             GLOBAL_JOBS.init_chunks(job6_id, total_chunks=1)
             GLOBAL_JOBS.update_chunk(job6_id, 0, state="done")
             runner.resume_paused_job(job6_id, llm)

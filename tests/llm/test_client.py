@@ -65,7 +65,7 @@ def test_llm_config_removed_retry_fields():
 def test_call_llm_text_routes_to_openai_compatible(monkeypatch: pytest.MonkeyPatch):
     cfg = LLMConfig(base_url="http://x", model="m")
 
-    def fake_call(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:  # noqa: ANN001
+    def fake_call(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:
         return "OK"
 
     monkeypatch.setattr(llm_client, "_call_openai_compatible", fake_call)
@@ -75,7 +75,7 @@ def test_call_llm_text_routes_to_openai_compatible(monkeypatch: pytest.MonkeyPat
 def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch: pytest.MonkeyPatch):
     captured: dict = {}
 
-    def fake_stream_request_with_debug(  # noqa: ANN001
+    def fake_stream_request_with_debug(
         url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None
     ) -> tuple[str, str]:
         captured["url"] = url
@@ -109,7 +109,7 @@ def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch
 def test_call_openai_compatible_merges_extra_params(monkeypatch: pytest.MonkeyPatch):
     captured: dict = {}
 
-    def fake_stream_request_with_debug(  # noqa: ANN001
+    def fake_stream_request_with_debug(
         url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None
     ) -> tuple[str, str]:
         captured["payload"] = payload
@@ -134,7 +134,7 @@ def test_call_openai_compatible_merges_extra_params(monkeypatch: pytest.MonkeyPa
     [
         ("data: [DONE]", ("done", "")),
         ("data:", ("data", "")),
-        ("data:  {\"x\":1}", ("data", "{\"x\":1}")),
+        ('data:  {"x":1}', ("data", '{"x":1}')),
         ("event: ping", None),
         ("", None),
     ],
@@ -156,18 +156,18 @@ def test_urlopen_uses_no_proxy_for_loopback(monkeypatch: pytest.MonkeyPatch):
     used = {"build_opener": 0, "urlopen": 0, "proxy_dict": None}
 
     class _FakeOpener:
-        def open(self, _req, *, timeout: float):  # noqa: ANN001
+        def open(self, _req, *, timeout: float):
             return ("opened", timeout)
 
-    def fake_proxy_handler(d: dict):  # noqa: ANN001
+    def fake_proxy_handler(d: dict):
         used["proxy_dict"] = d
         return object()
 
-    def fake_build_opener(_handler):  # noqa: ANN001
+    def fake_build_opener(_handler):
         used["build_opener"] += 1
         return _FakeOpener()
 
-    def fake_urlopen(_req, *, timeout: float):  # noqa: ANN001
+    def fake_urlopen(_req, *, timeout: float):
         used["urlopen"] += 1
         raise AssertionError("should not call urllib.request.urlopen for loopback")
 
@@ -184,8 +184,8 @@ def test_urlopen_uses_no_proxy_for_loopback(monkeypatch: pytest.MonkeyPatch):
 
 def test_stream_request_parses_openai_sse(monkeypatch: pytest.MonkeyPatch):
     sse = (
-        b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n"
-        b"data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n"
+        b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n'
+        b'data: {"choices":[{"delta":{"content":" world"}}]}\n'
         b"data: [DONE]\n"
     )
 
@@ -200,13 +200,13 @@ def test_stream_request_stops_reading_after_done(monkeypatch: pytest.MonkeyPatch
 
 
 def test_stream_request_should_stop_short_circuits(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _FakeResponse([b"data: {\"x\":1}\n"]))
+    monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _FakeResponse([b'data: {"x":1}\n']))
     with pytest.raises(LLMError, match=r"cancelled"):
         llm_client._stream_request("http://x", {"stream": True}, headers={}, timeout=1.0, should_stop=lambda: True)
 
 
 def test_stream_request_wraps_url_error(monkeypatch: pytest.MonkeyPatch):
-    def boom(req, timeout):  # noqa: ANN001
+    def boom(req, timeout):
         raise urllib.error.URLError("boom")
 
     monkeypatch.setattr(llm_client, "_urlopen", boom)
@@ -215,12 +215,12 @@ def test_stream_request_wraps_url_error(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_http_post_json_success(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _FakeResponse([b"{\"ok\":true}"]))
+    monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _FakeResponse([b'{"ok":true}']))
     assert llm_client._http_post_json("http://x", {"a": 1}, headers={}, timeout=1.0) == {"ok": True}
 
 
 def test_http_post_json_wraps_url_error(monkeypatch: pytest.MonkeyPatch):
-    def boom(req, timeout):  # noqa: ANN001
+    def boom(req, timeout):
         raise urllib.error.URLError("boom")
 
     monkeypatch.setattr(llm_client, "_urlopen", boom)
@@ -232,7 +232,7 @@ def test_call_llm_text_resilient_retries_and_succeeds(monkeypatch: pytest.Monkey
     calls: list[int] = []
     sleeps: list[float] = []
 
-    def fake_call_llm_text(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:  # noqa: ANN001
+    def fake_call_llm_text(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:
         calls.append(1)
         if len(calls) < 3:
             raise LLMError("HTTP 500", status_code=500)
@@ -250,7 +250,7 @@ def test_call_llm_text_resilient_retries_and_succeeds(monkeypatch: pytest.Monkey
 def test_call_llm_text_resilient_non_retryable_raises(monkeypatch: pytest.MonkeyPatch):
     sleeps: list[float] = []
 
-    def fake_call_llm_text(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:  # noqa: ANN001
+    def fake_call_llm_text(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:
         raise LLMError("HTTP 400", status_code=400)
 
     monkeypatch.setattr(llm_client, "call_llm_text", fake_call_llm_text)
@@ -266,7 +266,7 @@ def test_call_llm_text_resilient_with_meta_calls_on_retry(monkeypatch: pytest.Mo
     calls: list[int] = []
     on_retry_calls: list[tuple[int, int | None, str | None]] = []
 
-    def fake_call_llm_text(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:  # noqa: ANN001
+    def fake_call_llm_text(cfg: LLMConfig, input_text: str, *, should_stop=None) -> str:
         calls.append(1)
         if len(calls) == 1:
             raise LLMError("HTTP 500", status_code=500)

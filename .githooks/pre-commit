@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# Prefer repo-local venv. This repo enforces running tooling inside .venv.
+py=""
+if [[ -x ".venv/Scripts/python.exe" ]]; then
+  py=".venv/Scripts/python.exe"
+elif [[ -x ".venv/bin/python" ]]; then
+  py=".venv/bin/python"
+fi
+
+if [[ -z "$py" ]]; then
+  cat >&2 <<'EOF'
+pre-commit: missing .venv python.
+
+Create it first:
+  Windows: start.bat
+  Unix:    python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+EOF
+  exit 1
+fi
+
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+if (( ${#files[@]} == 0 )); then
+  exit 0
+fi
+
+declare -A before_hash=()
+for f in "${files[@]}"; do
+  before_hash["$f"]="$(git hash-object "$f")"
+done
+
+echo "[pre-commit] ruff format (staged files)"
+"$py" -m ruff format "${files[@]}"
+
+echo "[pre-commit] ruff check --fix (staged files)"
+"$py" -m ruff check --fix "${files[@]}"
+
+changed=0
+for f in "${files[@]}"; do
+  if [[ "${before_hash["$f"]}" != "$(git hash-object "$f")" ]]; then
+    changed=1
+    break
+  fi
+done
+
+if (( changed )); then
+  cat >&2 <<'EOF'
+pre-commit: formatting/lint fixes were applied.
+
+Please review and stage the changes, then commit again.
+EOF
+  exit 1
+fi

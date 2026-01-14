@@ -84,4 +84,3 @@ def write_failure_artifacts(
     if meta is not None:
         (case_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     return case_dir
-

@@ -75,7 +75,13 @@ type(scope): subject
 
 ## 4. 启用 Git hooks 与提交模板（推荐）
 
-仓库内置了可选的 `commit-msg` hook（校验提交信息）和提交模板（减少格式错误）。它们通过 **本地 git config** 生效，因此**每台机器都需要执行一次**。
+仓库内置了可选的 Git hooks 与提交模板：
+
+- `commit-msg`：校验提交信息（Conventional Commits）
+- `pre-commit`：提交前自动执行 `ruff format` 与 `ruff check --fix`（统一代码风格）
+- `commit.template`：减少提交信息格式错误
+
+它们通过 **本地 git config** 生效，因此**每台机器都需要执行一次**。
 
 ### 4.1 Windows
 
@@ -95,6 +101,10 @@ bash tools/setup-git.sh
 - `commit.template = .gitmessage`
 
 如果你的提交被拒绝，请按提示修改为 `type(scope): subject` 格式后重试。
+
+> [!NOTE]
+> `pre-commit` hook 依赖仓库内的 `.venv`。首次运行请先执行一次 `.\start.bat` 创建虚拟环境并安装依赖。
+> 若 hook 提示它自动修复了格式/导入顺序，请 `git add` 后重新提交即可。
 
 ---
 
@@ -126,4 +136,3 @@ pytest -q
 
 - `.env` 可能包含 API Key，已在 `.gitignore` 中忽略；请勿提交任何包含密钥的文件。
 - 若需要共享示例配置，请更新 `.env.example` / `.env.test.example`，不要直接提交真实 key。
-

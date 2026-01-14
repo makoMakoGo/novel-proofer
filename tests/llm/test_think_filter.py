@@ -5,7 +5,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pytest
 from novel_proofer.llm.client import _maybe_filter_think_tags
 from novel_proofer.llm.config import LLMConfig
 from novel_proofer.llm.think_filter import ThinkTagFilter, filter_think_tags
@@ -157,7 +156,6 @@ class TestFilterThinkTagsFunction:
         text = "prefix<think>never closed\nVISIBLE"
         result = filter_think_tags(text)
         assert result == "prefix"
-
 
 
 class TestMaybeFilterThinkTags:

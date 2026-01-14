@@ -31,7 +31,7 @@ def _assert_resp_files(work_dir: Path, *, expect: bool) -> None:
 
 
 def test_llm_worker_success_writes_resp_index_file_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_call_llm_text_resilient_with_meta_and_raw(  # noqa: ANN001
+    def fake_call_llm_text_resilient_with_meta_and_raw(
         cfg: LLMConfig,
         input_text: str,
         *,
@@ -40,7 +40,9 @@ def test_llm_worker_success_writes_resp_index_file_only(monkeypatch: pytest.Monk
     ):
         return LLMTextResult(text="修正后内容\n", raw_text="RAW-1"), 0, None, None
 
-    monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_call_llm_text_resilient_with_meta_and_raw)
+    monkeypatch.setattr(
+        runner, "call_llm_text_resilient_with_meta_and_raw", fake_call_llm_text_resilient_with_meta_and_raw
+    )
 
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td)
@@ -69,7 +71,7 @@ def test_llm_worker_success_writes_resp_index_file_only(monkeypatch: pytest.Monk
 
 
 def test_llm_worker_error_does_not_create_error_dir(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_call_llm_text_resilient_with_meta_and_raw(  # noqa: ANN001
+    def fake_call_llm_text_resilient_with_meta_and_raw(
         cfg: LLMConfig,
         input_text: str,
         *,
@@ -78,7 +80,9 @@ def test_llm_worker_error_does_not_create_error_dir(monkeypatch: pytest.MonkeyPa
     ):
         raise LLMError("boom", status_code=500)
 
-    monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_call_llm_text_resilient_with_meta_and_raw)
+    monkeypatch.setattr(
+        runner, "call_llm_text_resilient_with_meta_and_raw", fake_call_llm_text_resilient_with_meta_and_raw
+    )
 
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td)
@@ -109,7 +113,7 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
     lock = threading.Lock()
     call_count = 0
 
-    def fake_call_llm_text_resilient_with_meta_and_raw(  # noqa: ANN001
+    def fake_call_llm_text_resilient_with_meta_and_raw(
         cfg: LLMConfig,
         input_text: str,
         *,
@@ -125,7 +129,9 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
             return LLMTextResult(text="", raw_text="RAW-FAIL"), 0, None, None
         return LLMTextResult(text="修正后内容\n", raw_text="RAW-OK"), 0, None, None
 
-    monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_call_llm_text_resilient_with_meta_and_raw)
+    monkeypatch.setattr(
+        runner, "call_llm_text_resilient_with_meta_and_raw", fake_call_llm_text_resilient_with_meta_and_raw
+    )
 
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td) / "work"
@@ -159,7 +165,7 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_resume_paused_job_overwrites_existing_resp(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_call_llm_text_resilient_with_meta_and_raw(  # noqa: ANN001
+    def fake_call_llm_text_resilient_with_meta_and_raw(
         cfg: LLMConfig,
         input_text: str,
         *,
@@ -168,7 +174,9 @@ def test_resume_paused_job_overwrites_existing_resp(monkeypatch: pytest.MonkeyPa
     ):
         return LLMTextResult(text="修正后内容\n", raw_text="RAW-RESUME"), 0, None, None
 
-    monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_call_llm_text_resilient_with_meta_and_raw)
+    monkeypatch.setattr(
+        runner, "call_llm_text_resilient_with_meta_and_raw", fake_call_llm_text_resilient_with_meta_and_raw
+    )
 
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td) / "work"

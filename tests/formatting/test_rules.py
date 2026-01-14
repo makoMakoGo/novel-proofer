@@ -21,7 +21,7 @@ def test_apply_rules_all_transforms_and_stats() -> None:
     text = (
         "  第1章  开始\r\n"
         "  PROLOGUE\r\n"
-        "他说:\"你好\", \"世界\"....\r\n"
+        '他说:"你好", "世界"....\r\n'
         "你好,世界;今:天?好!吗.\r\n"
         "你好(世界) \r\n"
         "你好 ， 世界 ！ \r\n"
@@ -30,11 +30,11 @@ def test_apply_rules_all_transforms_and_stats() -> None:
         "===\r\n"
         "！\r\n"
         "\r\n"
-        f"{'这'*50}。\t  \r\n"
+        f"{'这' * 50}。\t  \r\n"
         "\r\n\r\n\r\n\r\n"
         "还有。。。以及………以及--以及———\r\n"
-        "He said \"hello\".\r\n"
-        "他说:\"未闭合\r\n"
+        'He said "hello".\r\n'
+        '他说:"未闭合\r\n'
     )
 
     out, stats = apply_rules(text, cfg)
@@ -63,7 +63,7 @@ def test_apply_rules_all_transforms_and_stats() -> None:
 
     # Quotes normalized only on CJK lines with even quotes.
     assert "“你好”" in out
-    assert "He said \"hello\"." in out
+    assert 'He said "hello".' in out
 
     # Paragraph indent: titles stripped, normal paragraphs indented.
     lines = out.split("\n")
@@ -134,11 +134,7 @@ def test_paragraph_indent_after_blank_line() -> None:
         paragraph_indent=True,
         indent_with_fullwidth_space=True,
     )
-    text = (
-        "　　第一段落。\n"
-        "\n"
-        "第二段落开头没有缩进。\n"
-    )
+    text = "　　第一段落。\n\n第二段落开头没有缩进。\n"
     out, _ = apply_rules(text, cfg)
     lines = out.rstrip("\n").split("\n")
     # First paragraph indented.
@@ -156,11 +152,7 @@ def test_paragraph_indent_mixed_cjk_ascii_not_title() -> None:
         paragraph_indent=True,
         indent_with_fullwidth_space=True,
     )
-    text = (
-        "　　上一段。\n"
-        "\n"
-        "（你纯M啊）\n"
-    )
+    text = "　　上一段。\n\n（你纯M啊）\n"
     out, _ = apply_rules(text, cfg)
     lines = out.rstrip("\n").split("\n")
     assert lines[2].startswith("\u3000\u3000（你纯M啊）")
