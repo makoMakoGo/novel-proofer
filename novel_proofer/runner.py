@@ -4,6 +4,7 @@ import concurrent.futures
 import shutil
 import time
 import uuid
+from collections import deque
 from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
@@ -244,31 +245,27 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
     if GLOBAL_JOBS.is_cancelled(job_id):
         return
 
-    GLOBAL_JOBS.update_chunk(
-        job_id,
-        index,
-        state="processing",
-        started_at=time.time(),
-        finished_at=None,
-        last_error_code=None,
-        last_error_message=None,
-        llm_model=llm.model,
-        input_chars=None,
-        output_chars=None,
-    )
-
     try:
         pre = _chunk_path(work_dir, "pre", index).read_text(encoding="utf-8")
+        GLOBAL_JOBS.update_chunk(
+            job_id,
+            index,
+            state="processing",
+            started_at=time.time(),
+            finished_at=None,
+            last_error_code=None,
+            last_error_message=None,
+            llm_model=llm.model,
+            input_chars=len(pre),
+            output_chars=None,
+        )
         # Whitespace-only chunks are valid (e.g., paragraph separators). Skip LLM entirely to
         # avoid providers that emit no `content` for empty prompts.
         if _is_whitespace_only(pre):
-            GLOBAL_JOBS.update_chunk(job_id, index, input_chars=len(pre), output_chars=len(pre))
             _atomic_write_text(_chunk_path(work_dir, "out", index), pre)
-            GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time())
+            GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time(), output_chars=len(pre))
             GLOBAL_JOBS.add_stat(job_id, "llm_skipped_blank_chunks", 1)
             return
-
-        GLOBAL_JOBS.update_chunk(job_id, index, input_chars=len(pre), output_chars=None)
 
         retry_count = 0
 
@@ -301,7 +298,6 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
             return
 
         assert filtered_text is not None
-        GLOBAL_JOBS.update_chunk(job_id, index, output_chars=len(filtered_text))
 
         _atomic_write_text(_chunk_path(work_dir, "resp", index), raw_text or "")
 
@@ -309,11 +305,8 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
         final_text = _align_leading_blank_lines(pre, filtered_text)
         final_text = _align_trailing_newlines(pre, final_text)
-        if final_text != filtered_text:
-            GLOBAL_JOBS.update_chunk(job_id, index, output_chars=len(final_text))
-
         _atomic_write_text(_chunk_path(work_dir, "out", index), final_text)
-        GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time())
+        GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time(), output_chars=len(final_text))
         GLOBAL_JOBS.add_stat(job_id, "llm_chunks", 1)
     except LLMError as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
@@ -352,7 +345,7 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
         # Submit gradually so cancel can actually stop launching new work.
-        pending_indices = list(indices)
+        pending_indices = deque(indices)
         in_flight: dict[concurrent.futures.Future, int] = {}
 
         while pending_indices or in_flight:
@@ -370,7 +363,7 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
                     and not GLOBAL_JOBS.is_cancelled(job_id)
                     and not GLOBAL_JOBS.is_paused(job_id)
                 ):
-                    i = pending_indices.pop(0)
+                    i = pending_indices.popleft()
                     fut = ex.submit(_llm_worker, job_id, i, work_dir, llm)
                     in_flight[fut] = i
 

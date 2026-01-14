@@ -223,6 +223,7 @@ def _job_from_dict(d: dict) -> JobStatus:
 class JobStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._persist_lock = threading.Lock()
         self._jobs: dict[str, JobStatus] = {}
         self._cancelled: set[str] = set()
         self._paused: set[str] = set()
@@ -245,8 +246,16 @@ class JobStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
         try:
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(path)
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            for attempt in range(10):
+                try:
+                    tmp.replace(path)
+                    break
+                except PermissionError:
+                    if attempt >= 9:
+                        raise
+                    # Windows can transiently lock files (e.g., AV scanners / concurrent readers).
+                    time.sleep(0.02 * (attempt + 1))
         finally:
             with suppress(Exception):
                 tmp.unlink(missing_ok=True)
@@ -256,7 +265,8 @@ class JobStore:
         if path is None:
             return
         try:
-            self._atomic_write_json(path, _job_to_dict(snapshot))
+            with self._persist_lock:
+                self._atomic_write_json(path, _job_to_dict(snapshot))
         except Exception:
             logger.exception("failed to persist job state: job_id=%s", snapshot.job_id)
 
@@ -311,19 +321,25 @@ class JobStore:
         if persist_dir is None or not persist_dir.exists():
             return 0
 
-        loaded: list[JobStatus] = []
+        loaded: list[tuple[JobStatus, bool]] = []
         for p in persist_dir.glob("*.json"):
             try:
                 obj = json.loads(p.read_text(encoding="utf-8"))
+                src_version = obj.get("version")
+                needs_rewrite = True
+                try:
+                    needs_rewrite = int(src_version) != _JOB_STATE_VERSION
+                except Exception:
+                    needs_rewrite = True
                 st = self._heal_loaded_job(_job_from_dict(obj))
                 if not st.job_id:
                     continue
-                loaded.append(st)
+                loaded.append((st, needs_rewrite))
             except Exception:
                 logger.exception("failed to load persisted job: %s", p)
 
         with self._lock:
-            for st in loaded:
+            for st, _needs_rewrite in loaded:
                 self._jobs[st.job_id] = st
                 if st.state == "cancelled":
                     self._cancelled.add(st.job_id)
@@ -331,8 +347,9 @@ class JobStore:
                     self._paused.add(st.job_id)
 
         # Rewrite snapshots in latest schema (best-effort) to complete migration.
-        for st in loaded:
-            self._persist_snapshot(self._snapshot_job(st))
+        for st, needs_rewrite in loaded:
+            if needs_rewrite:
+                self._persist_snapshot(self._snapshot_job(st))
 
         return len(loaded)
 
@@ -454,14 +471,19 @@ class JobStore:
                 return
             cs = st.chunk_statuses[index]
             prev_state = cs.state
+            should_persist = False
             for k, v in kwargs.items():
                 setattr(cs, k, v)
             if "state" in kwargs and cs.state != prev_state:
+                should_persist = True
                 if prev_state == "done" and st.done_chunks > 0:
                     st.done_chunks -= 1
                 if cs.state == "done":
                     st.done_chunks += 1
-            snap = self._snapshot_job(st)
+            if any(k in kwargs for k in ("retries", "last_error_code", "last_error_message")):
+                should_persist = True
+            if should_persist:
+                snap = self._snapshot_job(st)
         if snap is not None:
             self._persist_snapshot(snap)
 
@@ -486,15 +508,12 @@ class JobStore:
             self._persist_snapshot(snap)
 
     def add_stat(self, job_id: str, key: str, inc: int = 1) -> None:
-        snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
                 return
             st.stats[key] = st.stats.get(key, 0) + inc
-            snap = self._snapshot_job(st)
-        if snap is not None:
-            self._persist_snapshot(snap)
+        # Stats are best-effort diagnostics; avoid persisting on every increment for performance.
 
     def cancel(self, job_id: str) -> bool:
         snap: JobStatus | None = None
