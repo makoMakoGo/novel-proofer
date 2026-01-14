@@ -3,322 +3,330 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>小说打样员</title>
+  <title>Novel Proofer - 小说打样员</title>
   <link rel="icon" type="image/svg+xml" href="images/logo.svg" />
-  <style>
-    :root {
-      --bg: #fafafa;
-      --card: #fff;
-      --text: #1a1a1a;
-      --text-muted: #6b7280;
-      --border: #e5e5e5;
-      --accent: #18181b;
-      --accent-hover: #27272a;
-      --input-bg: #f9fafb;
-      --shadow: 0 1px 3px rgba(0,0,0,.04), 0 4px 12px rgba(0,0,0,.03);
-      --shadow-lg: 0 4px 20px rgba(0,0,0,.06);
-      --radius: 12px;
-      --radius-sm: 8px;
-    }
-
-    .header-logo {
-      text-align: center;
-      margin-bottom: 16px;
-    }
-
-    .header-logo h1 {
-      font-size: 1.35rem;
-      font-weight: 650;
-      margin: 0 0 8px;
-      letter-spacing: -0.02em;
-      color: var(--text);
-    }
-
-    .header-logo .logo {
-      width: 64px;
-      height: 64px;
-      opacity: 0.9;
-    }
-
-    @media (max-width: 600px) {
-      .header-logo .logo {
-        width: 48px;
-        height: 48px;
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- Tailwind -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Inter"', '"Noto Sans SC"', 'sans-serif'],
+            serif: ['"Noto Serif SC"', 'serif'],
+            mono: ['"JetBrains Mono"', '"SF Mono"', 'Consolas', 'monospace'],
+          },
+          colors: {
+            paper: '#FDFBF7',
+            ink: '#18181b', // zinc-950
+          }
+        }
       }
     }
+  </script>
 
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 10px 16px 24px; background: var(--bg); color: var(--text); line-height: 1.5; }
-    .wrap { max-width: 920px; margin: 0 auto; }
-    .card { background: var(--card); border-radius: var(--radius); padding: 16px 24px 24px; box-shadow: var(--shadow); }
+  <style>
+    /* Custom scrollbar for webkit */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #e4e4e7; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #d4d4d8; }
+    
+    .tab-btn.active { color: #18181b; }
+    .tab-btn.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: #18181b; }
+    
+    .filter-btn.active { background-color: #18181b; color: white; border-color: #18181b; }
+    
+    /* Smooth fade for content */
+    .tab-content { animation: fadeIn 0.2s ease-out; }
+    @keyframes fadeIn { from { opacity: 0.95; transform: translateY(2px); } to { opacity: 1; transform: translateY(0); } }
 
-    .row { display: flex; gap: 16px; flex-wrap: wrap; }
-    label { display: block; font-size: 13px; color: var(--text-muted); margin: 12px 0 5px; font-weight: 500; }
-    input[type="text"], input[type="number"], input[type="password"] { width: 180px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 14px; transition: border-color .15s, box-shadow .15s; }
-    input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
-    textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; transition: border-color .15s, box-shadow .15s; resize: vertical; min-height: 60px; }
-    textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
-
-    /* File drop */
-    .file-drop { width: 100%; padding: 12px; border: 2px dashed var(--border); border-radius: var(--radius-sm); background: var(--input-bg); position: relative; transition: border-color .15s, background .15s, box-shadow .15s; }
-    .file-drop:hover { border-color: #ccc; }
-    .file-drop.dragover { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 3px rgba(24,24,27,.08); }
-    .file-drop-title { font-size: 13px; color: var(--text-muted); font-weight: 500; }
-    .file-drop-name { margin-top: 6px; font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .file-drop input[type="file"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
-
-    .checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin-top: 8px; }
-    .checks label { margin: 0; display: flex; gap: 10px; align-items: center; font-weight: 400; color: var(--text); cursor: pointer; padding: 6px 10px; border-radius: var(--radius-sm); transition: background .15s; }
-    .checks label:hover { background: var(--input-bg); }
-    .checks input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
-
-    button { margin-top: 16px; padding: 10px 18px; border: none; border-radius: var(--radius-sm); background: var(--accent); color: #fff; font-size: 14px; font-weight: 500; cursor: pointer; transition: background .15s, transform .1s; }
-    button:hover { background: var(--accent-hover); }
-    button:active { transform: scale(0.98); }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btns { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
-    .ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
-    .ghost:hover { background: var(--input-bg); border-color: #ccc; }
-    .btn-mini { margin-top: 0; padding: 8px 12px; font-size: 12px; }
-    .inline-hint { font-size: 12px; color: var(--text-muted); }
-    .inline-hint.dirty { color: #f59e0b; font-weight: 600; }
-    .preview { padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: "SF Mono", Consolas, monospace; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    .hint { color: var(--text-muted); font-size: 12px; margin-top: 16px; line-height: 1.7; }
-    .out { margin-top: 16px; padding: 14px; background: var(--input-bg); border-radius: var(--radius-sm); }
-    .out pre { white-space: pre-wrap; margin: 0; font-size: 13px; font-family: "SF Mono", Consolas, monospace; }
-    code { background: var(--input-bg); padding: 2px 8px; border-radius: 6px; font-size: 12px; }
-
-    .progress { height: 6px; background: var(--border); border-radius: 999px; overflow: hidden; margin-top: 20px; }
-    .bar { height: 100%; width: 0%; background: var(--accent); transition: width .25s ease; }
-    .meta { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-muted); margin-top: 12px; }
-
-    /* Tabs */
-    .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
-    .tab-btn { padding: 10px 18px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--text-muted); position: relative; transition: color .15s; font-weight: 500; }
-    .tab-btn:hover { color: var(--text); background: var(--input-bg); }
-    .tab-btn.active { color: var(--text); }
-    .tab-btn.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: var(--accent); border-radius: 2px 2px 0 0; }
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-
-    /* Stats & Debug */
-    .stats-bar { display: flex; gap: 24px; padding: 16px 20px; background: var(--input-bg); border-radius: var(--radius-sm); margin-bottom: 20px; font-size: 13px; }
-    .stats-bar .stat { display: flex; align-items: center; gap: 8px; }
-    .stats-bar .stat-label { color: var(--text-muted); }
-    .stats-bar .stat-value { font-weight: 600; color: var(--text); }
-
-    .filter-bar { display: flex; gap: 8px; margin-bottom: 20px; }
-    .filter-btn { padding: 8px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); cursor: pointer; font-size: 13px; transition: all .15s; color: var(--text-muted); }
-    .filter-btn:hover { border-color: #ccc; color: var(--text); background: var(--input-bg); }
-    .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-
-    .chunks-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
-    .chunks-table th { text-align: left; padding: 12px 16px; background: var(--input-bg); font-weight: 500; color: var(--text-muted); }
-    .chunks-table th:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
-    .chunks-table th:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
-    .chunks-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); }
-    .chunks-table tr:hover td { background: var(--input-bg); }
-    .chunks-table th:nth-child(1), .chunks-table td:nth-child(1) { width: 72px; }
-    .chunks-table th:nth-child(2), .chunks-table td:nth-child(2) { width: 160px; }
-    .chunks-table th:nth-child(3), .chunks-table td:nth-child(3) { width: 80px; }
-    .chunks-table th:nth-child(4), .chunks-table td:nth-child(4) { width: 120px; }
-
-    .status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 500; }
-    .status-pending { background: #f3f4f6; color: #6b7280; }
-    .status-processing { background: #eff6ff; color: #3b82f6; }
-    .status-done { background: #f0fdf4; color: #22c55e; }
-    .status-error { background: #fef2f2; color: #ef4444; }
-    .status-retrying { background: #fffbeb; color: #f59e0b; }
-    .error-brief { color: #ef4444; font-size: 12px; display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-
-    /* Keep checkbox grids readable on large screens */
-    @media (min-width: 920px) {
-      .checks { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    }
-    @media (min-width: 700px) and (max-width: 919px) {
-      .checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    }
-
-    @media (max-width: 600px) {
-      body { padding: 16px 12px; }
-      .card { padding: 20px; }
-      .row { flex-direction: column; gap: 0; }
-      input[type="text"], input[type="number"] { width: 100%; }
-      .stats-bar { flex-wrap: wrap; gap: 16px; }
-      .chunks-table { font-size: 12px; }
-      .chunks-table th, .chunks-table td { padding: 10px 12px; }
-    }
+    /* Hide checkbox default and use custom if needed, but standard accent-color is fine for MVP */
+    input[type="checkbox"] { accent-color: #18181b; width: 1rem; height: 1rem; cursor: pointer; }
   </style>
 </head>
-<body>
-    <div class="wrap">
-    <div class="card">
-      <div class="header-logo">
-        <h1>小说打样员</h1>
-        <img src="images/logo.svg" alt="Logo" class="logo" />
+<body class="bg-paper text-slate-800 font-sans antialiased min-h-screen selection:bg-zinc-200 selection:text-ink pb-12">
+
+  <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+    
+    <!-- Header -->
+    <header class="text-center mb-10">
+      <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white shadow-sm border border-slate-100 mb-5">
+        <img src="images/logo.svg" alt="Logo" class="w-10 h-10 opacity-90" />
       </div>
-      <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
-      <label>上传 TXT</label>
-      <div class="file-drop" id="fileDrop">
-        <div class="file-drop-title">点击选择或拖拽 TXT 文件到此处</div>
-        <div class="file-drop-name" id="fileName">未选择任何文件</div>
-        <input name="file" type="file" accept=".txt,text/plain" required />
-      </div>
+      <h1 class="font-serif text-3xl font-bold tracking-tight text-ink mb-2">Novel Proofer</h1>
+      <p class="text-slate-500 font-serif tracking-wide text-sm">优雅的中文小说排版校对工具</p>
+    </header>
 
-      <!-- Action Area (always visible) -->
-      <div class="btns">
-        <button type="button" id="btnStart">开始校对</button>
-        <button type="button" class="ghost" id="btnPause" style="display:none" disabled>暂停</button>
-        <button type="button" class="ghost" id="btnCancel" style="display:none" disabled>取消</button>
-        <button type="button" class="ghost" id="btnRetry" style="display:none" disabled>重试失败部分</button>
-        <button type="button" class="ghost" id="btnRerunAll" style="display:none" disabled>重跑全部（新任务）</button>
-        <button type="button" class="ghost" id="btnCleanup" style="display:none" disabled>清理中间文件</button>
-      </div>
-
-      <div class="progress" id="progress" style="display:none">
-        <div class="bar" id="bar"></div>
-      </div>
-      <div class="meta" id="meta" style="display:none">
-        <div id="metaLeft">准备中</div>
-        <div id="metaRight">0%</div>
-      </div>
-
-      <div class="out" id="out" style="display:none">
-        <pre id="outText"></pre>
-      </div>
-
-      <div class="hint">
-        <div>默认启用 LLM；会按"分片大小"分片并发处理（并发表示同时在飞请求数，不是一次处理总字数）。</div>
-        <div>如果部分分片失败，可修改 LLM 配置后点击"重试失败部分"。</div>
-        <div>如遇到 token limit / 输出过短，可在"额外参数"里尝试设置输出上限（例如 <code>{"max_tokens": 4096}</code>；不同服务参数名可能不同）。</div>
-        <div>如需排查中间结果，可取消勾选"完成后删除调试中间文件"；中间文件位于 <code>output/.jobs/</code>。</div>
-        <div>可通过"输出后缀"自定义输出文件名（预览里会显示最终路径格式）。</div>
-        <div>完成后结果会写入项目 <code>output/</code> 目录。</div>
-      </div>
-
-      <!-- Tab Navigation -->
-      <div class="tabs">
-        <button type="button" class="tab-btn active" data-tab="progress">参数设置</button>
-        <button type="button" class="tab-btn" data-tab="debug">分析进度</button>
-      </div>
-
-      <!-- Progress Tab -->
-      <div id="tab-progress" class="tab-content active">
-
-        <label>输出与分片</label>
-        <div class="row">
-          <div>
-            <label>输出后缀</label>
-            <input name="suffix" type="text" value="_rev" placeholder="_rev" style="width:120px" />
-            <div class="inline-hint">追加到输出文件名（默认 <code>_rev</code>）</div>
-          </div>
-          <div>
-            <label>分片大小（字符数）</label>
-            <input name="max_chunk_chars" type="number" min="200" max="4000" step="100" value="2000" />
-            <div class="inline-hint">200–4000；越小越稳但更慢</div>
-          </div>
-          <div style="flex:1; min-width:260px">
-            <label>输出预览</label>
-            <div class="preview" id="outputPreview">output/&lt;job_id&gt;_input_rev.txt</div>
-          </div>
-        </div>
-
-        <label>规则开关</label>
-        <div class="checks">
-          <label><input type="checkbox" name="paragraph_indent" value="1" checked />段首统一缩进</label>
-          <label><input type="checkbox" name="indent_with_fullwidth_space" value="1" checked />缩进用全角空格（\u3000）</label>
-          <label><input type="checkbox" name="normalize_blank_lines" value="1" checked />过多空行压缩</label>
-          <label><input type="checkbox" name="trim_trailing_spaces" value="1" checked />去掉行尾空格</label>
-          <label><input type="checkbox" name="normalize_ellipsis" value="1" checked />省略号统一为“……”</label>
-          <label><input type="checkbox" name="normalize_em_dash" value="1" checked />破折号统一为“——”</label>
-          <label><input type="checkbox" name="normalize_cjk_punctuation" value="1" checked />中英文标点统一（CJK 场景）</label>
-          <label><input type="checkbox" name="fix_cjk_punct_spacing" value="1" checked />标点与汉字间去空格</label>
-          <label><input type="checkbox" name="normalize_quotes" value="1" />引号统一为中文引号（谨慎）</label>
-        </div>
-
-        <label>LLM（用于更复杂的对话/标点处理）</label>
-        <div class="row">
-          <div>
-            <label>Base URL</label>
-            <input name="llm_base_url" type="text" value="" placeholder="https://api.openai.com/v1" />
-          </div>
-          <div>
-            <label>Model</label>
-            <input name="llm_model" type="text" value="" placeholder="DeepSeek-V3 / gpt-4o-mini / ..." />
-          </div>
-          <div>
-            <label>API Key（可选）</label>
-            <div style="display:flex; gap:8px; align-items:center">
-              <input name="llm_api_key" type="password" placeholder="sk-..." style="flex:1; min-width:0" />
-              <button type="button" class="ghost btn-mini" id="btnToggleApiKey">显示</button>
+    <!-- Main Card -->
+    <main class="bg-white rounded-2xl shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] border border-slate-100 overflow-hidden">
+      
+      <div class="p-6 sm:p-8">
+        <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
+          
+          <!-- File Upload Section -->
+          <div class="mb-8">
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">源文件</label>
+            <div class="file-drop group relative w-full p-8 border-2 border-dashed border-slate-200 rounded-xl hover:border-ink/50 hover:bg-slate-50 transition-all duration-200 cursor-pointer text-center" id="fileDrop">
+              <div class="pointer-events-none">
+                <div class="mb-3 text-slate-400 group-hover:text-ink transition-colors">
+                  <svg class="w-8 h-8 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <div class="text-sm font-medium text-slate-600 group-hover:text-ink transition-colors">点击选择或拖拽 TXT 文件</div>
+                <div class="mt-2 text-xs text-slate-400 font-mono" id="fileName">未选择任何文件</div>
+              </div>
+              <input name="file" type="file" accept=".txt,text/plain" required class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
             </div>
-            <div class="inline-hint">OpenAI 官方端点一般必填；本地/内网端点可留空</div>
           </div>
-        </div>
-        <div class="row">
-          <div>
-            <label>Temperature</label>
-            <input name="llm_temperature" type="number" step="0.1" value="0" />
-          </div>
-          <div>
-            <label>超时（秒）</label>
-            <input name="llm_timeout_seconds" type="number" step="1" value="180" />
-          </div>
-          <div>
-            <label>并发（LLM）</label>
-            <input name="llm_max_concurrency" type="number" min="1" step="1" value="20" />
-          </div>
-        </div>
 
-        <label>调试</label>
-        <div class="row">
-          <div>
-            <input type="hidden" name="cleanup_debug_dir" value="0" />
-            <label><input type="checkbox" name="cleanup_debug_dir" value="1" checked />完成后删除调试中间文件（默认）</label>
+          <!-- Action Buttons -->
+          <div class="flex flex-wrap items-center gap-3 mb-8">
+            <button type="button" id="btnStart" class="px-6 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg shadow-sm hover:shadow transition-all active:scale-[0.98]">
+              开始校对
+            </button>
+            <button type="button" id="btnPause" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              暂停
+            </button>
+            <button type="button" id="btnCancel" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              取消
+            </button>
+            <button type="button" id="btnRetry" class="px-5 py-2.5 bg-white border border-amber-200 text-amber-700 hover:bg-amber-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              重试失败部分
+            </button>
+            <button type="button" id="btnRerunAll" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              重跑全部
+            </button>
+            <button type="button" id="btnCleanup" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              清理文件
+            </button>
           </div>
-        </div>
-        <div>
-          <label>额外参数（JSON，可选，透传给 LLM）</label>
-          <textarea name="llm_extra_params" placeholder='例如：{"max_tokens": 4096}'></textarea>
-        </div>
-        <div class="row" style="align-items:center; gap:10px; margin-top:8px">
-          <button type="button" class="ghost btn-mini" id="btnSaveLlmDefaults">保存默认</button>
-          <span id="llmDirtyHint" class="inline-hint dirty" style="display:none">未保存更改</span>
-        </div>
+
+          <!-- Progress Bar -->
+          <div class="mb-8 hidden" id="progress">
+            <div class="flex justify-between text-xs font-medium text-slate-500 mb-2" id="meta">
+              <span id="metaLeft">准备中</span>
+              <span id="metaRight">0%</span>
+            </div>
+            <div class="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+              <div class="h-full bg-ink transition-all duration-300 ease-out" style="width: 0%" id="bar"></div>
+            </div>
+          </div>
+
+          <!-- Output Message Area -->
+          <div class="mb-8 hidden" id="out">
+            <div class="p-4 bg-slate-50 rounded-lg border border-slate-100">
+              <pre id="outText" class="text-xs font-mono text-slate-600 whitespace-pre-wrap break-all"></pre>
+            </div>
+          </div>
+
+          <!-- Tabs Navigation -->
+          <div class="flex gap-6 border-b border-slate-100 mb-6">
+            <button type="button" class="tab-btn active pb-3 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors relative" data-tab="progress">参数设置</button>
+            <button type="button" class="tab-btn pb-3 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors relative" data-tab="debug">分析进度</button>
+          </div>
+
+          <!-- Tab: Settings -->
+          <div id="tab-progress" class="tab-content block">
+            
+            <div class="grid gap-8">
+              <!-- Formatting Section -->
+              <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">格式化选项</label>
+                
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+                  <label class="flex items-center gap-3 p-3 rounded-lg border border-transparent hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <input type="checkbox" name="paragraph_indent" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-sm text-slate-700 group-hover:text-ink">段首统一缩进</span>
+                  </label>
+                  <label class="flex items-center gap-3 p-3 rounded-lg border border-transparent hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <input type="checkbox" name="indent_with_fullwidth_space" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-sm text-slate-700 group-hover:text-ink">全角空格缩进</span>
+                  </label>
+                  <label class="flex items-center gap-3 p-3 rounded-lg border border-transparent hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <input type="checkbox" name="normalize_blank_lines" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-sm text-slate-700 group-hover:text-ink">过多空行压缩</span>
+                  </label>
+                  <label class="flex items-center gap-3 p-3 rounded-lg border border-transparent hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <input type="checkbox" name="trim_trailing_spaces" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-sm text-slate-700 group-hover:text-ink">去除行尾空格</span>
+                  </label>
+                  <label class="flex items-center gap-3 p-3 rounded-lg border border-transparent hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <input type="checkbox" name="normalize_ellipsis" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-sm text-slate-700 group-hover:text-ink">规范省略号 ……</span>
+                  </label>
+                  <label class="flex items-center gap-3 p-3 rounded-lg border border-transparent hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <input type="checkbox" name="normalize_em_dash" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-sm text-slate-700 group-hover:text-ink">规范破折号 ——</span>
+                  </label>
+                  <label class="flex items-center gap-3 p-3 rounded-lg border border-transparent hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <input type="checkbox" name="normalize_cjk_punctuation" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-sm text-slate-700 group-hover:text-ink">中英标点统一</span>
+                  </label>
+                  <label class="flex items-center gap-3 p-3 rounded-lg border border-transparent hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <input type="checkbox" name="fix_cjk_punct_spacing" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-sm text-slate-700 group-hover:text-ink">修正标点间距</span>
+                  </label>
+                  <label class="flex items-center gap-3 p-3 rounded-lg border border-transparent hover:bg-slate-50 transition-colors cursor-pointer group">
+                    <input type="checkbox" name="normalize_quotes" value="1" class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-sm text-slate-700 group-hover:text-ink">引号统一（慎用）</span>
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                   <div>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">输出后缀</label>
+                    <input name="suffix" type="text" value="_rev" placeholder="_rev" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">分片大小 (200-4000)</label>
+                    <input name="max_chunk_chars" type="number" min="200" max="4000" step="100" value="2000" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">输出预览</label>
+                    <div class="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-400 truncate select-all" id="outputPreview">output/&lt;job_id&gt;_input_rev.txt</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- LLM Section -->
+              <div class="pt-6 border-t border-slate-100">
+                <div class="flex items-center justify-between mb-4">
+                  <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider">LLM 配置 (辅助精修)</label>
+                  <div class="flex items-center gap-2">
+                    <button type="button" class="text-xs text-ink hover:underline font-medium" id="btnSaveLlmDefaults">保存为默认</button>
+                    <span id="llmDirtyHint" class="text-[10px] text-amber-500 font-bold hidden">● 未保存</span>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div class="md:col-span-2">
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">Base URL</label>
+                    <input name="llm_base_url" type="text" placeholder="https://api.openai.com/v1" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">Model Name</label>
+                    <input name="llm_model" type="text" placeholder="DeepSeek-V3" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">API Key</label>
+                    <div class="relative">
+                      <input name="llm_api_key" type="password" placeholder="sk-..." class="w-full pl-3 pr-12 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
+                      <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 hover:text-ink px-1.5 py-0.5" id="btnToggleApiKey">SHOW</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-3 gap-4 mb-4">
+                  <div>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">Temp</label>
+                    <input name="llm_temperature" type="number" step="0.1" value="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">Timeout (s)</label>
+                    <input name="llm_timeout_seconds" type="number" step="1" value="180" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">Concurrency</label>
+                    <input name="llm_max_concurrency" type="number" min="1" step="1" value="20" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
+                  </div>
+                </div>
+
+                <div>
+                   <label class="block text-xs font-medium text-slate-500 mb-1.5">额外参数 (JSON)</label>
+                   <textarea name="llm_extra_params" placeholder='{"max_tokens": 4096}' class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono h-20 resize-y focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow"></textarea>
+                </div>
+              </div>
+
+              <!-- Footer Debug Option -->
+              <div class="pt-4 border-t border-slate-100 flex items-center justify-between">
+                 <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" name="cleanup_debug_dir" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+                    <span class="text-xs text-slate-500">完成后自动删除调试中间文件</span>
+                    <input type="hidden" name="cleanup_debug_dir" value="0">
+                 </label>
+                 <div class="text-[10px] text-slate-300">v1.0</div>
+              </div>
+
+            </div>
+          </div>
+          <!-- End Settings Tab -->
+
+          <!-- Tab: Debug -->
+          <div id="tab-debug" class="tab-content hidden">
+            
+            <!-- Stats -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-100" id="statsBar">
+              <div class="text-center">
+                <div class="text-xs text-slate-400 mb-1">Total</div>
+                <div class="font-mono font-bold text-lg text-slate-700" id="statTotal">0</div>
+              </div>
+              <div class="text-center">
+                <div class="text-xs text-slate-400 mb-1">Done</div>
+                <div class="font-mono font-bold text-lg text-green-600" id="statDone">0</div>
+              </div>
+              <div class="text-center">
+                <div class="text-xs text-slate-400 mb-1">Error</div>
+                <div class="font-mono font-bold text-lg text-red-500" id="statError">0</div>
+              </div>
+              <div class="text-center">
+                <div class="text-xs text-slate-400 mb-1">Retry</div>
+                <div class="font-mono font-bold text-lg text-amber-500" id="statRetrying">0</div>
+              </div>
+            </div>
+
+            <!-- Filter -->
+            <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
+               <button type="button" class="filter-btn active px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="all">全部</button>
+               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="error">错误</button>
+               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="processing">处理中</button>
+               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="pending">待处理</button>
+            </div>
+
+            <!-- Table -->
+            <div class="border border-slate-200 rounded-lg overflow-hidden" id="chunksTableWrap">
+               <div class="overflow-x-auto max-h-[500px]">
+                <table class="w-full text-left text-xs">
+                  <thead class="bg-slate-50 text-slate-500 font-medium sticky top-0 z-10 shadow-sm">
+                    <tr>
+                      <th class="p-3 w-16">#</th>
+                      <th class="p-3 w-32">状态</th>
+                      <th class="p-3 w-16">重试</th>
+                      <th class="p-3 w-24">I/O</th>
+                      <th class="p-3">信息</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-100 bg-white" id="chunksBody">
+                    <!-- JS rendered -->
+                  </tbody>
+                </table>
+               </div>
+            </div>
+            
+            <div id="noChunksHint" class="text-center py-12 text-slate-400 text-sm hidden">
+              暂无分片数据，请先开始校对任务。
+            </div>
+
+          </div>
+          <!-- End Debug Tab -->
+
+        </form>
       </div>
-      </form>
+    </main>
 
-      <!-- Debug Tab -->
-      <div id="tab-debug" class="tab-content">
-        <div class="stats-bar" id="statsBar">
-          <div class="stat"><span class="stat-label">总计:</span> <span class="stat-value" id="statTotal">0</span></div>
-          <div class="stat"><span class="stat-label">完成:</span> <span class="stat-value" id="statDone">0</span></div>
-          <div class="stat"><span class="stat-label">错误:</span> <span class="stat-value" id="statError">0</span></div>
-          <div class="stat"><span class="stat-label">重试:</span> <span class="stat-value" id="statRetrying">0</span></div>
-        </div>
-
-        <div id="chunksTableWrap">
-          <table class="chunks-table">
-            <thead>
-              <tr>
-          <th>#</th>
-          <th>状态</th>
-          <th>重试</th>
-          <th>输入/输出</th>
-          <th>错误信息</th>
-              </tr>
-            </thead>
-            <tbody id="chunksBody"></tbody>
-          </table>
-        </div>
-
-        <div id="noChunksHint" style="color:#999; font-size:13px; text-align:center; padding:40px 0;">
-          暂无分片数据，请先开始校对任务。
-        </div>
-      </div>
+    <div class="mt-8 text-center">
+       <div class="inline-block px-4 py-2 rounded-full bg-white border border-slate-100 shadow-sm text-xs text-slate-400">
+         Powered by LLM & Heuristic Rules
+       </div>
     </div>
+    
   </div>
 
   <script>
@@ -446,8 +454,21 @@
 
     function switchTab(tabName) {
       activeTab = tabName;
-      tabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tabName));
-      tabContents.forEach(content => content.classList.toggle('active', content.id === 'tab-' + tabName));
+      tabBtns.forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabName);
+        btn.classList.toggle('text-slate-600', btn.dataset.tab === tabName);
+        btn.classList.toggle('text-slate-400', btn.dataset.tab !== tabName);
+      });
+      tabContents.forEach(content => {
+          if (content.id === 'tab-' + tabName) {
+              content.classList.remove('hidden');
+              content.classList.add('block');
+          } else {
+              content.classList.add('hidden');
+              content.classList.remove('block');
+          }
+      });
+      
       localStorage.setItem('activeTab', tabName);
       if (tabName === 'debug' && currentJobId) {
         forceChunksFetch = true;
@@ -479,8 +500,12 @@
     });
     fileInput?.addEventListener('change', refreshFileName);
     if (fileInput && fileDrop) {
-      const addDrag = () => fileDrop.classList.add('dragover');
-      const rmDrag = () => fileDrop.classList.remove('dragover');
+      const addDrag = () => {
+          fileDrop.classList.add('border-ink', 'bg-slate-50');
+      };
+      const rmDrag = () => {
+          fileDrop.classList.remove('border-ink', 'bg-slate-50');
+      };
       fileInput.addEventListener('dragenter', addDrag);
       fileInput.addEventListener('dragleave', rmDrag);
       fileInput.addEventListener('drop', () => {
@@ -506,11 +531,16 @@
     });
 
     function getStatusBadge(state) {
-      const icons = { pending: '[ ]', processing: '[~]', done: '[v]', error: '[!]', retrying: '[*]' };
-      const labels = { pending: '待处理', processing: '处理中', done: '完成', error: '错误', retrying: '重试中' };
-      const icon = icons[state] || '[ ]';
-      const label = labels[state] || state;
-      return `<span class="status-badge status-${state}">${icon} ${label}</span>`;
+      const config = {
+          pending: { class: 'bg-slate-100 text-slate-500', label: '待处理' },
+          processing: { class: 'bg-blue-50 text-blue-600', label: '处理中' },
+          done: { class: 'bg-green-50 text-green-600', label: '完成' },
+          error: { class: 'bg-red-50 text-red-600', label: '错误' },
+          retrying: { class: 'bg-amber-50 text-amber-600', label: '重试中' }
+      };
+      
+      const c = config[state] || config.pending;
+      return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${c.class}">${c.label}</span>`;
     }
 
     function escapeHtml(s) {
@@ -590,8 +620,8 @@
 
     function renderChunksTable() {
       if (!chunksData || chunksData.length === 0) {
-        noChunksHint.style.display = 'block';
-        chunksTableWrap.style.display = 'none';
+        noChunksHint.classList.remove('hidden');
+        chunksTableWrap.classList.add('hidden');
         if (currentJobId) {
           if (currentFilter === 'all') {
             noChunksHint.textContent = '暂无分片数据（可切换到调试信息页以加载）。';
@@ -604,8 +634,8 @@
         return;
       }
 
-      noChunksHint.style.display = 'none';
-      chunksTableWrap.style.display = 'block';
+      noChunksHint.classList.add('hidden');
+      chunksTableWrap.classList.remove('hidden');
 
        const rows = chunksData.slice(0, 500).map(c => {
          let inOut = '-';
@@ -616,15 +646,15 @@
          const errFull = c.last_error_message ? String(c.last_error_message) : '';
          const err = formatErrorDisplay(errCode, errFull);
          const errMsg = err
-           ? `<span class="error-brief" title="${escapeHtml(err.detail)}">${escapeHtml(err.brief)}</span>`
+           ? `<span class="text-red-500 cursor-help border-b border-dotted border-red-300" title="${escapeHtml(err.detail)}">${escapeHtml(err.brief)}</span>`
            : '-';
 
-         return `<tr>
-           <td>${c.index}</td>
-           <td>${getStatusBadge(c.state)}</td>
-           <td>${c.retries}</td>
-           <td>${inOut}</td>
-           <td>${errMsg}</td>
+         return `<tr class="hover:bg-slate-50 transition-colors">
+           <td class="p-3 text-slate-400 font-mono">${c.index}</td>
+           <td class="p-3">${getStatusBadge(c.state)}</td>
+           <td class="p-3 text-slate-500">${c.retries}</td>
+           <td class="p-3 text-slate-500 font-mono text-[11px]">${inOut}</td>
+           <td class="p-3 text-slate-600">${errMsg}</td>
          </tr>`;
        }).join('');
 
@@ -675,18 +705,18 @@
     }
 
     function show(obj) {
-      out.style.display = 'block';
+      out.classList.remove('hidden');
       outText.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
     }
 
     function setProgress(done, total, state) {
-      progress.style.display = 'block';
-      meta.style.display = 'flex';
+      progress.classList.remove('hidden');
+      // meta.style.display = 'flex'; // handled by class
       const pct = total > 0 ? Math.floor((done / total) * 100) : (state === 'done' ? 100 : 0);
       bar.style.width = pct + '%';
       metaLeft.textContent = `${state}  ${done}/${total}`;
       metaRight.textContent = pct + '%';
-      // Update status text based on state
+      
       const stateLabels = {
         queued: '已提交，准备开始…',
         running: '正在处理中…',
@@ -696,55 +726,107 @@
         error: '处理出错'
       };
       if (stateLabels[state]) {
-        out.style.display = 'block';
+        out.classList.remove('hidden');
         outText.textContent = stateLabels[state];
       }
     }
 
     function setBusy(busy) {
       btnStart.disabled = busy;
-      btnPause.style.display = busy ? 'inline-block' : 'none';
+      btnStart.classList.toggle('opacity-50', busy);
+      btnStart.classList.toggle('cursor-not-allowed', busy);
+      
+      const toggleBtn = (btn, show) => {
+          if (show) {
+              btn.classList.remove('hidden', 'inline-block'); // reset
+              btn.classList.add('inline-block'); // add display
+          } else {
+              btn.classList.add('hidden');
+              btn.classList.remove('inline-block');
+          }
+      }
+
+      toggleBtn(btnPause, busy);
       btnPause.disabled = !busy;
       btnPause.textContent = '暂停';
-      btnCancel.style.display = busy ? 'inline-block' : 'none';
+      
+      toggleBtn(btnCancel, busy);
       btnCancel.disabled = !busy;
+
       if (busy) {
-        btnRetry.style.display = 'none';
+        toggleBtn(btnRetry, false);
         btnRetry.disabled = true;
-        btnRerunAll.style.display = 'none';
+        toggleBtn(btnRerunAll, false);
         btnRerunAll.disabled = true;
-        btnCleanup.style.display = 'none';
+        toggleBtn(btnCleanup, false);
         btnCleanup.disabled = true;
       }
     }
 
     function setPaused(paused) {
       btnStart.disabled = false;
-      btnPause.style.display = paused ? 'inline-block' : 'none';
+      btnStart.classList.remove('opacity-50', 'cursor-not-allowed');
+
+      const toggleBtn = (btn, show) => {
+          if (show) {
+              btn.classList.remove('hidden');
+              btn.classList.add('inline-block');
+          } else {
+              btn.classList.add('hidden');
+          }
+      }
+
+      toggleBtn(btnPause, paused);
       btnPause.disabled = !paused;
       btnPause.textContent = '继续';
-      btnCancel.style.display = paused ? 'inline-block' : 'none';
+      
+      toggleBtn(btnCancel, paused);
       btnCancel.disabled = !paused;
-      btnRetry.style.display = 'none';
+      
+      toggleBtn(btnRetry, false);
       btnRetry.disabled = true;
-      btnRerunAll.style.display = 'none';
+      toggleBtn(btnRerunAll, false);
       btnRerunAll.disabled = true;
-      btnCleanup.style.display = 'none';
+      toggleBtn(btnCleanup, false);
       btnCleanup.disabled = true;
     }
 
     function setRetryVisible(visible) {
-      btnRetry.style.display = visible ? 'inline-block' : 'none';
+      const toggleBtn = (btn, show) => {
+          if (show) {
+              btn.classList.remove('hidden');
+              btn.classList.add('inline-block');
+          } else {
+              btn.classList.add('hidden');
+          }
+      }
+      toggleBtn(btnRetry, visible);
       btnRetry.disabled = !visible;
     }
 
     function setRerunAllVisible(visible) {
-      btnRerunAll.style.display = visible ? 'inline-block' : 'none';
+      const toggleBtn = (btn, show) => {
+          if (show) {
+              btn.classList.remove('hidden');
+              btn.classList.add('inline-block');
+          } else {
+              btn.classList.add('hidden');
+          }
+      }
+      toggleBtn(btnRerunAll, visible);
       btnRerunAll.disabled = !visible;
     }
 
     function setCleanupVisible(visible) {
-      btnCleanup.style.display = visible ? 'inline-block' : 'none';
+        const toggleBtn = (btn, show) => {
+          if (show) {
+              btn.classList.remove('hidden');
+              btn.classList.add('inline-block');
+          } else {
+              btn.classList.add('hidden');
+          }
+      }
+      toggleBtn(btnCleanup, visible);
       btnCleanup.disabled = !visible;
     }
 
@@ -764,8 +846,10 @@
     let _llmSavedSnapshot = null;
 
     function _setLlmDirty(dirty) {
-      llmDirtyHint.style.display = dirty ? 'inline' : 'none';
+      llmDirtyHint.classList.toggle('hidden', !dirty);
+      llmDirtyHint.classList.toggle('inline', dirty);
       btnSaveLlmDefaults.disabled = !dirty;
+      btnSaveLlmDefaults.classList.toggle('opacity-50', !dirty);
     }
 
     function _refreshLlmDirty() {
@@ -861,10 +945,10 @@
       if (!el) return;
       if (el.type === 'password') {
         el.type = 'text';
-        btnToggleApiKey.textContent = '隐藏';
+        btnToggleApiKey.textContent = 'HIDE';
       } else {
         el.type = 'password';
-        btnToggleApiKey.textContent = '显示';
+        btnToggleApiKey.textContent = 'SHOW';
       }
     });
 
@@ -1080,32 +1164,21 @@
       setCleanupVisible(false);
 
       const opts = buildJobOptions(fd, extra.value);
-      const r = await requestRerunAll(jobId, opts);
-      if (!r.ok) {
-        show(r.error);
+      const requestFd = new FormData();
+      requestFd.append('file', file);
+      requestFd.append('options', JSON.stringify(opts));
+
+      const res = await fetch('api/v1/jobs', { method: 'POST', body: requestFd });
+      const data = await res.json();
+      if (!res.ok) {
+        show(data);
         setBusy(false);
-        setRetryVisible(true);
-        setRerunAllVisible(true);
-        setCleanupVisible(true);
         return;
       }
 
-      const newJobId = r?.data?.job?.id;
-      if (!newJobId) {
-        show(r.data);
-        setBusy(false);
-        setRetryVisible(true);
-        setRerunAllVisible(true);
-        setCleanupVisible(true);
-        return;
-      }
-
-      currentJobId = newJobId;
+      currentJobId = data?.job?.id;
       currentJobState = 'queued';
-      chunksData = [];
-      updateStats();
-      renderChunksTable();
-      await poll(newJobId);
+      await poll(currentJobId);
     });
 
     async function requestCleanup(jobId) {
