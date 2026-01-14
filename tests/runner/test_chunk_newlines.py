@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from novel_proofer.runner import _align_leading_blank_lines
-from novel_proofer.runner import _align_trailing_newlines
-from novel_proofer.runner import _merge_chunk_outputs
+from novel_proofer.runner import _align_leading_blank_lines, _align_trailing_newlines, _merge_chunk_outputs
 
 
 def test_align_leading_blank_lines_restores_missing_blank_lines() -> None:

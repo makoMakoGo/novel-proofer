@@ -4,16 +4,17 @@ import concurrent.futures
 import shutil
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 
-from novel_proofer.formatting.chunking import chunk_by_lines_with_first_chunk_max
+from novel_proofer.formatting.chunking import iter_chunks_by_lines_with_first_chunk_max_from_file
 from novel_proofer.formatting.config import FormatConfig
+from novel_proofer.formatting.merge import merge_text_chunks_to_path
 from novel_proofer.formatting.rules import apply_rules
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
 from novel_proofer.llm.config import FIRST_CHUNK_SYSTEM_PROMPT_PREFIX, LLMConfig
-
 
 _JOB_DEBUG_README = """\
 本目录为 novel-proofer 的单次任务调试产物。
@@ -139,58 +140,13 @@ def _chunk_path(work_dir: Path, subdir: str, index: int) -> Path:
     return work_dir / subdir / f"{index:06d}.txt"
 
 
-def _iter_normalized_lines_for_merge(text: str) -> list[str]:
-    """Normalize text into lines for final merge.
-
-    - Normalizes CRLF/CR to LF.
-    - Treats whitespace-only lines as blank lines.
-    - Trims trailing whitespace on non-blank lines.
-    - Preserves explicit blank lines (including multiple) inside the chunk.
-    """
-
-    text = _normalize_newlines(text)
-    had_trailing_newline = text.endswith("\n")
-    lines = text.split("\n")
-    if had_trailing_newline and lines:
-        # Drop the implicit last empty element created by split("\n") when text endswith "\n".
-        lines.pop()
-
-    out: list[str] = []
-    for line in lines:
-        if line.strip() == "":
-            out.append("")
-        else:
-            out.append(line.rstrip())
-    return out
-
-
 def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> None:
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    # Use a unique temp name to avoid cross-thread collisions.
-    tmp = out_path.with_suffix(out_path.suffix + f".{uuid.uuid4().hex}.tmp")
-    with tmp.open("w", encoding="utf-8", newline="") as f:
-        prev_nonblank = False
+    def _iter_chunks():
         for i in range(total_chunks):
-            chunk_text = _chunk_path(work_dir, "out", i).read_text(encoding="utf-8")
-            lines = _iter_normalized_lines_for_merge(chunk_text)
-            is_last_chunk = i == total_chunks - 1
-            keep_final_newline = chunk_text.endswith("\n") or chunk_text.endswith("\r")
-            last_line_idx = len(lines) - 1
-            for j, line in enumerate(lines):
-                if line == "":
-                    f.write("\n")
-                    prev_nonblank = False
-                    continue
+            p = _chunk_path(work_dir, "out", i)
+            yield (p.read_text(encoding="utf-8"), i == total_chunks - 1)
 
-                if prev_nonblank:
-                    # Ensure paragraph separation (blank line) between adjacent non-blank lines,
-                    # especially across chunk boundaries.
-                    f.write("\n")
-                f.write(line)
-                if not (is_last_chunk and not keep_final_newline and j == last_line_idx):
-                    f.write("\n")
-                prev_nonblank = True
-    tmp.replace(out_path)
+    merge_text_chunks_to_path(_iter_chunks(), out_path)
 
 
 def _finalize_job(job_id: str, work_dir: Path, out_path: Path, total: int, error_msg: str) -> bool:
@@ -389,14 +345,14 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
             if not in_flight:
                 break
 
-            done, _ = concurrent.futures.wait(in_flight.keys(), timeout=0.1, return_when=concurrent.futures.FIRST_COMPLETED)
+            done, _ = concurrent.futures.wait(
+                in_flight.keys(), timeout=0.1, return_when=concurrent.futures.FIRST_COMPLETED
+            )
             for f in done:
                 in_flight.pop(f, None)
-                try:
+                # Worker is responsible for updating chunk status.
+                with suppress(Exception):
                     f.result()
-                except Exception:
-                    # Worker is responsible for updating chunk status.
-                    pass
 
         # If cancelled, do not keep queued chunks as 'processing'.
         if GLOBAL_JOBS.is_cancelled(job_id):
@@ -412,7 +368,7 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
     return "done"
 
 
-def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> None:
+def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) -> None:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         return
@@ -431,19 +387,34 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
     GLOBAL_JOBS.update(job_id, state="running", started_at=time.time(), finished_at=None, error=None)
 
     try:
+        if not input_path.exists():
+            GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job input cache missing")
+            return
+
         max_chars = int(fmt.max_chunk_chars)
         max_chars = max(200, min(4_000, max_chars))
         first_chunk_max_chars = min(4_000, max(max_chars, 2_000))
-        chunks = chunk_by_lines_with_first_chunk_max(
-            input_text,
+        total = 0
+        for _c in iter_chunks_by_lines_with_first_chunk_max_from_file(
+            input_path,
             max_chars=max_chars,
             first_chunk_max_chars=first_chunk_max_chars,
-        )
-        total = len(chunks)
+        ):
+            if GLOBAL_JOBS.is_cancelled(job_id):
+                GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+                return
+            total += 1
+
         GLOBAL_JOBS.init_chunks(job_id, total_chunks=total)
 
         local_stats: dict[str, int] = {}
-        for i, c in enumerate(chunks):
+        for i, c in enumerate(
+            iter_chunks_by_lines_with_first_chunk_max_from_file(
+                input_path,
+                max_chars=max_chars,
+                first_chunk_max_chars=first_chunk_max_chars,
+            )
+        ):
             if GLOBAL_JOBS.is_cancelled(job_id):
                 GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
                 return
@@ -488,7 +459,9 @@ def run_job(job_id: str, input_text: str, fmt: FormatConfig, llm: LLMConfig) -> 
         for k, v in post_stats.items():
             GLOBAL_JOBS.add_stat(job_id, f"post_{k}", v)
 
-        _finalize_job(job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks")
+        _finalize_job(
+            job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks"
+        )
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
@@ -564,7 +537,9 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
     total = len(st.chunk_statuses)
     pending = [c.index for c in st.chunk_statuses if c.state not in {"done", "error"}]
     if not pending:
-        _finalize_job(job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks")
+        _finalize_job(
+            job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks"
+        )
         return
 
     for i in pending:

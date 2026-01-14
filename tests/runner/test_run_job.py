@@ -16,7 +16,7 @@ def test_run_job_missing_paths_sets_error() -> None:
     job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
     job_id = job.job_id
     try:
-        runner.run_job(job_id, "x", FormatConfig(max_chunk_chars=2000), LLMConfig())
+        runner.run_job(job_id, Path("x"), FormatConfig(max_chunk_chars=2000), LLMConfig())
         st = GLOBAL_JOBS.get(job_id)
         assert st is not None
         assert st.state == "error"
@@ -40,6 +40,8 @@ def test_run_job_local_mode_cleans_up_by_default(monkeypatch: pytest.MonkeyPatch
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td) / "work"
         out_path = Path(td) / "out.txt"
+        input_path = Path(td) / "in.txt"
+        input_path.write_text("第1章\r\n\r\n你好...\r\n", encoding="utf-8")
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
         job_id = job.job_id
@@ -48,7 +50,7 @@ def test_run_job_local_mode_cleans_up_by_default(monkeypatch: pytest.MonkeyPatch
 
             runner.run_job(
                 job_id,
-                "第1章\r\n\r\n你好...\r\n",
+                input_path,
                 FormatConfig(max_chunk_chars=2000, normalize_ellipsis=True),
                 LLMConfig(base_url="http://example.com", model="m", max_concurrency=1),
             )
@@ -78,6 +80,8 @@ def test_run_job_local_mode_keeps_debug_dir_when_opted_out(monkeypatch: pytest.M
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td) / "work"
         out_path = Path(td) / "out.txt"
+        input_path = Path(td) / "in.txt"
+        input_path.write_text("第1章\r\n\r\n你好...\r\n", encoding="utf-8")
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
         job_id = job.job_id
@@ -86,7 +90,7 @@ def test_run_job_local_mode_keeps_debug_dir_when_opted_out(monkeypatch: pytest.M
 
             runner.run_job(
                 job_id,
-                "第1章\r\n\r\n你好...\r\n",
+                input_path,
                 FormatConfig(max_chunk_chars=2000, normalize_ellipsis=True),
                 LLMConfig(base_url="http://example.com", model="m", max_concurrency=1),
             )

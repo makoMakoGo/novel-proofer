@@ -4,7 +4,6 @@ import re
 
 from novel_proofer.formatting.config import FormatConfig
 
-
 _FULLWIDTH_SPACE = "\u3000"
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]")
@@ -25,11 +24,15 @@ def _is_chapter_title(line: str) -> bool:
     if not s:
         return False
     # Common book title formats (help keep the very first title unindented).
-    if len(s) <= 80 and s[-1] not in "。！？…" and (
-        (s.startswith("《") and s.endswith("》"))
-        or (s.startswith("【") and s.endswith("】"))
-        or (s.endswith("】") and "【" in s)
-        or (s.endswith("》") and "《" in s)
+    if (
+        len(s) <= 80
+        and s[-1] not in "。！？…"
+        and (
+            (s.startswith("《") and s.endswith("》"))
+            or (s.startswith("【") and s.endswith("】"))
+            or (s.endswith("】") and "【" in s)
+            or (s.endswith("》") and "《" in s)
+        )
     ):
         return True
     # Common patterns: 第X章 / 序章 / 番外
@@ -37,14 +40,7 @@ def _is_chapter_title(line: str) -> bool:
         return True
     # Also accept short all-caps-like headings (rare in cn novels).
     # Only apply this to lines with ASCII letters and NO CJK (avoid misclassifying cn paragraphs like "（你纯M啊）").
-    if (
-        len(s) <= 40
-        and s.upper() == s
-        and any(c.isascii() and c.isalpha() for c in s)
-        and not _has_cjk(s)
-    ):
-        return True
-    return False
+    return len(s) <= 40 and s.upper() == s and any(c.isascii() and c.isalpha() for c in s) and not _has_cjk(s)
 
 
 _SEPARATOR_CHARS = "-=*_—"

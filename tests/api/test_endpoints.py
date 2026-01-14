@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -207,7 +208,9 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         st = GLOBAL_JOBS.get(job2.job_id)
         assert st is not None and st.state == "paused"
 
-        r2 = client.post(f"/api/v1/jobs/{job2.job_id}/resume", json={"llm": {"base_url": "http://example.com", "model": "m"}})
+        r2 = client.post(
+            f"/api/v1/jobs/{job2.job_id}/resume", json={"llm": {"base_url": "http://example.com", "model": "m"}}
+        )
         assert r2.status_code == 200
         assert r2.json().get("ok") is True
         st2 = GLOBAL_JOBS.get(job2.job_id)
@@ -353,7 +356,5 @@ def test_rerun_all_creates_new_job_without_reupload(monkeypatch: pytest.MonkeyPa
         finally:
             GLOBAL_JOBS.delete(str(job_id))
             # Best-effort: rerun job may or may not exist if creation failed.
-            try:
+            with suppress(Exception):
                 GLOBAL_JOBS.delete(str(job_id2))  # type: ignore[name-defined]
-            except Exception:
-                pass

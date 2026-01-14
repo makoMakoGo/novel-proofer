@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import codecs
 import json
+import logging
 import os
 import re
 import shutil
-import threading
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -14,18 +18,24 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from novel_proofer.background import shutdown as shutdown_background
+from novel_proofer.background import submit as submit_background_job
 from novel_proofer.dotenv_store import (
     LLMDefaults,
-    dotenv_path as dotenv_path,
     llm_env_updates_from_defaults_patch,
     read_llm_defaults,
     update_llm_defaults,
 )
+from novel_proofer.dotenv_store import (
+    dotenv_path as dotenv_path,
+)
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import GLOBAL_JOBS, ChunkStatus, JobStatus
 from novel_proofer.llm.config import LLMConfig
+from novel_proofer.logging_setup import ensure_file_logging
 from novel_proofer.runner import resume_paused_job, retry_failed_chunks, run_job
 
+logger = logging.getLogger(__name__)
 
 WORKDIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = WORKDIR / "templates"
@@ -101,11 +111,81 @@ def _write_input_cache(job_id: str, text: str) -> None:
     p.write_text(text, encoding="utf-8")
 
 
-def _read_input_cache(job_id: str) -> str:
-    p = _input_cache_path(job_id)
-    if not p.exists():
-        raise FileNotFoundError(str(p))
-    return p.read_text(encoding="utf-8")
+def _input_upload_tmp_path(job_id: str) -> Path:
+    job_id = (job_id or "").strip()
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("invalid job_id")
+    return _input_cache_root() / f"{job_id}.upload.tmp"
+
+
+async def _save_upload_limited_to_file(upload: UploadFile, *, limit: int, dst: Path) -> int:
+    total = 0
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    with dst.open("wb") as f:
+        while True:
+            chunk = await upload.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > limit:
+                raise HTTPException(status_code=413, detail=f"file too large (> {limit} bytes)")
+            f.write(chunk)
+    return total
+
+
+def _transcode_bytes_file_to_utf8_text(
+    src: Path,
+    dst: Path,
+    *,
+    encoding: str,
+    errors: str,
+) -> None:
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_suffix(dst.suffix + f".{uuid.uuid4().hex}.tmp")
+    decoder = codecs.getincrementaldecoder(encoding)(errors=errors)
+    with src.open("rb") as fin, tmp.open("w", encoding="utf-8") as fout:
+        while True:
+            b = fin.read(1024 * 1024)
+            if not b:
+                break
+            fout.write(decoder.decode(b))
+        fout.write(decoder.decode(b"", final=True))
+    tmp.replace(dst)
+
+
+async def _write_input_cache_from_upload(job_id: str, upload: UploadFile, *, limit: int) -> None:
+    """Write decoded input cache (utf-8) without keeping the whole upload in memory."""
+
+    tmp_upload = _input_upload_tmp_path(job_id)
+    dst = _input_cache_path(job_id)
+    try:
+        await _save_upload_limited_to_file(upload, limit=limit, dst=tmp_upload)
+
+        # Try strict decoders first to avoid silently garbling text.
+        for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
+            try:
+                _transcode_bytes_file_to_utf8_text(tmp_upload, dst, encoding=enc, errors="strict")
+                return
+            except UnicodeDecodeError:
+                continue
+
+        # Final fallback: keep going even with malformed bytes.
+        _transcode_bytes_file_to_utf8_text(tmp_upload, dst, encoding="utf-8", errors="replace")
+    finally:
+        try:
+            if tmp_upload.exists():
+                tmp_upload.unlink()
+        except Exception:
+            logger.exception("failed to cleanup temp upload: %s", tmp_upload)
+
+
+def _copy_input_cache(src_job_id: str, dst_job_id: str) -> None:
+    src = _input_cache_path(src_job_id)
+    if not src.exists():
+        raise FileNotFoundError(str(src))
+    dst = _input_cache_path(dst_job_id)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
 
 
 def _cleanup_input_cache(job_id: str) -> bool:
@@ -117,6 +197,29 @@ def _cleanup_input_cache(job_id: str) -> bool:
 
     root = _input_cache_root().resolve()
     target = _input_cache_path(job_id).resolve()
+    if target == root or root not in target.parents:
+        raise ValueError("invalid job_id")
+
+    if not target.exists():
+        return False
+
+    target.unlink()
+    return True
+
+
+def _jobs_state_root() -> Path:
+    return OUTPUT_DIR / ".state" / "jobs"
+
+
+def _cleanup_job_state(job_id: str) -> bool:
+    """Delete output/.state/jobs/<job_id>.json (best-effort, safe-guarded)."""
+
+    job_id = (job_id or "").strip()
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("invalid job_id")
+
+    root = _jobs_state_root().resolve()
+    target = (root / f"{job_id}.json").resolve()
     if target == root or root not in target.parents:
         raise ValueError("invalid job_id")
 
@@ -384,19 +487,40 @@ def _llm_settings_from_defaults(d: LLMDefaults) -> LLMSettings:
     )
 
 
-app = FastAPI()
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    # These globals are monkeypatched in tests; use the current values at startup time.
+    OUTPUT_DIR.mkdir(exist_ok=True)
+    JOBS_DIR.mkdir(parents=True, exist_ok=True)
+    _input_cache_root().mkdir(parents=True, exist_ok=True)
+    _jobs_state_root().mkdir(parents=True, exist_ok=True)
+
+    log_file = ensure_file_logging(log_dir=OUTPUT_DIR / "logs")
+    logger.info("file logging enabled: %s", log_file)
+
+    GLOBAL_JOBS.configure_persistence(persist_dir=_jobs_state_root())
+    loaded = GLOBAL_JOBS.load_persisted_jobs()
+    if loaded:
+        logger.info("loaded %s persisted jobs", loaded)
+
+    yield
+
+    shutdown_background(wait=False)
+
+
+app = FastAPI(lifespan=_lifespan)
 
 # Mount static files for images
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 
 
 @app.exception_handler(HTTPException)
-async def _http_exception_handler(_request: Request, exc: HTTPException):  # noqa: ANN001
+async def _http_exception_handler(_request: Request, exc: HTTPException):
     return _error(int(exc.status_code), str(exc.detail))
 
 
 @app.exception_handler(RequestValidationError)
-async def _validation_exception_handler(_request: Request, exc: RequestValidationError):  # noqa: ANN001
+async def _validation_exception_handler(_request: Request, exc: RequestValidationError):
     msg = "bad request"
     try:
         errors = exc.errors()
@@ -408,7 +532,7 @@ async def _validation_exception_handler(_request: Request, exc: RequestValidatio
 
 
 @app.exception_handler(Exception)
-async def _unhandled_exception_handler(_request: Request, exc: Exception):  # noqa: ANN001
+async def _unhandled_exception_handler(_request: Request, exc: Exception):
     return _error(500, str(exc))
 
 
@@ -457,9 +581,6 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
         raise HTTPException(status_code=400, detail="file is required")
     opts = _parse_options_json(options)
 
-    raw = await _read_upload_limited(file, MAX_UPLOAD_BYTES)
-    input_text = _decode_text(raw)
-
     out_name = _derive_output_filename(file.filename or "input.txt", opts.output.suffix)
 
     job = GLOBAL_JOBS.create(file.filename or "input.txt", out_name, total_chunks=0)
@@ -474,7 +595,7 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
     )
 
     try:
-        _write_input_cache(job.job_id, input_text)
+        await _write_input_cache_from_upload(job.job_id, file, limit=MAX_UPLOAD_BYTES)
     except Exception as e:
         GLOBAL_JOBS.delete(job.job_id)
         raise HTTPException(status_code=500, detail=f"failed to cache input: {e}") from e
@@ -482,12 +603,7 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
     fmt = _format_from_options(opts.format)
     llm = _llm_from_options(opts.llm)
 
-    t = threading.Thread(
-        target=run_job,
-        args=(job.job_id, input_text, fmt, llm),
-        daemon=True,
-    )
-    t.start()
+    submit_background_job(job.job_id, run_job, job.job_id, _input_cache_path(job.job_id), fmt, llm)
 
     st = GLOBAL_JOBS.get(job.job_id)
     if st is None:
@@ -502,7 +618,10 @@ async def rerun_all(job_id: str, options: JobOptions = Body(...)):
         raise HTTPException(status_code=404, detail="job not found")
 
     try:
-        input_text = _read_input_cache(job_id)
+        # Use filesystem copy to avoid pulling the whole input into memory.
+        src_cache = _input_cache_path(job_id)
+        if not src_cache.exists():
+            raise FileNotFoundError(str(src_cache))
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail="job input cache not found") from e
     except ValueError as e:
@@ -524,7 +643,7 @@ async def rerun_all(job_id: str, options: JobOptions = Body(...)):
     )
 
     try:
-        _write_input_cache(job.job_id, input_text)
+        _copy_input_cache(job_id, job.job_id)
     except Exception as e:
         GLOBAL_JOBS.delete(job.job_id)
         raise HTTPException(status_code=500, detail=f"failed to cache input: {e}") from e
@@ -532,12 +651,7 @@ async def rerun_all(job_id: str, options: JobOptions = Body(...)):
     fmt = _format_from_options(options.format)
     llm = _llm_from_options(options.llm)
 
-    t = threading.Thread(
-        target=run_job,
-        args=(job.job_id, input_text, fmt, llm),
-        daemon=True,
-    )
-    t.start()
+    submit_background_job(job.job_id, run_job, job.job_id, _input_cache_path(job.job_id), fmt, llm)
 
     st = GLOBAL_JOBS.get(job.job_id)
     if st is None:
@@ -630,12 +744,7 @@ async def resume_job(job_id: str, body: RetryFailedRequest = Body(default_factor
         raise HTTPException(status_code=409, detail="failed to resume job")
 
     llm = _llm_from_options(body.llm or LLMOptions())
-    t = threading.Thread(
-        target=resume_paused_job,
-        args=(job_id, llm),
-        daemon=True,
-    )
-    t.start()
+    submit_background_job(job_id, resume_paused_job, job_id, llm)
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
 
@@ -650,12 +759,7 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
         raise HTTPException(status_code=409, detail="job is cancelled")
 
     llm = _llm_from_options(body.llm or LLMOptions())
-    t = threading.Thread(
-        target=retry_failed_chunks,
-        args=(job_id, llm),
-        daemon=True,
-    )
-    t.start()
+    submit_background_job(job_id, retry_failed_chunks, job_id, llm)
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
 
@@ -672,6 +776,7 @@ async def cleanup_debug(job_id: str):
     try:
         _cleanup_job_dir(job_id)
         _cleanup_input_cache(job_id)
+        _cleanup_job_state(job_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:

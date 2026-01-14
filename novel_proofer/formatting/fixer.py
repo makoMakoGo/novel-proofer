@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 
 from novel_proofer.formatting.chunking import chunk_by_lines_with_first_chunk_max
 from novel_proofer.formatting.config import FormatConfig
+from novel_proofer.formatting.merge import merge_text_parts
 from novel_proofer.formatting.rules import apply_rules
 from novel_proofer.llm.client import call_llm_text_resilient
 from novel_proofer.llm.config import FIRST_CHUNK_SYSTEM_PROMPT_PREFIX, LLMConfig
@@ -13,40 +14,6 @@ from novel_proofer.llm.config import FIRST_CHUNK_SYSTEM_PROMPT_PREFIX, LLMConfig
 class FormatResult:
     text: str
     stats: dict[str, int]
-
-
-def _merge_text_parts(parts: list[str]) -> str:
-    out: list[str] = []
-    prev_nonblank = False
-    keep_final_newline = True
-
-    for part in parts:
-        keep_final_newline = part.endswith("\n") or part.endswith("\r")
-        if "\r" in part:
-            part = part.replace("\r\n", "\n").replace("\r", "\n")
-
-        had_trailing_newline = part.endswith("\n")
-        lines = part.split("\n")
-        if had_trailing_newline and lines:
-            lines.pop()
-
-        for line in lines:
-            if line.strip() == "":
-                out.append("\n")
-                prev_nonblank = False
-                continue
-
-            if prev_nonblank:
-                out.append("\n")
-
-            out.append(line.rstrip())
-            out.append("\n")
-            prev_nonblank = True
-
-    merged = "".join(out)
-    if parts and not keep_final_newline and merged.endswith("\n"):
-        merged = merged[:-1]
-    return merged
 
 
 def format_txt(text: str, config: FormatConfig, llm: LLMConfig) -> FormatResult:
@@ -68,4 +35,4 @@ def format_txt(text: str, config: FormatConfig, llm: LLMConfig) -> FormatResult:
         for k, v in chunk_stats.items():
             stats[k] = stats.get(k, 0) + v
 
-    return FormatResult(text=_merge_text_parts(out_parts), stats=stats)
+    return FormatResult(text=merge_text_parts(out_parts), stats=stats)

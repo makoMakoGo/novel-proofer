@@ -33,7 +33,7 @@ def _load_dotenv(path: Path) -> None:
                 continue
             key, value = line.split("=", 1)
             key = key.strip()
-            value = value.strip().strip("\"")
+            value = value.strip().strip('"')
             if not key:
                 continue
             os.environ.setdefault(key, value)
@@ -80,7 +80,7 @@ def _env_json_object(name: str) -> dict | None:
     return obj
 
 
-def pytest_addoption(parser):  # noqa: ANN001
+def pytest_addoption(parser):
     parser.addoption(
         "--update-golden",
         action="store_true",
@@ -95,7 +95,7 @@ def pytest_addoption(parser):  # noqa: ANN001
     )
 
 
-def pytest_configure(config):  # noqa: ANN001
+def pytest_configure(config):
     config.addinivalue_line(
         "markers",
         "llm_integration: tests that call a real external OpenAI-compatible endpoint (requires NOVEL_PROOFER_RUN_LLM_TESTS=true or --run-llm-tests)",
@@ -111,7 +111,7 @@ def pytest_configure(config):  # noqa: ANN001
         )
 
 
-def pytest_collection_modifyitems(config, items):  # noqa: ANN001
+def pytest_collection_modifyitems(config, items):
     run_llm_tests = bool(config.getoption("--run-llm-tests")) or _env_truthy("NOVEL_PROOFER_RUN_LLM_TESTS")
 
     base_url = str(os.getenv("NOVEL_PROOFER_LLM_BASE_URL", "")).strip()
@@ -157,5 +157,5 @@ def llm_config_from_env():
     )
 
 
-def should_update_golden(pytestconfig) -> bool:  # noqa: ANN001
+def should_update_golden(pytestconfig) -> bool:
     return bool(pytestconfig.getoption("--update-golden"))

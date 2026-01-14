@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 FIRST_CHUNK_SYSTEM_PROMPT_PREFIX = """\
 你正在处理整本小说的第一个片段。此片段可能包含网站水印/广告引流/群链接/作者与标签/内容介绍(简介)等“前置信息”。在不改写正文的前提下，你必须额外执行以下清理：
 

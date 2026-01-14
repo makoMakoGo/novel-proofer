@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import codecs
 import ipaddress
 import json
+import logging
 import re
 import time
 import urllib.error
@@ -12,6 +14,8 @@ from dataclasses import dataclass
 
 from novel_proofer.llm.config import LLMConfig
 from novel_proofer.llm.think_filter import ThinkTagFilter
+
+logger = logging.getLogger(__name__)
 
 
 class LLMError(RuntimeError):
@@ -85,7 +89,7 @@ def _extract_content_from_sse_json(data: str, content_parts: list[str]) -> None:
         if "choices" in obj:
             for choice in obj.get("choices", []):
                 delta = choice.get("delta", {})
-                if "content" in delta and delta["content"]:
+                if delta.get("content"):
                     content_parts.append(delta["content"])
     except json.JSONDecodeError:
         pass
@@ -132,6 +136,7 @@ def _stream_request_impl(
             content_parts: list[str] = []
             buffer = ""
             done = False
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
             while True:
                 if should_stop is not None and should_stop():
@@ -141,7 +146,7 @@ def _stream_request_impl(
                 if not chunk:
                     break
 
-                decoded = chunk.decode("utf-8", errors="replace")
+                decoded = decoder.decode(chunk)
                 add_debug(decoded)
 
                 buffer += decoded
@@ -160,6 +165,12 @@ def _stream_request_impl(
 
                 if done:
                     break
+
+            # Flush any remaining decoder state (handles UTF-8 split across read() boundaries).
+            tail = decoder.decode(b"", final=True)
+            if tail:
+                add_debug(tail)
+                buffer += tail
 
             # Process remaining buffer
             if buffer.strip():
@@ -434,9 +445,7 @@ def _maybe_filter_think_tags(_cfg: LLMConfig, raw_content: str, *, input_text: s
     return filtered
 
 
-def _call_openai_compatible(
-    cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None
-) -> str:
+def _call_openai_compatible(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None) -> str:
     return _call_openai_compatible_with_raw(cfg, input_text, should_stop=should_stop).text
 
 
@@ -448,7 +457,7 @@ def _call_openai_compatible_with_raw(
     if not cfg.model:
         raise LLMError("LLM model is empty")
 
-    print(f"[LLM] model={cfg.model} (streaming)", flush=True)
+    logger.info("LLM request: model=%s streaming=true chars=%s", cfg.model, len(input_text))
     url = cfg.base_url.rstrip("/") + "/chat/completions"
     payload: dict = {
         "model": cfg.model,
