@@ -302,17 +302,17 @@
              </div>
 
             <!-- Table -->
-            <div class="border border-slate-200 rounded-lg overflow-hidden" id="chunksTableWrap">
-               <div class="overflow-x-auto max-h-[500px]">
+            <div class="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-sm" id="chunksTableWrap">
+               <div class="overflow-x-auto max-h-[600px]">
                 <table class="w-full text-left text-xs table-fixed">
-                  <thead class="bg-slate-50 text-slate-500 font-medium sticky top-0 z-10 shadow-sm">
+                  <thead class="bg-slate-50 text-slate-500 font-medium sticky top-0 z-10 shadow-sm border-b border-slate-200">
                     <tr>
-                      <th class="p-3 w-14 text-center">#</th>
-                      <th class="p-3 w-20 text-center">状态</th>
-                      <th class="p-3 w-40">LLM</th>
-                      <th class="p-3 w-14 text-center">重试</th>
-                      <th class="p-3 w-28">I/O</th>
-                      <th class="p-3">信息</th>
+                      <th class="py-3 px-2 w-14 text-center font-semibold text-slate-600">#</th>
+                      <th class="py-3 px-2 w-20 text-center font-semibold text-slate-600">状态</th>
+                      <th class="py-3 px-2 w-32 text-center font-semibold text-slate-600">LLM 模型</th>
+                      <th class="py-3 px-2 w-14 text-center font-semibold text-slate-600">重试</th>
+                      <th class="py-3 px-2 w-32 text-center font-semibold text-slate-600">Chars (In/Out)</th>
+                      <th class="py-3 px-2 text-center font-semibold text-slate-600">信息</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-100 bg-white" id="chunksBody">
@@ -655,13 +655,13 @@
 
        const rows = chunksData.slice(0, 500).map(c => {
          let inOut = '-';
-         if (c.input_chars != null && c.output_chars != null) inOut = `${c.input_chars}/${c.output_chars}`;
-         else if (c.input_chars != null) inOut = `${c.input_chars}/-`;
+         if (c.input_chars != null && c.output_chars != null) inOut = `${c.input_chars} / ${c.output_chars}`;
+         else if (c.input_chars != null) inOut = `${c.input_chars} / -`;
 
           const llmFull = (c.llm_model != null) ? String(c.llm_model) : '';
-          const llmShort = llmFull ? truncateStr(llmFull, 36) : '-';
+          // CSS truncation for LLM model
           const llmCell = llmFull
-            ? `<span class="text-slate-500 font-mono text-[11px] cursor-help border-b border-dotted border-slate-200" title="${escapeHtml(llmFull)}">${escapeHtml(llmShort)}</span>`
+            ? `<div class="truncate max-w-[7rem] mx-auto text-slate-600 font-medium" title="${escapeHtml(llmFull)}">${escapeHtml(llmFull)}</div>`
             : `<span class="text-slate-300">-</span>`;
 
            const errCode = (c.last_error_code != null) ? String(c.last_error_code) : '';
@@ -672,26 +672,26 @@
              const detail = escapeHtml(err.detail);
              const brief = escapeHtml(err.brief);
              if (c.state === 'error') {
-               errMsg = `<span class="text-red-500 cursor-help border-b border-dotted border-red-300" title="${detail}">${brief}</span>`;
+               errMsg = `<span class="text-red-600 font-medium cursor-help border-b border-dotted border-red-300 hover:text-red-700" title="${detail}">${brief}</span>`;
              } else if (c.state === 'retrying') {
-              errMsg = `<span class="text-amber-600 cursor-help border-b border-dotted border-amber-300" title="${detail}">${brief}</span>`;
+              errMsg = `<span class="text-amber-600 font-medium cursor-help border-b border-dotted border-amber-300 hover:text-amber-700" title="${detail}">${brief}</span>`;
             } else if (c.state === 'done') {
               const retries = Number(c.retries || 0);
               if (retries > 0) {
-                errMsg = `<span class="text-slate-400 cursor-help border-b border-dotted border-slate-300" title="${detail}">曾重试: ${brief}</span>`;
+                errMsg = `<span class="text-slate-400 cursor-help border-b border-dotted border-slate-300 hover:text-slate-600" title="${detail}">曾重试: ${brief}</span>`;
               }
             } else {
               errMsg = `<span class="text-slate-400 cursor-help border-b border-dotted border-slate-300" title="${detail}">${brief}</span>`;
             }
           }
 
-         return `<tr class="hover:bg-slate-50 transition-colors">
-           <td class="p-3 text-slate-400 font-mono text-center whitespace-nowrap">${c.index}</td>
-           <td class="p-3 text-center whitespace-nowrap">${getStatusBadge(c.state)}</td>
-           <td class="p-3 whitespace-nowrap">${llmCell}</td>
-           <td class="p-3 text-slate-500 text-center whitespace-nowrap">${c.retries}</td>
-           <td class="p-3 text-slate-500 font-mono text-[11px] whitespace-nowrap">${inOut}</td>
-           <td class="p-3 text-slate-600">${errMsg}</td>
+         return `<tr class="hover:bg-slate-50 transition-colors border-b border-slate-50 last:border-0">
+           <td class="py-3 px-2 text-slate-400 font-mono text-center whitespace-nowrap text-[11px]">${c.index}</td>
+           <td class="py-3 px-2 text-center whitespace-nowrap">${getStatusBadge(c.state)}</td>
+           <td class="py-3 px-2 whitespace-nowrap text-xs text-center">${llmCell}</td>
+           <td class="py-3 px-2 text-slate-400 text-center whitespace-nowrap font-mono text-xs">${c.retries || 0}</td>
+           <td class="py-3 px-2 text-slate-400 font-mono text-[11px] text-center whitespace-nowrap tracking-tight">${inOut}</td>
+           <td class="py-3 px-2 text-slate-600 text-xs text-center">${errMsg}</td>
          </tr>`;
        }).join('');
 
