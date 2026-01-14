@@ -357,8 +357,8 @@
                       <th class="py-3 px-2 w-16 text-center font-semibold text-slate-600">状态</th>
                       <th class="py-3 px-2 w-40 text-center font-semibold text-slate-600">LLM 模型</th>
                       <th class="py-3 px-2 w-12 text-center font-semibold text-slate-600">重试</th>
-                      <th class="py-3 px-2 w-28 text-center font-semibold text-slate-600">Chars (In/Out)</th>
-                      <th class="py-3 px-2 text-left font-semibold text-slate-600">信息</th>
+                      <th class="py-3 px-2 w-28 text-center font-semibold text-slate-600">In/Out</th>
+                      <th class="py-3 px-2 text-center font-semibold text-slate-600">信息</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-100 bg-white" id="chunksBody">
@@ -385,6 +385,17 @@
        </div>
     </div>
     
+  </div>
+
+  <!-- Custom Modal -->
+  <div id="modalBackdrop" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden items-center justify-center transition-opacity duration-200">
+    <div id="modalBox" class="bg-white rounded-2xl shadow-[0_25px_50px_-12px_rgba(0,0,0,0.25)] max-w-md w-full mx-4 transform transition-all duration-200 scale-95 opacity-0">
+      <div class="p-6">
+        <h3 id="modalTitle" class="text-lg font-semibold text-ink mb-3">标题</h3>
+        <div id="modalBody" class="text-sm text-slate-600 mb-6">内容</div>
+        <div id="modalActions" class="flex justify-end gap-3"></div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -749,7 +760,7 @@
            <td class="py-3 px-2 whitespace-nowrap text-xs text-center">${llmCell}</td>
            <td class="py-3 px-2 text-slate-400 text-center whitespace-nowrap font-mono text-xs">${c.retries || 0}</td>
            <td class="py-3 px-2 text-slate-400 font-mono text-[11px] text-center whitespace-nowrap tracking-tight">${inOut}</td>
-           <td class="py-3 px-2 text-slate-600 text-xs text-left">${errMsg}</td>
+           <td class="py-3 px-2 text-slate-600 text-xs text-center">${errMsg}</td>
          </tr>`;
        }).join('');
 
@@ -804,6 +815,100 @@
       out.classList.remove('hidden');
       outText.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
     }
+
+    // --- Custom Modal API ---
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const modalBox = document.getElementById('modalBox');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalBody = document.getElementById('modalBody');
+    const modalActions = document.getElementById('modalActions');
+    let modalCloseCallback = null;
+
+    function openModal() {
+      modalBackdrop.classList.remove('hidden');
+      modalBackdrop.classList.add('flex');
+      requestAnimationFrame(() => {
+        modalBox.classList.remove('scale-95', 'opacity-0');
+        modalBox.classList.add('scale-100', 'opacity-100');
+      });
+    }
+
+    function closeModal() {
+      modalBox.classList.remove('scale-100', 'opacity-100');
+      modalBox.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => {
+        modalBackdrop.classList.add('hidden');
+        modalBackdrop.classList.remove('flex');
+        if (modalCloseCallback) { modalCloseCallback(); modalCloseCallback = null; }
+      }, 200);
+    }
+
+    modalBackdrop?.addEventListener('click', (e) => {
+      if (e.target === modalBackdrop) closeModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modalBackdrop.classList.contains('hidden')) closeModal();
+    });
+
+    function showConfirm(message) {
+      return new Promise((resolve) => {
+        modalTitle.textContent = '确认操作';
+        modalBody.innerHTML = `<p class="whitespace-pre-wrap">${message}</p>`;
+        modalActions.innerHTML = `
+          <button type="button" class="modal-cancel px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors">取消</button>
+          <button type="button" class="modal-confirm px-4 py-2 bg-ink text-white text-sm font-medium rounded-lg hover:bg-zinc-800 transition-colors">确认</button>
+        `;
+        modalCloseCallback = () => resolve(false);
+        modalActions.querySelector('.modal-cancel').onclick = () => { closeModal(); resolve(false); };
+        modalActions.querySelector('.modal-confirm').onclick = () => { closeModal(); resolve(true); };
+        openModal();
+      });
+    }
+
+    function showJobPicker(jobs) {
+      return new Promise((resolve) => {
+        modalTitle.textContent = '选择要加载的任务';
+        const listHtml = jobs.slice(0, 20).map((j, i) => {
+          const id8 = j?.id ? String(j.id).slice(0, 8) : '-';
+          const st = j?.state || '-';
+          const phase = j?.phase || '-';
+          const prog = `${j?.progress?.done_chunks || 0}/${j?.progress?.total_chunks || 0}`;
+          const name = j?.input_filename ? String(j.input_filename) : '';
+          const stColor = { done: 'bg-emerald-100 text-emerald-700', error: 'bg-red-100 text-red-700', paused: 'bg-amber-100 text-amber-700', cancelled: 'bg-slate-200 text-slate-600' }[st] || 'bg-slate-100 text-slate-600';
+          return `<button type="button" data-job-id="${j.id}" class="job-item w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors flex items-center gap-3">
+            <span class="font-mono text-xs text-slate-400">${id8}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded ${stColor}">${st}:${phase}</span>
+            <span class="text-xs text-slate-500 font-mono">${prog}</span>
+            <span class="text-sm text-slate-700 truncate flex-1">${name}</span>
+          </button>`;
+        }).join('');
+        modalBody.innerHTML = `
+          <div class="space-y-2 max-h-64 overflow-y-auto mb-4">${listHtml || '<p class="text-slate-400 text-sm">暂无可加载任务</p>'}</div>
+          <div class="flex items-center gap-2 pt-3 border-t border-slate-100">
+            <input type="text" id="manualJobId" placeholder="或输入完整 job_id" class="flex-1 px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-ink/20 focus:border-ink font-mono" />
+            <button type="button" class="modal-manual px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-ink transition-colors">加载</button>
+          </div>
+        `;
+        modalActions.innerHTML = `<button type="button" class="modal-cancel px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors">取消</button>`;
+        modalCloseCallback = () => resolve(null);
+        modalActions.querySelector('.modal-cancel').onclick = () => { closeModal(); resolve(null); };
+        modalBody.querySelectorAll('.job-item').forEach(btn => {
+          btn.onclick = () => { closeModal(); resolve(btn.dataset.jobId); };
+        });
+        modalBody.querySelector('.modal-manual').onclick = () => {
+          const val = modalBody.querySelector('#manualJobId').value.trim();
+          if (val) { closeModal(); resolve(val); }
+        };
+        modalBody.querySelector('#manualJobId').addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            const val = e.target.value.trim();
+            if (val) { closeModal(); resolve(val); }
+          }
+        });
+        openModal();
+      });
+    }
+    // --- End Modal API ---
 
     function _phaseLabel(phase) {
       const v = String(phase || '').toLowerCase();
@@ -1521,9 +1626,9 @@
       }
 
       const confirmMsg = (st === 'queued' || st === 'running')
-        ? '确认“取消（可恢复）”？将停止当前任务并返回初始态，可稍后通过“加载任务”继续。'
-        : '确认返回初始态？该任务可稍后通过“加载任务”继续/查看。';
-      if (!confirm(confirmMsg)) return;
+        ? '确认"取消（可恢复）"？将停止当前任务并返回初始态，可稍后通过"加载任务"继续。'
+        : '确认返回初始态？该任务可稍后通过"加载任务"继续/查看。';
+      if (!(await showConfirm(confirmMsg))) return;
 
       show('正在返回初始态…');
       await requestCancel(jobId);
@@ -1536,9 +1641,9 @@
       if (!jobId) return;
       const st = String(currentJobState || '').toLowerCase();
       const confirmMsg = (st === 'done')
-        ? '确认“清理任务记录”？该任务的中间态/状态记录将被删除且不可恢复（不会删除最终输出文件 output/）。'
-        : '确认“取消并清理”？该任务中间产物与状态将被删除且不可恢复。';
-      if (!confirm(confirmMsg)) return;
+        ? '确认"清理任务记录"？该任务的中间态/状态记录将被删除且不可恢复（不会删除最终输出文件 output/）。'
+        : '确认"取消并清理"？该任务中间产物与状态将被删除且不可恢复。';
+      if (!(await showConfirm(confirmMsg))) return;
 
       show((st === 'done') ? '正在清理任务记录…' : '正在取消并清理…');
       const r = await requestReset(jobId);
@@ -1562,24 +1667,8 @@
         return;
       }
 
-      const lines = jobs.slice(0, 20).map((j, i) => {
-        const id8 = j?.id ? String(j.id).slice(0, 8) : '-';
-        const st = `${j?.state || '-'}:${j?.phase || '-'}`;
-        const prog = `${j?.progress?.done_chunks || 0}/${j?.progress?.total_chunks || 0}`;
-        const name = j?.input_filename ? String(j.input_filename) : '';
-        return `${i + 1}) ${id8}  ${st}  ${prog}  ${name}`;
-      }).join('\n');
-
-      const choice = prompt(`选择要加载的任务：\n\n${lines}\n\n输入编号(1-20)或完整 job_id：`);
-      if (!choice) return;
-      const trimmed = String(choice).trim();
-      const idx = Number(trimmed);
-      let chosenId = null;
-      if (Number.isFinite(idx) && idx >= 1 && idx <= jobs.slice(0, 20).length) {
-        chosenId = jobs[idx - 1].id;
-      } else {
-        chosenId = trimmed;
-      }
+      const chosenId = await showJobPicker(jobs);
+      if (!chosenId) return;
       await attachJob(chosenId);
     });
 
