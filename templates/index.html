@@ -859,7 +859,7 @@
       const phaseLabel = _phaseLabel(phase);
       let left = _stateLabel(state);
       if (state === 'running' && phase === 'validate') left = '正在校验…';
-      if (state === 'paused' && phase === 'process') left = '校验完成，等待开始处理';
+      if (state === 'paused' && phase === 'process') left = (done > 0 ? '处理已暂停' : '校验完成，等待开始处理');
       if (state === 'running' && phase === 'process') left = '正在处理…';
       if (state === 'error' && phase === 'process') left = '处理出错';
       if (state === 'paused' && phase === 'merge') left = '处理完成，等待合并输出';
@@ -955,6 +955,10 @@
       const canProcess = hasJob && state === 'paused' && phase === 'process';
       _setVisible(btnProcess, canProcess);
       _setDisabled(btnProcess, !canProcess);
+      if (btnProcess) {
+        const done = Number(job?.progress?.done_chunks || 0);
+        btnProcess.textContent = (canProcess && done > 0) ? '继续处理' : '开始处理';
+      }
 
       const canMerge = hasJob && state === 'paused' && phase === 'merge';
       _setVisible(btnMerge, canMerge);
@@ -1385,7 +1389,8 @@
         if (job?.state === 'error') {
           show(job?.error || '处理出错');
         } else if (job?.state === 'paused' && job?.phase === 'process') {
-          show('校验完成：可点击“开始处理”。');
+          const done = Number(job?.progress?.done_chunks || 0);
+          show(done > 0 ? '处理已暂停：可点击“继续处理”。' : '校验完成：可点击“开始处理”。');
         } else if (job?.state === 'paused' && job?.phase === 'merge') {
           show('处理完成：可点击“合并输出”。');
         } else if (job?.state === 'done') {
