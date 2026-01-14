@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# Prefer repo-local venv. This repo enforces running tooling inside .venv.
+py=""
+if [[ -x ".venv/Scripts/python.exe" ]]; then
+  py=".venv/Scripts/python.exe"
+elif [[ -x ".venv/bin/python" ]]; then
+  py=".venv/bin/python"
+fi
+
+if [[ -z "$py" ]]; then
+  cat >&2 <<'EOF'
+pre-commit: missing .venv python.
+
+Create it first:
+  start.bat
+EOF
+  exit 1
+fi
+
+echo "[pre-commit] ruff format"
+"$py" -m ruff format
+
+echo "[pre-commit] ruff check --fix"
+"$py" -m ruff check --fix
+
+if ! git diff --quiet; then
+  cat >&2 <<'EOF'
+pre-commit: formatting/lint fixes were applied.
+
+Please review and stage the changes, then commit again.
+EOF
+  exit 1
+fi
+

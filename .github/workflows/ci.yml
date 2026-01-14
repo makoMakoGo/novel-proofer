@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: lint + test (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.12"]
+    env:
+      NOVEL_PROOFER_RUN_LLM_TESTS: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Create venv
+        shell: bash
+        run: |
+          python -m venv .venv
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            echo "PY=.venv/Scripts/python.exe" >> "$GITHUB_ENV"
+          else
+            echo "PY=.venv/bin/python" >> "$GITHUB_ENV"
+          fi
+      - name: Install deps
+        shell: bash
+        run: |
+          "$PY" -m pip install --upgrade pip
+          "$PY" -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Ruff format (check)
+        shell: bash
+        run: |
+          "$PY" -m ruff format --check
+      - name: Ruff lint
+        shell: bash
+        run: |
+          "$PY" -m ruff check
+      - name: Mypy
+        shell: bash
+        run: |
+          "$PY" -m mypy novel_proofer
+      - name: Pytest
+        shell: bash
+        run: |
+          "$PY" -m pytest -q
+

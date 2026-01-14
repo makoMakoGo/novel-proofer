@@ -8,6 +8,8 @@ __pycache__/
 .coverage.*
 coverage.xml
 htmlcov/
+.ruff_cache/
+.mypy_cache/
 
 # Virtual environments
 .venv/
@@ -39,6 +41,7 @@ desktop.ini
 
 # Local agent notes
 AGENTS.md
+.serena/
 
 # OpenSpec (local/spec workspace)
 openspec/

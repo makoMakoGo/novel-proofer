@@ -1,0 +1,36 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = [
+  "output",
+  "openspec",
+  ".venv",
+  ".pytest_cache",
+  ".playwright-mcp",
+  ".serena",
+  ".shared",
+  ".claude",
+  ".gemini",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = [
+  "E501", # handled by formatter
+  "B008", # FastAPI/Starlette dependency injection uses call expressions in defaults
+  "RUF001", # allow confusable unicode (Chinese punctuation etc.)
+  "RUF002", # allow confusable unicode in docstrings
+  "RUF003", # allow confusable unicode in comments
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["novel_proofer", "tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true
+show_error_codes = true
