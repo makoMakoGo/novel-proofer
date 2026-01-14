@@ -88,38 +88,57 @@
           </div>
 
           <!-- Action Buttons -->
-          <div class="flex flex-wrap items-center gap-3 mb-8">
-            <button type="button" id="btnStart" class="px-6 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg shadow-sm hover:shadow transition-all active:scale-[0.98]">
-              开始校对
+          <div class="flex flex-wrap items-center gap-3 mb-4">
+            <button type="button" id="btnValidate" class="px-6 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg shadow-sm hover:shadow transition-all active:scale-[0.98]">
+              开始校验
+            </button>
+            <button type="button" id="btnProcess" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              开始处理
+            </button>
+            <button type="button" id="btnMerge" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              合并输出
             </button>
             <button type="button" id="btnPause" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors hidden" disabled>
               暂停
             </button>
-            <button type="button" id="btnCancel" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              取消
-            </button>
             <button type="button" id="btnRetry" class="px-5 py-2.5 bg-white border border-amber-200 text-amber-700 hover:bg-amber-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
               重试失败部分
             </button>
-            <button type="button" id="btnRerunAll" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              重跑全部
+            <button type="button" id="btnCancel" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              取消（可恢复）
             </button>
-            <button type="button" id="btnCleanup" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              清理文件
+            <button type="button" id="btnReset" class="px-5 py-2.5 bg-white border border-red-200 text-red-700 hover:bg-red-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              取消并清理
             </button>
+            <button type="button" id="btnLoad" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium rounded-lg transition-colors">
+              加载任务
+            </button>
+          </div>
+
+          <div class="pt-0 mb-8 flex flex-wrap items-center justify-between gap-3">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" name="cleanup_debug_dir" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
+              <span class="text-xs text-slate-500">合并后清理中间产物（output/.jobs）</span>
+              <input type="hidden" name="cleanup_debug_dir" value="0">
+            </label>
+            <div class="text-[10px] text-slate-300">v2.0</div>
           </div>
 
           <!-- Progress Bar -->
           <div class="mb-8 hidden" id="progress">
-            <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs font-medium text-slate-500 mb-2" id="meta">
-              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span id="metaLeft">准备中</span>
-                <span class="hidden inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 font-mono" id="metaModelWrap">
+            <div class="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 text-xs font-medium text-slate-500 mb-2" id="meta">
+              <span id="metaLeft" class="min-w-0 truncate">准备中</span>
+              <span id="metaRight" class="text-right tabular-nums">0%</span>
+              <div class="col-span-2 flex flex-wrap items-center gap-2 min-w-0 hidden" id="metaSub">
+                <span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 font-mono" id="metaPhaseWrap">
+                  <span class="text-slate-400 font-sans">阶段</span>
+                  <span id="metaPhase" class="truncate max-w-[10rem]">-</span>
+                </span>
+                <span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 font-mono hidden" id="metaModelWrap">
                   <span class="text-slate-400 font-sans">模型</span>
-                  <span id="metaModel" class="max-w-[16rem] truncate">-</span>
+                  <span id="metaModel" class="truncate max-w-[18rem]">-</span>
                 </span>
               </div>
-              <span id="metaRight">0%</span>
             </div>
             <div class="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
               <div class="h-full bg-ink transition-all duration-300 ease-out" style="width: 0%" id="bar"></div>
@@ -134,15 +153,65 @@
           </div>
 
           <!-- Tabs Navigation -->
-          <div class="flex gap-6 border-b border-slate-100 mb-6">
-            <button type="button" class="tab-btn active pb-3 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors relative" data-tab="progress">参数设置</button>
-            <button type="button" class="tab-btn pb-3 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors relative" data-tab="debug">分析进度</button>
+          <div class="flex gap-6 border-b border-slate-100 mb-6 overflow-x-auto pb-1">
+            <button type="button" class="tab-btn active pb-3 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors relative whitespace-nowrap" data-tab="progress">进度</button>
+            <button type="button" class="tab-btn pb-3 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors relative whitespace-nowrap" data-tab="slice">切片设置</button>
+            <button type="button" class="tab-btn pb-3 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors relative whitespace-nowrap" data-tab="llm">LLM 设置</button>
+            <button type="button" class="tab-btn pb-3 text-sm font-medium text-slate-400 hover:text-slate-600 transition-colors relative whitespace-nowrap" data-tab="debug">调试信息</button>
           </div>
 
-          <!-- Tab: Settings -->
+          <!-- Tab: Progress -->
           <div id="tab-progress" class="tab-content block">
-            
+            <div class="grid gap-6">
+              <div class="bg-slate-50 border border-slate-100 rounded-xl p-4">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider">当前任务</div>
+                  <div class="text-xs font-mono text-slate-400" id="jobIdShort">-</div>
+                </div>
+                <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-600">
+                  <div class="min-w-0">
+                    <span class="text-slate-400">输入：</span><span class="truncate" id="jobInputName">-</span>
+                  </div>
+                  <div class="min-w-0">
+                    <span class="text-slate-400">输出：</span><span class="truncate" id="jobOutputName">-</span>
+                  </div>
+                </div>
+                <div class="mt-2 text-[11px] text-slate-400 font-mono truncate" id="jobOutputPath">-</div>
+              </div>
+
+              <!-- Stats -->
+              <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100" id="statsBar">
+                <div class="text-center">
+                  <div class="text-xs text-slate-400 mb-1">Total</div>
+                  <div class="font-mono font-bold text-lg text-slate-700" id="statTotal">0</div>
+                </div>
+                <div class="text-center">
+                  <div class="text-xs text-slate-400 mb-1">Done</div>
+                  <div class="font-mono font-bold text-lg text-green-600" id="statDone">0</div>
+                </div>
+                <div class="text-center">
+                  <div class="text-xs text-slate-400 mb-1">Active</div>
+                  <div class="font-mono font-bold text-lg text-blue-600" id="statProcessing">0</div>
+                </div>
+                <div class="text-center">
+                  <div class="text-xs text-slate-400 mb-1">Pending</div>
+                  <div class="font-mono font-bold text-lg text-slate-500" id="statPending">0</div>
+                </div>
+                <div class="text-center">
+                  <div class="text-xs text-slate-400 mb-1">Error</div>
+                  <div class="font-mono font-bold text-lg text-red-500" id="statError">0</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- End Progress Tab -->
+
+          <!-- Tab: Slice Settings -->
+          <div id="tab-slice" class="tab-content hidden">
+
             <div class="grid gap-8">
+              <div class="text-xs text-slate-400 hidden" id="sliceLockHint"></div>
+
               <!-- Formatting Section -->
               <div>
                 <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">格式化选项</label>
@@ -202,10 +271,19 @@
                 </div>
               </div>
 
-              <!-- LLM Section -->
-              <div class="pt-6 border-t border-slate-100">
+            </div>
+          </div>
+          <!-- End Slice Settings Tab -->
+
+          <!-- Tab: LLM Settings -->
+          <div id="tab-llm" class="tab-content hidden">
+
+            <div class="grid gap-6">
+              <div class="text-xs text-slate-400 hidden" id="llmLockHint"></div>
+
+              <div>
                 <div class="flex items-center justify-between mb-4">
-                  <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider">LLM 配置 (辅助精修)</label>
+                  <label class="text-xs font-semibold text-slate-500 uppercase tracking-wider">LLM 配置（用于处理/重试）</label>
                   <div class="flex items-center gap-2">
                     <button type="button" class="text-xs text-ink hover:underline font-medium" id="btnSaveLlmDefaults">保存为默认</button>
                     <span id="llmDirtyHint" class="text-[10px] text-amber-500 font-bold hidden">● 未保存</span>
@@ -219,7 +297,7 @@
                   </div>
                   <div>
                     <label class="block text-xs font-medium text-slate-500 mb-1.5">Model Name</label>
-                    <input name="llm_model" type="text" placeholder="DeepSeek-V3" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
+                    <input name="llm_model" type="text" placeholder="zai-glm-4.6 / gemini-2.5-pro / minimax-m2.1" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
                   </div>
                   <div>
                     <label class="block text-xs font-medium text-slate-500 mb-1.5">API Key</label>
@@ -230,67 +308,32 @@
                   </div>
                 </div>
 
-                <div class="grid grid-cols-3 gap-4 mb-4">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                   <div>
                     <label class="block text-xs font-medium text-slate-500 mb-1.5">Temp</label>
                     <input name="llm_temperature" type="number" step="0.1" value="0" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
                   </div>
                   <div>
-                    <label class="block text-xs font-medium text-slate-500 mb-1.5">Timeout (s)</label>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">Timeout (秒)</label>
                     <input name="llm_timeout_seconds" type="number" step="1" value="180" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
                   </div>
                   <div>
-                    <label class="block text-xs font-medium text-slate-500 mb-1.5">Concurrency</label>
+                    <label class="block text-xs font-medium text-slate-500 mb-1.5">并发</label>
                     <input name="llm_max_concurrency" type="number" min="1" step="1" value="20" class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow">
                   </div>
                 </div>
 
                 <div>
-                   <label class="block text-xs font-medium text-slate-500 mb-1.5">额外参数 (JSON)</label>
-                   <textarea name="llm_extra_params" placeholder='{"max_tokens": 4096}' class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono h-20 resize-y focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow"></textarea>
+                  <label class="block text-xs font-medium text-slate-500 mb-1.5">额外参数 (JSON)</label>
+                  <textarea name="llm_extra_params" placeholder='{"max_tokens": 4096}' class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-mono h-20 resize-y focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink/10 transition-shadow"></textarea>
                 </div>
               </div>
-
-              <!-- Footer Debug Option -->
-              <div class="pt-4 border-t border-slate-100 flex items-center justify-between">
-                 <label class="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" name="cleanup_debug_dir" value="1" checked class="rounded border-slate-300 text-ink focus:ring-ink/20">
-                    <span class="text-xs text-slate-500">完成后自动删除调试中间文件</span>
-                    <input type="hidden" name="cleanup_debug_dir" value="0">
-                 </label>
-                 <div class="text-[10px] text-slate-300">v1.0</div>
-              </div>
-
             </div>
           </div>
-          <!-- End Settings Tab -->
+          <!-- End LLM Settings Tab -->
 
           <!-- Tab: Debug -->
           <div id="tab-debug" class="tab-content hidden">
-            
-            <!-- Stats -->
-            <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-100" id="statsBar">
-              <div class="text-center">
-                <div class="text-xs text-slate-400 mb-1">Total</div>
-                <div class="font-mono font-bold text-lg text-slate-700" id="statTotal">0</div>
-              </div>
-              <div class="text-center">
-                <div class="text-xs text-slate-400 mb-1">Done</div>
-                <div class="font-mono font-bold text-lg text-green-600" id="statDone">0</div>
-              </div>
-              <div class="text-center">
-                <div class="text-xs text-slate-400 mb-1">Processing</div>
-                <div class="font-mono font-bold text-lg text-blue-600" id="statProcessing">0</div>
-              </div>
-              <div class="text-center">
-                <div class="text-xs text-slate-400 mb-1">Pending</div>
-                <div class="font-mono font-bold text-lg text-slate-500" id="statPending">0</div>
-              </div>
-              <div class="text-center">
-                <div class="text-xs text-slate-400 mb-1">Error</div>
-                <div class="font-mono font-bold text-lg text-red-500" id="statError">0</div>
-              </div>
-            </div>
 
             <!-- Filter -->
              <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
@@ -307,12 +350,12 @@
                 <table class="w-full text-left text-xs table-fixed">
                   <thead class="bg-slate-50 text-slate-500 font-medium sticky top-0 z-10 shadow-sm border-b border-slate-200">
                     <tr>
-                      <th class="py-3 px-2 w-14 text-center font-semibold text-slate-600">#</th>
-                      <th class="py-3 px-2 w-20 text-center font-semibold text-slate-600">状态</th>
-                      <th class="py-3 px-2 w-32 text-center font-semibold text-slate-600">LLM 模型</th>
-                      <th class="py-3 px-2 w-14 text-center font-semibold text-slate-600">重试</th>
-                      <th class="py-3 px-2 w-32 text-center font-semibold text-slate-600">Chars (In/Out)</th>
-                      <th class="py-3 px-2 text-center font-semibold text-slate-600">信息</th>
+                      <th class="py-3 px-2 w-12 text-center font-semibold text-slate-600">#</th>
+                      <th class="py-3 px-2 w-16 text-center font-semibold text-slate-600">状态</th>
+                      <th class="py-3 px-2 w-40 text-center font-semibold text-slate-600">LLM 模型</th>
+                      <th class="py-3 px-2 w-12 text-center font-semibold text-slate-600">重试</th>
+                      <th class="py-3 px-2 w-28 text-center font-semibold text-slate-600">Chars (In/Out)</th>
+                      <th class="py-3 px-2 text-left font-semibold text-slate-600">信息</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-100 bg-white" id="chunksBody">
@@ -351,14 +394,18 @@
     const meta = document.getElementById('meta');
     const metaLeft = document.getElementById('metaLeft');
     const metaRight = document.getElementById('metaRight');
+    const metaSub = document.getElementById('metaSub');
+    const metaPhase = document.getElementById('metaPhase');
     const metaModelWrap = document.getElementById('metaModelWrap');
     const metaModel = document.getElementById('metaModel');
-    const btnStart = document.getElementById('btnStart');
+    const btnValidate = document.getElementById('btnValidate');
+    const btnProcess = document.getElementById('btnProcess');
+    const btnMerge = document.getElementById('btnMerge');
     const btnPause = document.getElementById('btnPause');
-    const btnCancel = document.getElementById('btnCancel');
     const btnRetry = document.getElementById('btnRetry');
-    const btnRerunAll = document.getElementById('btnRerunAll');
-    const btnCleanup = document.getElementById('btnCleanup');
+    const btnCancel = document.getElementById('btnCancel');
+    const btnReset = document.getElementById('btnReset');
+    const btnLoad = document.getElementById('btnLoad');
     const btnSaveLlmDefaults = document.getElementById('btnSaveLlmDefaults');
     const llmDirtyHint = document.getElementById('llmDirtyHint');
     const btnToggleApiKey = document.getElementById('btnToggleApiKey');
@@ -367,6 +414,12 @@
     const outputPreview = document.getElementById('outputPreview');
     const fileDrop = document.getElementById('fileDrop');
     const fileName = document.getElementById('fileName');
+    const jobIdShort = document.getElementById('jobIdShort');
+    const jobInputName = document.getElementById('jobInputName');
+    const jobOutputName = document.getElementById('jobOutputName');
+    const jobOutputPath = document.getElementById('jobOutputPath');
+    const sliceLockHint = document.getElementById('sliceLockHint');
+    const llmLockHint = document.getElementById('llmLockHint');
 
     // Debug tab elements
     const chunksBody = document.getElementById('chunksBody');
@@ -380,6 +433,7 @@
 
     let currentJobId = null;
     let currentJobState = null;
+    let currentJobPhase = null;
     let currentFilter = 'all';
     let activeTab = 'progress';
     let forceChunksFetch = false;
@@ -661,7 +715,7 @@
           const llmFull = (c.llm_model != null) ? String(c.llm_model) : '';
           // CSS truncation for LLM model
           const llmCell = llmFull
-            ? `<div class="truncate max-w-[7rem] mx-auto text-slate-600 font-medium" title="${escapeHtml(llmFull)}">${escapeHtml(llmFull)}</div>`
+            ? `<div class="truncate max-w-[9rem] mx-auto text-slate-600 font-medium" title="${escapeHtml(llmFull)}">${escapeHtml(llmFull)}</div>`
             : `<span class="text-slate-300">-</span>`;
 
            const errCode = (c.last_error_code != null) ? String(c.last_error_code) : '';
@@ -691,7 +745,7 @@
            <td class="py-3 px-2 whitespace-nowrap text-xs text-center">${llmCell}</td>
            <td class="py-3 px-2 text-slate-400 text-center whitespace-nowrap font-mono text-xs">${c.retries || 0}</td>
            <td class="py-3 px-2 text-slate-400 font-mono text-[11px] text-center whitespace-nowrap tracking-tight">${inOut}</td>
-           <td class="py-3 px-2 text-slate-600 text-xs text-center">${errMsg}</td>
+           <td class="py-3 px-2 text-slate-600 text-xs text-left">${errMsg}</td>
          </tr>`;
        }).join('');
 
@@ -747,139 +801,162 @@
       outText.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
     }
 
-    function setProgress(done, total, state) {
+    function _phaseLabel(phase) {
+      const v = String(phase || '').toLowerCase();
+      const map = { validate: '校验', process: '处理', merge: '合并', done: '完成' };
+      return map[v] || (v || '-');
+    }
+
+    function _stateLabel(state) {
+      const v = String(state || '').toLowerCase();
+      const map = { queued: '排队中', running: '运行中', paused: '已暂停', done: '已完成', cancelled: '已取消', error: '出错' };
+      return map[v] || (v || '-');
+    }
+
+    function setJobCard(job) {
+      const j = job || null;
+      if (jobIdShort) jobIdShort.textContent = j?.id ? String(j.id).slice(0, 8) : '-';
+      if (jobInputName) jobInputName.textContent = j?.input_filename ? String(j.input_filename) : '-';
+      if (jobOutputName) jobOutputName.textContent = j?.output_filename ? String(j.output_filename) : '-';
+      if (jobOutputPath) jobOutputPath.textContent = j?.output_path ? String(j.output_path) : '-';
+    }
+
+    function setProgressFromJob(job) {
+      if (!job) {
+        progress.classList.add('hidden');
+        if (metaSub) metaSub.classList.add('hidden');
+        if (metaModelWrap) metaModelWrap.classList.add('hidden');
+        return;
+      }
+
       progress.classList.remove('hidden');
-      // meta.style.display = 'flex'; // handled by class
+      const state = String(job.state || '');
+      const phase = String(job.phase || '');
+      const done = Number(job?.progress?.done_chunks || 0);
+      const total = Number(job?.progress?.total_chunks || 0);
       const pct = total > 0 ? Math.floor((done / total) * 100) : (state === 'done' ? 100 : 0);
       bar.style.width = pct + '%';
-      const stateShortLabels = {
-        queued: '排队中',
-        running: '处理中',
-        paused: '已暂停',
-        done: '已完成',
-        cancelled: '已取消',
-        error: '出错'
-      };
-      metaLeft.textContent = `${stateShortLabels[state] || state} ${done}/${total}`;
+
+      const phaseLabel = _phaseLabel(phase);
+      let left = _stateLabel(state);
+      if (state === 'running' && phase === 'validate') left = '正在校验…';
+      if (state === 'paused' && phase === 'process') left = '校验完成，等待开始处理';
+      if (state === 'running' && phase === 'process') left = '正在处理…';
+      if (state === 'error' && phase === 'process') left = '处理出错';
+      if (state === 'paused' && phase === 'merge') left = '处理完成，等待合并输出';
+      if (state === 'running' && phase === 'merge') left = '正在合并输出…';
+      if (state === 'done') left = '已完成';
+
+      const counter = total > 0 ? ` ${done}/${total}` : '';
+      metaLeft.textContent = `${left}${counter}`;
       metaRight.textContent = pct + '%';
-      
-      const stateLabels = {
-        queued: '已提交，准备开始…',
-        running: '正在处理中…',
-        paused: '已暂停',
-        done: '处理完成',
-        cancelled: '已取消',
-        error: '处理出错'
-      };
-      if (stateLabels[state]) {
-        out.classList.remove('hidden');
-        outText.textContent = stateLabels[state];
+
+      if (metaSub) metaSub.classList.remove('hidden');
+      if (metaPhase) metaPhase.textContent = phaseLabel;
+
+      const model = job?.llm_model ? String(job.llm_model).trim() : '';
+      if (metaModel) metaModel.textContent = model || '-';
+      if (metaModelWrap) metaModelWrap.classList.toggle('hidden', !model);
+    }
+
+    function _setVisible(el, visible) {
+      if (!el) return;
+      el.classList.toggle('hidden', !visible);
+    }
+
+    function _setDisabled(el, disabled) {
+      if (!el) return;
+      el.disabled = !!disabled;
+      el.classList.toggle('opacity-50', !!disabled);
+      el.classList.toggle('cursor-not-allowed', !!disabled);
+    }
+
+    const SLICE_FIELDS = [
+      'suffix',
+      'max_chunk_chars',
+      'paragraph_indent',
+      'indent_with_fullwidth_space',
+      'normalize_blank_lines',
+      'trim_trailing_spaces',
+      'normalize_ellipsis',
+      'normalize_em_dash',
+      'normalize_cjk_punctuation',
+      'fix_cjk_punct_spacing',
+      'normalize_quotes',
+    ];
+
+    const LLM_FIELDS = [
+      'llm_base_url',
+      'llm_model',
+      'llm_api_key',
+      'llm_temperature',
+      'llm_timeout_seconds',
+      'llm_max_concurrency',
+      'llm_extra_params',
+    ];
+
+    function _setFieldsDisabled(names, disabled) {
+      for (const name of names) {
+        const el = form.querySelector(`[name="${name}"]`);
+        if (!el) continue;
+        el.disabled = !!disabled;
+        el.classList.toggle('opacity-50', !!disabled);
+        el.classList.toggle('cursor-not-allowed', !!disabled);
       }
     }
 
-    function setStartDisabled(disabled) {
-      btnStart.disabled = disabled;
-      btnStart.classList.toggle('opacity-50', disabled);
-      btnStart.classList.toggle('cursor-not-allowed', disabled);
-    }
+    function refreshLocks(job) {
+      const hasJob = !!job;
+      const llmLocked = hasJob && ['queued', 'running'].includes(String(job.state || ''));
 
-    function setBusy(busy) {
-      setStartDisabled(busy);
-      
-      const toggleBtn = (btn, show) => {
-          if (show) {
-              btn.classList.remove('hidden', 'inline-block'); // reset
-              btn.classList.add('inline-block'); // add display
-          } else {
-              btn.classList.add('hidden');
-              btn.classList.remove('inline-block');
-          }
+      _setFieldsDisabled(SLICE_FIELDS, hasJob);
+      if (sliceLockHint) {
+        sliceLockHint.classList.toggle('hidden', !hasJob);
+        if (hasJob) sliceLockHint.textContent = '当前已关联任务，切片设置已锁定（要修改请先“取消（可恢复）/取消并清理”回到初始态）。';
       }
 
-      toggleBtn(btnPause, busy);
-      btnPause.disabled = !busy;
-      btnPause.textContent = '暂停';
-      
-      toggleBtn(btnCancel, busy);
-      btnCancel.disabled = !busy;
-
-      if (busy) {
-        toggleBtn(btnRetry, false);
-        btnRetry.disabled = true;
-        toggleBtn(btnRerunAll, false);
-        btnRerunAll.disabled = true;
-        toggleBtn(btnCleanup, false);
-        btnCleanup.disabled = true;
+      _setFieldsDisabled(LLM_FIELDS, llmLocked);
+      if (llmLockHint) {
+        llmLockHint.classList.toggle('hidden', !llmLocked);
+        if (llmLocked) llmLockHint.textContent = '任务运行中，LLM 配置已锁定（暂停/出错后可修改并用于继续/重试）。';
       }
     }
 
-    function setPaused(paused) {
-      setStartDisabled(paused);
+    function refreshActionButtons(job) {
+      const state = String(job?.state || '').toLowerCase();
+      const phase = String(job?.phase || '').toLowerCase();
+      const hasJob = !!job;
 
-      const toggleBtn = (btn, show) => {
-          if (show) {
-              btn.classList.remove('hidden');
-              btn.classList.add('inline-block');
-          } else {
-              btn.classList.add('hidden');
-          }
-      }
+      // Validate: start new job OR resume validate if paused in validate phase.
+      const canResumeValidate = hasJob && state === 'paused' && phase === 'validate';
+      _setVisible(btnValidate, !hasJob || canResumeValidate);
+      if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续校验' : '开始校验';
+      _setDisabled(btnValidate, false);
 
-      toggleBtn(btnPause, paused);
-      btnPause.disabled = !paused;
-      btnPause.textContent = '继续';
-      
-      toggleBtn(btnCancel, paused);
-      btnCancel.disabled = !paused;
-      
-      toggleBtn(btnRetry, false);
-      btnRetry.disabled = true;
-      toggleBtn(btnRerunAll, false);
-      btnRerunAll.disabled = true;
-      toggleBtn(btnCleanup, false);
-      btnCleanup.disabled = true;
-    }
+      const canProcess = hasJob && state === 'paused' && phase === 'process';
+      _setVisible(btnProcess, canProcess);
+      _setDisabled(btnProcess, !canProcess);
 
-    function setRetryVisible(visible) {
-      const toggleBtn = (btn, show) => {
-          if (show) {
-              btn.classList.remove('hidden');
-              btn.classList.add('inline-block');
-          } else {
-              btn.classList.add('hidden');
-          }
-      }
-      toggleBtn(btnRetry, visible);
-      btnRetry.disabled = !visible;
-      if (visible) setStartDisabled(true);
-    }
+      const canMerge = hasJob && state === 'paused' && phase === 'merge';
+      _setVisible(btnMerge, canMerge);
+      _setDisabled(btnMerge, !canMerge);
 
-    function setRerunAllVisible(visible) {
-      const toggleBtn = (btn, show) => {
-          if (show) {
-              btn.classList.remove('hidden');
-              btn.classList.add('inline-block');
-          } else {
-              btn.classList.add('hidden');
-          }
-      }
-      toggleBtn(btnRerunAll, visible);
-      btnRerunAll.disabled = !visible;
-      if (visible) setStartDisabled(true);
-    }
+      const canPause = hasJob && (state === 'queued' || state === 'running');
+      _setVisible(btnPause, canPause);
+      _setDisabled(btnPause, !canPause);
 
-    function setCleanupVisible(visible) {
-        const toggleBtn = (btn, show) => {
-          if (show) {
-              btn.classList.remove('hidden');
-              btn.classList.add('inline-block');
-          } else {
-              btn.classList.add('hidden');
-          }
-      }
-      toggleBtn(btnCleanup, visible);
-      btnCleanup.disabled = !visible;
-      if (visible) setStartDisabled(true);
+      const canRetry = hasJob && state === 'error';
+      _setVisible(btnRetry, canRetry);
+      _setDisabled(btnRetry, !canRetry);
+
+      _setVisible(btnCancel, hasJob);
+      _setDisabled(btnCancel, !hasJob);
+
+      _setVisible(btnReset, hasJob);
+      _setDisabled(btnReset, !hasJob);
+
+      _setVisible(btnLoad, true);
+      _setDisabled(btnLoad, false);
     }
 
     function _llmSnapshot() {
@@ -1095,49 +1172,6 @@
       }
     }
 
-    btnPause.addEventListener('click', async () => {
-      const jobId = currentJobId;
-      if (!jobId) return;
-
-      // Resume when paused; otherwise pause.
-      if (currentJobState === 'paused') {
-        show('继续分析…');
-        setBusy(true);
-        setRetryVisible(false);
-        setCleanupVisible(false);
-        const r = await requestResume(jobId);
-        if (!r.ok) {
-          show(r.error);
-          setPaused(true);
-          return;
-        }
-        currentJobState = 'running';
-        await poll(jobId);
-        return;
-      }
-
-      btnPause.disabled = true;
-      show('正在暂停…');
-      const r = await requestPause(jobId);
-      if (!r.ok) {
-        show(r.error);
-        btnPause.disabled = false;
-      }
-    });
-
-    btnCancel.addEventListener('click', async () => {
-      const jobId = currentJobId;
-      if (!jobId) return;
-      currentJobId = null;
-      currentJobState = null;
-      setProgress(0, 0, 'cancelled');
-      show('已取消。');
-      setBusy(false);
-      setRetryVisible(false);
-      setCleanupVisible(false);
-      await requestCancel(jobId);
-    });
-
     async function requestRetryFailed(jobId) {
       if (!jobId) return { ok: false, error: 'missing job_id' };
 
@@ -1160,33 +1194,15 @@
       }
     }
 
-    btnRetry.addEventListener('click', async () => {
-      const jobId = currentJobId;
-      if (!jobId) return;
-      show('准备重试失败分片…');
-      setBusy(true);
-      setRetryVisible(false);
-      setRerunAllVisible(false);
-      setCleanupVisible(false);
-      const r = await requestRetryFailed(jobId);
-      if (!r.ok) {
-        show(r.error);
-        setBusy(false);
-        setRetryVisible(true);
-        setRerunAllVisible(true);
-        setCleanupVisible(true);
-        return;
-      }
-      await poll(jobId);
-    });
-
-    async function requestRerunAll(jobId, options) {
+    async function requestMerge(jobId) {
       if (!jobId) return { ok: false, error: 'missing job_id' };
+      const cleanupDebugDir = !!document.querySelector('input[type="checkbox"][name="cleanup_debug_dir"]')?.checked;
+      const payload = { cleanup_debug_dir: cleanupDebugDir };
       try {
-        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/rerun-all`, {
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/merge`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(options),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) return { ok: false, error: data };
@@ -1196,50 +1212,10 @@
       }
     }
 
-    btnRerunAll.addEventListener('click', async () => {
-      const jobId = currentJobId;
-      if (!jobId) return;
-      const ok = confirm('确认重跑全部分片（新任务）？该操作不会修改旧任务，但会创建一个新任务并从头开始处理。');
-      if (!ok) return;
-
-      const fd = new FormData(form);
-      const extra = parseExtraParamsFromFormData(fd);
-      if (!extra.ok) {
-        show(extra.error);
-        return;
-      }
-
-      show('正在创建新任务并重跑全部分片…');
-      setBusy(true);
-      setRetryVisible(false);
-      setRerunAllVisible(false);
-      setCleanupVisible(false);
-
-      const opts = buildJobOptions(fd, extra.value);
-      const r = await requestRerunAll(jobId, opts);
-      if (!r.ok) {
-        show(r.error);
-        setBusy(false);
-        setRetryVisible(true);
-        setRerunAllVisible(true);
-        setCleanupVisible(true);
-        return;
-      }
-
-      currentJobId = r?.data?.job?.id;
-      currentJobState = 'queued';
-      chunksData = [];
-      chunkCounts = null;
-      totalChunksFromServer = 0;
-      updateStats();
-      renderChunksTable();
-      await poll(currentJobId);
-    });
-
-    async function requestCleanup(jobId) {
+    async function requestReset(jobId) {
       if (!jobId) return { ok: false, error: 'missing job_id' };
       try {
-        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/cleanup-debug`, { method: 'POST' });
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/reset`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) return { ok: false, error: data };
         return { ok: true, data };
@@ -1248,119 +1224,292 @@
       }
     }
 
-    btnCleanup.addEventListener('click', async () => {
-      const jobId = currentJobId;
-      if (!jobId) return;
-      const ok = confirm('确认清理中间文件？清理后将无法继续重试失败部分或重跑全部。');
-      if (!ok) return;
-
-      btnCleanup.disabled = true;
-      show('正在清理中间文件…');
-      const r = await requestCleanup(jobId);
-      if (!r.ok) {
-        show(r.error);
-        btnCleanup.disabled = false;
-        return;
-      }
-
-      show('已清理中间文件。');
-      setRetryVisible(false);
-      setRerunAllVisible(false);
-      setCleanupVisible(false);
-      currentJobId = null;
-      currentJobState = null;
-      setStartDisabled(false);
-      chunksData = [];
-      updateStats();
-      renderChunksTable();
-    });
-
-    async function poll(jobId) {
-      while (true) {
-        if (!currentJobId || currentJobId !== jobId) return;
-
-        const wantChunks = (activeTab === 'debug') || forceChunksFetch;
-        forceChunksFetch = false;
-
-        const q = new URLSearchParams({ chunks: wantChunks ? '1' : '0' });
-        if (wantChunks) {
-          q.set('chunk_state', currentFilter);
-          q.set('limit', '500');
-          q.set('offset', '0');
-        }
-
+    async function requestJobSummary(jobId) {
+      if (!jobId) return { ok: false, error: 'missing job_id' };
+      const q = new URLSearchParams({ chunks: '1', chunk_state: 'all', limit: '1', offset: '0' });
+      try {
         const res = await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}?${q.toString()}`);
         const data = await res.json();
-        if (!res.ok) throw new Error(JSON.stringify(data));
-
-        currentJobState = data?.job?.state;
-        setProgress(data?.job?.progress?.done_chunks || 0, data?.job?.progress?.total_chunks || 0, data?.job?.state);
-        const model = data?.job?.llm_model ? String(data.job.llm_model) : '';
-        if (metaModel) {
-          metaModel.textContent = model || '-';
-          metaModel.title = model || '';
-        }
-        if (metaModelWrap) metaModelWrap.classList.toggle('hidden', !model);
-        if (wantChunks) showChunks(data);
-
-        if (data?.job?.state === 'done') {
-          show(data?.job?.output_path ? `完成。已输出到：${data.job.output_path}` : '完成。已输出到项目 output/ 目录。');
-          setBusy(false);
-          currentJobId = null;
-          currentJobState = null;
-          setRetryVisible(false);
-          setRerunAllVisible(false);
-          setCleanupVisible(false);
-          return;
-        }
-
-        if (data?.job?.state === 'cancelled') {
-          show('已取消。');
-          setBusy(false);
-          currentJobId = null;
-          currentJobState = null;
-          setRetryVisible(false);
-          setRerunAllVisible(false);
-          setCleanupVisible(false);
-          return;
-        }
-
-        if (data?.job?.state === 'paused') {
-          show('已暂停。');
-          setBusy(false);
-          setPaused(true);
-          setRetryVisible(false);
-          setRerunAllVisible(false);
-          setCleanupVisible(false);
-          return;
-        }
-
-        if (data?.job?.state === 'error') {
-          show(data?.job?.error || data);
-          setBusy(false);
-          setRetryVisible(true);
-          setRerunAllVisible(true);
-          setCleanupVisible(true);
-          return;
-        }
-
-        await new Promise(r => setTimeout(r, 800));
+        if (!res.ok) return { ok: false, error: data, status: res.status };
+        return { ok: true, data };
+      } catch (e) {
+        return { ok: false, error: String(e) };
       }
     }
 
-    // btnStart click triggers form submit (button is outside form)
-    btnStart.addEventListener('click', () => {
-      form.requestSubmit();
+    async function requestJobList() {
+      try {
+        const res = await fetch('api/v1/jobs?limit=50');
+        const data = await res.json();
+        if (!res.ok) return { ok: false, error: data };
+        return { ok: true, data };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    }
+
+    const ATTACHED_JOB_KEY = 'novel_proofer.attached_job_id.v2';
+    let pollTimer = null;
+    let pollInFlight = false;
+
+    function detachUi({ clearFile = true } = {}) {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      pollInFlight = false;
+
+      currentJobId = null;
+      currentJobState = null;
+      currentJobPhase = null;
+      try { localStorage.removeItem(ATTACHED_JOB_KEY); } catch (e) {}
+
+      chunksData = [];
+      chunkCounts = null;
+      totalChunksFromServer = 0;
+      updateStats();
+      renderChunksTable();
+
+      setJobCard(null);
+      setProgressFromJob(null);
+      refreshLocks(null);
+      refreshActionButtons(null);
+      out.classList.add('hidden');
+      outText.textContent = '';
+
+      if (clearFile && fileInput) {
+        fileInput.value = '';
+        refreshFileName();
+      }
+    }
+
+    async function refreshJobOnce(jobId) {
+      if (!jobId || currentJobId !== jobId) return;
+      if (pollInFlight) return;
+      pollInFlight = true;
+      try {
+        const r = await requestJobSummary(jobId);
+        if (!jobId || currentJobId !== jobId) return;
+        if (!r.ok) {
+          // 404 means job removed (e.g., reset finished)
+          if (r.status === 404) {
+            detachUi();
+            show('任务已被清理或不存在。');
+            return;
+          }
+          show(r.error);
+          return;
+        }
+
+        const job = r?.data?.job;
+        currentJobState = job?.state || null;
+        currentJobPhase = job?.phase || null;
+
+        // Sync slice settings from job snapshot (do not persist to localStorage).
+        const fmt = job?.format || null;
+        if (fmt) {
+          const setCheck = (name, val) => {
+            const el = form.querySelector(`[name="${name}"]`);
+            if (el) el.checked = !!val;
+          };
+          const setNum = (name, val) => {
+            const el = form.querySelector(`[name="${name}"]`);
+            if (el && val != null) el.value = String(val);
+          };
+          setNum('max_chunk_chars', fmt.max_chunk_chars);
+          setCheck('paragraph_indent', fmt.paragraph_indent);
+          setCheck('indent_with_fullwidth_space', fmt.indent_with_fullwidth_space);
+          setCheck('normalize_blank_lines', fmt.normalize_blank_lines);
+          setCheck('trim_trailing_spaces', fmt.trim_trailing_spaces);
+          setCheck('normalize_ellipsis', fmt.normalize_ellipsis);
+          setCheck('normalize_em_dash', fmt.normalize_em_dash);
+          setCheck('normalize_cjk_punctuation', fmt.normalize_cjk_punctuation);
+          setCheck('fix_cjk_punct_spacing', fmt.fix_cjk_punct_spacing);
+          setCheck('normalize_quotes', fmt.normalize_quotes);
+        }
+
+        setJobCard(job);
+        setProgressFromJob(job);
+        refreshLocks(job);
+        refreshActionButtons(job);
+
+        chunkCounts = r?.data?.chunk_counts || null;
+        totalChunksFromServer = Number(job?.progress?.total_chunks || 0);
+        updateStats();
+
+        if (job?.state === 'error') {
+          show(job?.error || '处理出错');
+        } else if (job?.state === 'paused' && job?.phase === 'process') {
+          show('校验完成：可点击“开始处理”。');
+        } else if (job?.state === 'paused' && job?.phase === 'merge') {
+          show('处理完成：可点击“合并输出”。');
+        } else if (job?.state === 'done') {
+          show(job?.output_path ? `完成。已输出到：${job.output_path}` : '完成。已输出到项目 output/ 目录。');
+        }
+
+        if (activeTab === 'debug') {
+          forceChunksFetch = true;
+          await refreshChunksNow(jobId);
+        }
+      } finally {
+        pollInFlight = false;
+      }
+    }
+
+    function startPolling(jobId) {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => refreshJobOnce(jobId), 1000);
+      refreshJobOnce(jobId);
+    }
+
+    async function attachJob(jobId) {
+      const jid = String(jobId || '').trim();
+      if (!jid) return;
+      currentJobId = jid;
+      try { localStorage.setItem(ATTACHED_JOB_KEY, jid); } catch (e) {}
+
+      // Reset debug view but keep form values (they will be overwritten by job.format when fetched).
+      chunksData = [];
+      chunkCounts = null;
+      totalChunksFromServer = 0;
+      updateStats();
+      renderChunksTable();
+
+      await refreshJobOnce(jid);
+      startPolling(jid);
+    }
+
+    btnPause?.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      _setDisabled(btnPause, true);
+      show('正在暂停…');
+      const r = await requestPause(jobId);
+      if (!r.ok) {
+        show(r.error);
+        _setDisabled(btnPause, false);
+        return;
+      }
+      await refreshJobOnce(jobId);
+    });
+
+    btnRetry?.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      show('准备重试失败分片…');
+      const r = await requestRetryFailed(jobId);
+      if (!r.ok) {
+        show(r.error);
+        return;
+      }
+      await refreshJobOnce(jobId);
+    });
+
+    btnProcess?.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      show('开始处理…');
+      const r = await requestResume(jobId);
+      if (!r.ok) {
+        show(r.error);
+        return;
+      }
+      await refreshJobOnce(jobId);
+    });
+
+    btnMerge?.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      show('开始合并输出…');
+      const r = await requestMerge(jobId);
+      if (!r.ok) {
+        show(r.error);
+        return;
+      }
+      await refreshJobOnce(jobId);
+    });
+
+    btnValidate?.addEventListener('click', async () => {
+      // Start new validation when idle; resume validate only if paused in validate phase.
+      if (!currentJobId) {
+        form.requestSubmit();
+        return;
+      }
+      if (currentJobState === 'paused' && currentJobPhase === 'validate') {
+        const jobId = currentJobId;
+        show('继续校验…');
+        const r = await requestResume(jobId);
+        if (!r.ok) {
+          show(r.error);
+          return;
+        }
+        await refreshJobOnce(jobId);
+      }
+    });
+
+    btnCancel?.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      const ok = confirm('确认“取消（可恢复）”？将停止当前任务并返回初始态，可稍后通过“加载任务”继续。');
+      if (!ok) return;
+      show('正在取消（可恢复）…');
+      await requestCancel(jobId);
+      detachUi({ clearFile: true });
+      show('已返回初始态。可通过“加载任务”继续该任务。');
+    });
+
+    btnReset?.addEventListener('click', async () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      const ok = confirm('确认“取消并清理”？该任务中间产物与状态将被删除且不可恢复。');
+      if (!ok) return;
+      show('正在取消并清理…');
+      const r = await requestReset(jobId);
+      if (!r.ok) {
+        show(r.error);
+        return;
+      }
+      detachUi({ clearFile: true });
+      show('已提交清理请求。');
+    });
+
+    btnLoad?.addEventListener('click', async () => {
+      const r = await requestJobList();
+      if (!r.ok) {
+        show(r.error);
+        return;
+      }
+      const jobs = Array.isArray(r?.data?.jobs) ? r.data.jobs : [];
+      if (!jobs.length) {
+        show('暂无可加载任务。');
+        return;
+      }
+
+      const lines = jobs.slice(0, 20).map((j, i) => {
+        const id8 = j?.id ? String(j.id).slice(0, 8) : '-';
+        const st = `${j?.state || '-'}:${j?.phase || '-'}`;
+        const prog = `${j?.progress?.done_chunks || 0}/${j?.progress?.total_chunks || 0}`;
+        const name = j?.input_filename ? String(j.input_filename) : '';
+        return `${i + 1}) ${id8}  ${st}  ${prog}  ${name}`;
+      }).join('\n');
+
+      const choice = prompt(`选择要加载的任务：\n\n${lines}\n\n输入编号(1-20)或完整 job_id：`);
+      if (!choice) return;
+      const trimmed = String(choice).trim();
+      const idx = Number(trimmed);
+      let chosenId = null;
+      if (Number.isFinite(idx) && idx >= 1 && idx <= jobs.slice(0, 20).length) {
+        chosenId = jobs[idx - 1].id;
+      } else {
+        chosenId = trimmed;
+      }
+      await attachJob(chosenId);
     });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (currentJobId) return;
-      currentJobId = null;
-      currentJobState = null;
-      setRetryVisible(false);
-      setRerunAllVisible(false);
-      setCleanupVisible(false);
+      detachUi({ clearFile: false });
 
       const fd = new FormData(form);
       const extra = parseExtraParamsFromFormData(fd);
@@ -1373,14 +1522,11 @@
         show('分片大小（字符数）必须在 200-4000 之间。');
         return;
       }
-      show('已提交，准备开始…');
-      setProgress(0, 0, 'queued');
-      setBusy(true);
+      show('已提交，准备校验…');
 
       const file = fd.get('file');
       if (!(file instanceof File)) {
         show('请选择 TXT 文件。');
-        setBusy(false);
         return;
       }
       const opts = buildJobOptions(fd, extra.value);
@@ -1392,14 +1538,18 @@
       const data = await res.json();
       if (!res.ok) {
         show(data);
-        setBusy(false);
         return;
       }
 
-      currentJobId = data?.job?.id;
-      currentJobState = 'queued';
-      await poll(currentJobId);
+      const jobId = data?.job?.id;
+      await attachJob(jobId);
     });
+
+    // Auto reattach on page reload.
+    try {
+      const last = localStorage.getItem(ATTACHED_JOB_KEY);
+      if (last) attachJob(last);
+    } catch (e) {}
 
     loadLlmDefaults();
   </script>
