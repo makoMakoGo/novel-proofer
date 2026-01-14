@@ -17,18 +17,37 @@ if [[ -z "$py" ]]; then
 pre-commit: missing .venv python.
 
 Create it first:
-  start.bat
+  Windows: start.bat
+  Unix:    python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
 EOF
   exit 1
 fi
 
-echo "[pre-commit] ruff format"
-"$py" -m ruff format
+mapfile -t files < <(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+if (( ${#files[@]} == 0 )); then
+  exit 0
+fi
 
-echo "[pre-commit] ruff check --fix"
-"$py" -m ruff check --fix
+declare -A before_hash=()
+for f in "${files[@]}"; do
+  before_hash["$f"]="$(git hash-object "$f")"
+done
 
-if ! git diff --quiet; then
+echo "[pre-commit] ruff format (staged files)"
+"$py" -m ruff format "${files[@]}"
+
+echo "[pre-commit] ruff check --fix (staged files)"
+"$py" -m ruff check --fix "${files[@]}"
+
+changed=0
+for f in "${files[@]}"; do
+  if [[ "${before_hash["$f"]}" != "$(git hash-object "$f")" ]]; then
+    changed=1
+    break
+  fi
+done
+
+if (( changed )); then
   cat >&2 <<'EOF'
 pre-commit: formatting/lint fixes were applied.
 
@@ -36,4 +55,3 @@ Please review and stage the changes, then commit again.
 EOF
   exit 1
 fi
-
