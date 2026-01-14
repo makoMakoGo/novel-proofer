@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>小说打样员</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M19.8978 16H7.89778C6.96781 16 6.50282 16 6.12132 16.1022C5.08604 16.3796 4.27740 17.1883 4 18.2235' stroke='%231C274D' stroke-width='1.5'/%3E%3Cpath d='M8 7H16' stroke='%231C274D' stroke-width='1.5' stroke-linecap='round'/%3E%3Cpath d='M8 10.5H13' stroke='%231C274D' stroke-width='1.5' stroke-linecap='round'/%3E%3Cpath d='M10 22C7.17157 22 5.75736 22 4.87868 21.1213C4 20.2426 4 18.8284 4 16V8C4 5.17157 4 3.75736 4.87868 2.87868C5.75736 2 7.17157 2 10 2H14C16.8284 2 18.2426 2 19.1213 2.87868C20 3.75736 20 5.17157 20 8M14 22C16.8284 22 18.2426 22 19.1213 21.1213C20 20.2426 20 18.8284 20 16V12' stroke='%231C274D' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/svg+xml" href="images/logo.svg" />
   <style>
     :root {
       --bg: #fafafa;
@@ -21,10 +21,35 @@
       --radius-sm: 8px;
     }
 
+    .header-logo {
+      text-align: center;
+      margin-bottom: 16px;
+    }
+
+    .header-logo h1 {
+      font-size: 1.35rem;
+      font-weight: 650;
+      margin: 0 0 8px;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+
+    .header-logo .logo {
+      width: 64px;
+      height: 64px;
+      opacity: 0.9;
+    }
+
+    @media (max-width: 600px) {
+      .header-logo .logo {
+        width: 48px;
+        height: 48px;
+      }
+    }
+
     * { box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 10px 16px 24px; background: var(--bg); color: var(--text); line-height: 1.5; }
     .wrap { max-width: 920px; margin: 0 auto; }
-    h1 { font-size: 1.35rem; font-weight: 650; margin: 0 0 16px; letter-spacing: -0.02em; text-align: center; color: var(--text); }
     .card { background: var(--card); border-radius: var(--radius); padding: 16px 24px 24px; box-shadow: var(--shadow); }
 
     .row { display: flex; gap: 16px; flex-wrap: wrap; }
@@ -130,7 +155,10 @@
 <body>
     <div class="wrap">
     <div class="card">
-      <h1><svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="vertical-align: -3px; margin-right: 8px;"><path d="M19.8978 16H7.89778C6.96781 16 6.50282 16 6.12132 16.1022C5.08604 16.3796 4.27740 17.1883 4 18.2235" stroke="currentColor" stroke-width="1.5"/><path d="M8 7H16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 10.5H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M10 22C7.17157 22 5.75736 22 4.87868 21.1213C4 20.2426 4 18.8284 4 16V8C4 5.17157 4 3.75736 4.87868 2.87868C5.75736 2 7.17157 2 10 2H14C16.8284 2 18.2426 2 19.1213 2.87868C20 3.75736 20 5.17157 20 8M14 22C16.8284 22 18.2426 22 19.1213 21.1213C20 20.2426 20 18.8284 20 16V12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>小说打样员</h1>
+      <div class="header-logo">
+        <h1>小说打样员</h1>
+        <img src="images/logo.svg" alt="Logo" class="logo" />
+      </div>
       <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
       <label>上传 TXT</label>
       <div class="file-drop" id="fileDrop">

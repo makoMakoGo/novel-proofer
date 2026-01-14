@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from novel_proofer.dotenv_store import (
@@ -28,6 +29,7 @@ from novel_proofer.runner import resume_paused_job, retry_failed_chunks, run_job
 
 WORKDIR = Path(__file__).resolve().parent.parent
 TEMPLATES_DIR = WORKDIR / "templates"
+IMAGES_DIR = WORKDIR / "images"
 
 OUTPUT_DIR = WORKDIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -383,6 +385,9 @@ def _llm_settings_from_defaults(d: LLMDefaults) -> LLMSettings:
 
 
 app = FastAPI()
+
+# Mount static files for images
+app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 
 
 @app.exception_handler(HTTPException)
