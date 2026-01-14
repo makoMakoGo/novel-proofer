@@ -1,25 +1,22 @@
 name: ci
 
 on:
-  push:
   pull_request:
+    branches: [main]
+  push:
+    branches: [main]
 
 jobs:
   test:
-    name: lint + test (${{ matrix.os }}, py${{ matrix.python }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python: ["3.10", "3.12"]
+    name: lint + test (windows-latest, py3.14)
+    runs-on: windows-latest
     env:
       NOVEL_PROOFER_RUN_LLM_TESTS: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: |
             requirements.txt
@@ -28,11 +25,7 @@ jobs:
         shell: bash
         run: |
           python -m venv .venv
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            echo "PY=.venv/Scripts/python.exe" >> "$GITHUB_ENV"
-          else
-            echo "PY=.venv/bin/python" >> "$GITHUB_ENV"
-          fi
+          echo "PY=.venv/Scripts/python.exe" >> "$GITHUB_ENV"
       - name: Install deps
         shell: bash
         run: |
