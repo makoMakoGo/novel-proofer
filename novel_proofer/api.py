@@ -744,7 +744,15 @@ async def resume_job(job_id: str, body: RetryFailedRequest = Body(default_factor
         raise HTTPException(status_code=409, detail="failed to resume job")
 
     llm = _llm_from_options(body.llm or LLMOptions())
-    submit_background_job(job_id, resume_paused_job, job_id, llm)
+    try:
+        submit_background_job(job_id, resume_paused_job, job_id, llm)
+    except ValueError as e:
+        # If the previous runner is still exiting, revert to paused and ask the client to retry later.
+        GLOBAL_JOBS.pause(job_id)
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        GLOBAL_JOBS.pause(job_id)
+        raise HTTPException(status_code=500, detail=str(e)) from e
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
 
@@ -759,7 +767,12 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
         raise HTTPException(status_code=409, detail="job is cancelled")
 
     llm = _llm_from_options(body.llm or LLMOptions())
-    submit_background_job(job_id, retry_failed_chunks, job_id, llm)
+    try:
+        submit_background_job(job_id, retry_failed_chunks, job_id, llm)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
 

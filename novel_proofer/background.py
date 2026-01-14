@@ -41,18 +41,22 @@ def submit(job_id: str, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) ->
     if not jid:
         raise ValueError("job_id is required")
 
-    fut = _EXECUTOR.submit(fn, *args, **kwargs)
+    with _lock:
+        if jid in _in_flight:
+            raise ValueError(f"job_id '{jid}' is already in flight")
+        fut = _EXECUTOR.submit(fn, *args, **kwargs)
+        _in_flight[jid] = fut
 
     def _done(f: Future) -> None:
         with _lock:
-            _in_flight.pop(jid, None)
+            # Only remove if this callback matches the currently tracked future.
+            if _in_flight.get(jid) is f:
+                _in_flight.pop(jid, None)
         try:
             f.result()
         except Exception:
             logger.exception("background job crashed: job_id=%s", jid)
 
-    with _lock:
-        _in_flight[jid] = fut
     fut.add_done_callback(_done)
 
 
