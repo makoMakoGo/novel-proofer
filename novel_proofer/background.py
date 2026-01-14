@@ -60,5 +60,31 @@ def submit(job_id: str, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) ->
     fut.add_done_callback(_done)
 
 
+def add_done_callback(job_id: str, cb: Callable[[], Any]) -> None:
+    """Run `cb` once the current in-flight job for `job_id` finishes.
+
+    If `job_id` is not in-flight, runs `cb` immediately.
+    """
+
+    jid = str(job_id or "").strip()
+    if not jid:
+        raise ValueError("job_id is required")
+
+    with _lock:
+        fut = _in_flight.get(jid)
+
+    if fut is None:
+        cb()
+        return
+
+    def _wrap(_f: Future) -> None:
+        try:
+            cb()
+        except Exception:
+            logger.exception("background post-callback crashed: job_id=%s", jid)
+
+    fut.add_done_callback(_wrap)
+
+
 def shutdown(*, wait: bool = False) -> None:
     _EXECUTOR.shutdown(wait=wait, cancel_futures=not wait)

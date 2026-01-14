@@ -10,10 +10,14 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from novel_proofer.formatting.config import FormatConfig
+
 logger = logging.getLogger(__name__)
 
-_JOB_STATE_VERSION = 1
+_JOB_STATE_VERSION = 2
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
+
+_JOB_PHASES = {"validate", "process", "merge", "done"}
 
 
 @dataclass
@@ -38,6 +42,8 @@ class JobStatus:
     job_id: str
     # queued|running|paused|done|error|cancelled
     state: str
+    # validate|process|merge|done
+    phase: str
     created_at: float
     started_at: float | None
     finished_at: float | None
@@ -46,6 +52,9 @@ class JobStatus:
     output_filename: str
     total_chunks: int
     done_chunks: int
+
+    # Options snapshot (used for resume/recovery and UI locks)
+    format: FormatConfig = field(default_factory=FormatConfig)
 
     # Diagnostics
     last_error_code: int | None = None
@@ -100,6 +109,7 @@ def _job_to_dict(st: JobStatus) -> dict:
         "job": {
             "job_id": str(st.job_id),
             "state": str(st.state),
+            "phase": str(st.phase),
             "created_at": float(st.created_at),
             "started_at": st.started_at,
             "finished_at": st.finished_at,
@@ -108,6 +118,18 @@ def _job_to_dict(st: JobStatus) -> dict:
             "output_path": st.output_path,
             "total_chunks": int(st.total_chunks),
             "done_chunks": int(st.done_chunks),
+            "format": {
+                "max_chunk_chars": int(st.format.max_chunk_chars),
+                "paragraph_indent": bool(st.format.paragraph_indent),
+                "indent_with_fullwidth_space": bool(st.format.indent_with_fullwidth_space),
+                "normalize_blank_lines": bool(st.format.normalize_blank_lines),
+                "trim_trailing_spaces": bool(st.format.trim_trailing_spaces),
+                "normalize_ellipsis": bool(st.format.normalize_ellipsis),
+                "normalize_em_dash": bool(st.format.normalize_em_dash),
+                "normalize_cjk_punctuation": bool(st.format.normalize_cjk_punctuation),
+                "fix_cjk_punct_spacing": bool(st.format.fix_cjk_punct_spacing),
+                "normalize_quotes": bool(st.format.normalize_quotes),
+            },
             "last_error_code": st.last_error_code,
             "last_retry_count": int(st.last_retry_count),
             "last_llm_model": st.last_llm_model,
@@ -126,7 +148,7 @@ def _job_from_dict(d: dict) -> JobStatus:
         version = int(version_raw)
     except Exception:
         version = None
-    if version is not None and version != _JOB_STATE_VERSION:
+    if version is not None and version not in {1, _JOB_STATE_VERSION}:
         logger.warning("job state version mismatch: expected %d, got %s", _JOB_STATE_VERSION, version_raw)
 
     job = d.get("job") if isinstance(d, dict) else None
@@ -148,9 +170,36 @@ def _job_from_dict(d: dict) -> JobStatus:
     if last_llm_model is not None:
         last_llm_model = str(last_llm_model).strip() or None
 
+    phase = job.get("phase")
+    phase = str(phase).strip().lower() if phase is not None else ""
+    if phase not in _JOB_PHASES:
+        phase = ""
+
+    fmt_obj: FormatConfig
+    fmt_raw = job.get("format")
+    if isinstance(fmt_raw, dict):
+        try:
+            fmt_obj = FormatConfig(
+                max_chunk_chars=int(fmt_raw.get("max_chunk_chars", 2000) or 2000),
+                paragraph_indent=bool(fmt_raw.get("paragraph_indent", True)),
+                indent_with_fullwidth_space=bool(fmt_raw.get("indent_with_fullwidth_space", True)),
+                normalize_blank_lines=bool(fmt_raw.get("normalize_blank_lines", True)),
+                trim_trailing_spaces=bool(fmt_raw.get("trim_trailing_spaces", True)),
+                normalize_ellipsis=bool(fmt_raw.get("normalize_ellipsis", True)),
+                normalize_em_dash=bool(fmt_raw.get("normalize_em_dash", True)),
+                normalize_cjk_punctuation=bool(fmt_raw.get("normalize_cjk_punctuation", True)),
+                fix_cjk_punct_spacing=bool(fmt_raw.get("fix_cjk_punct_spacing", True)),
+                normalize_quotes=bool(fmt_raw.get("normalize_quotes", False)),
+            )
+        except Exception:
+            fmt_obj = FormatConfig()
+    else:
+        fmt_obj = FormatConfig()
+
     return JobStatus(
         job_id=str(job.get("job_id", "")),
         state=str(job.get("state", "queued")),
+        phase=phase or "validate",
         created_at=float(job.get("created_at", time.time())),
         started_at=job.get("started_at"),
         finished_at=job.get("finished_at"),
@@ -158,6 +207,7 @@ def _job_from_dict(d: dict) -> JobStatus:
         output_filename=str(job.get("output_filename", "")),
         total_chunks=int(job.get("total_chunks", len(chunks)) or 0),
         done_chunks=int(job.get("done_chunks", 0) or 0),
+        format=fmt_obj,
         last_error_code=job.get("last_error_code"),
         last_retry_count=int(job.get("last_retry_count", 0) or 0),
         last_llm_model=last_llm_model,
@@ -226,6 +276,34 @@ class JobStore:
         # Keep counters consistent even if older files were incomplete.
         st.total_chunks = max(int(st.total_chunks), len(st.chunk_statuses))
         st.done_chunks = sum(1 for c in st.chunk_statuses if c.state == "done")
+
+        # Phase migration / normalization (v1 files don't have phase).
+        if st.phase not in _JOB_PHASES:
+            st.phase = "validate"
+
+        # Derive phase when missing or clearly stale.
+        if not st.chunk_statuses:
+            # Not validated yet (or legacy file missing chunk info).
+            if st.state == "done":
+                st.phase = "done"
+            else:
+                st.phase = "validate"
+        else:
+            if st.state == "done":
+                st.phase = "done"
+            else:
+                # If everything is done but final output might not exist, allow explicit merge.
+                all_done = all(c.state == "done" for c in st.chunk_statuses)
+                if all_done:
+                    st.phase = "merge"
+                else:
+                    st.phase = "process"
+
+        # Ensure phase/state compatibility.
+        if st.phase == "done" and st.state != "done":
+            st.phase = "merge" if st.chunk_statuses and all(c.state == "done" for c in st.chunk_statuses) else "process"
+        if st.state == "done":
+            st.phase = "done"
         return st
 
     def load_persisted_jobs(self) -> int:
@@ -252,6 +330,10 @@ class JobStore:
                 if st.state == "paused":
                     self._paused.add(st.job_id)
 
+        # Rewrite snapshots in latest schema (best-effort) to complete migration.
+        for st in loaded:
+            self._persist_snapshot(self._snapshot_job(st))
+
         return len(loaded)
 
     def _snapshot_chunk(self, cs: ChunkStatus) -> ChunkStatus:
@@ -272,6 +354,7 @@ class JobStore:
         return JobStatus(
             job_id=st.job_id,
             state=st.state,
+            phase=st.phase,
             created_at=st.created_at,
             started_at=st.started_at,
             finished_at=st.finished_at,
@@ -280,6 +363,7 @@ class JobStore:
             output_path=st.output_path,
             total_chunks=st.total_chunks,
             done_chunks=st.done_chunks,
+            format=st.format,
             last_error_code=st.last_error_code,
             last_retry_count=st.last_retry_count,
             last_llm_model=st.last_llm_model,
@@ -295,6 +379,7 @@ class JobStore:
         status = JobStatus(
             job_id=job_id,
             state="queued",
+            phase="validate",
             created_at=time.time(),
             started_at=None,
             finished_at=None,
@@ -315,6 +400,12 @@ class JobStore:
             if st is None:
                 return None
             return self._snapshot_job(st)
+
+    def list(self) -> list[JobStatus]:
+        with self._lock:
+            items = list(self._jobs.values())
+        items.sort(key=lambda s: s.created_at, reverse=True)
+        return [self._snapshot_job(s) for s in items]
 
     def update(self, job_id: str, **kwargs) -> None:
         snap: JobStatus | None = None

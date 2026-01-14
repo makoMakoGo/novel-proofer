@@ -77,10 +77,28 @@ def test_create_job_local_mode_writes_output_and_is_queryable(monkeypatch: pytes
         assert isinstance(job_id, str) and len(job_id) == 32
 
         try:
+            # Phase 1: validate (ends paused, ready to process)
+            st1 = _wait_job_done(client, job_id, timeout_seconds=5.0)
+            assert (st1.get("job") or {}).get("state") == "paused"
+            assert (st1.get("job") or {}).get("phase") == "process"
+
+            # Phase 2: process (ends paused, ready to merge)
+            r2 = client.post(
+                f"/api/v1/jobs/{job_id}/resume",
+                json={"llm": {"base_url": "http://example.com", "model": "m", "max_concurrency": 1}},
+            )
+            assert r2.status_code == 200, r2.text
+            st2 = _wait_job_done(client, job_id, timeout_seconds=10.0)
+            assert (st2.get("job") or {}).get("state") == "paused"
+            assert (st2.get("job") or {}).get("phase") == "merge"
+
+            # Phase 3: merge (ends done, output exists)
+            r3 = client.post(f"/api/v1/jobs/{job_id}/merge", json={"cleanup_debug_dir": True})
+            assert r3.status_code == 200, r3.text
             final = _wait_job_done(client, job_id, timeout_seconds=5.0)
             assert (final.get("job") or {}).get("state") == "done"
+            assert (final.get("job") or {}).get("phase") == "done"
 
-            # Output file exists under patched OUTPUT_DIR.
             output_filename = (final.get("job") or {}).get("output_filename")
             assert isinstance(output_filename, str) and output_filename
             out_path = out_dir / output_filename
@@ -132,6 +150,19 @@ def test_get_job_chunk_filter_and_paging(monkeypatch: pytest.MonkeyPatch):
         assert isinstance(job_id, str) and len(job_id) == 32
 
         try:
+            st1 = _wait_job_done(client, job_id, timeout_seconds=10.0)
+            assert (st1.get("job") or {}).get("state") == "paused"
+            assert (st1.get("job") or {}).get("phase") == "process"
+
+            client.post(
+                f"/api/v1/jobs/{job_id}/resume",
+                json={"llm": {"base_url": "http://example.com", "model": "m", "max_concurrency": 1}},
+            )
+            st2 = _wait_job_done(client, job_id, timeout_seconds=10.0)
+            assert (st2.get("job") or {}).get("state") == "paused"
+            assert (st2.get("job") or {}).get("phase") == "merge"
+
+            client.post(f"/api/v1/jobs/{job_id}/merge", json={"cleanup_debug_dir": True})
             final = _wait_job_done(client, job_id, timeout_seconds=10.0)
             assert (final.get("job") or {}).get("state") == "done"
 
@@ -178,8 +209,15 @@ def test_create_job_llm_enabled_requires_base_url_and_model(monkeypatch: pytest.
         assert isinstance(job_id, str) and len(job_id) == 32
 
         try:
-            final = _wait_job_done(client, job_id, timeout_seconds=5.0)
-            assert (final.get("job") or {}).get("state") == "error"
+            # Validate succeeds without LLM config.
+            st1 = _wait_job_done(client, job_id, timeout_seconds=5.0)
+            assert (st1.get("job") or {}).get("state") == "paused"
+            assert (st1.get("job") or {}).get("phase") == "process"
+
+            # Processing requires base_url/model and should fail when empty.
+            client.post(f"/api/v1/jobs/{job_id}/resume", json={"llm": {"base_url": "", "model": ""}})
+            st2 = _wait_job_done(client, job_id, timeout_seconds=5.0)
+            assert (st2.get("job") or {}).get("state") == "error"
         finally:
             GLOBAL_JOBS.delete(str(job_id))
 
@@ -194,7 +232,7 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         assert r.status_code == 200
         assert r.json().get("ok") is True
         st = GLOBAL_JOBS.get(job1.job_id)
-        assert st is not None and st.state == "cancelled"
+        assert st is not None and st.state == "paused"
     finally:
         GLOBAL_JOBS.delete(job1.job_id)
 
@@ -202,6 +240,8 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
     monkeypatch.setattr(api, "resume_paused_job", lambda *_a, **_k: None)
     job2 = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
     try:
+        # Ensure resume uses resume_paused_job (not validate stage).
+        GLOBAL_JOBS.update(job2.job_id, phase="process")
         r = client.post(f"/api/v1/jobs/{job2.job_id}/pause")
         assert r.status_code == 200
         assert r.json().get("ok") is True
@@ -222,6 +262,7 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
     monkeypatch.setattr(api, "retry_failed_chunks", lambda *_a, **_k: None)
     job3 = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
     try:
+        GLOBAL_JOBS.update(job3.job_id, phase="process")
         GLOBAL_JOBS.init_chunks(job3.job_id, total_chunks=2)
         GLOBAL_JOBS.update_chunk(job3.job_id, 0, state="done")
         GLOBAL_JOBS.update_chunk(job3.job_id, 1, state="error")
@@ -269,6 +310,40 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         # After cleanup, rerun-all is unavailable.
         r2 = client.post(f"/api/v1/jobs/{job4.job_id}/rerun-all", json={"format": {"max_chunk_chars": 2000}})
         assert r2.status_code == 404
+
+
+def test_list_jobs_includes_created_job() -> None:
+    client = TestClient(api.app)
+
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    try:
+        r = client.get("/api/v1/jobs")
+        assert r.status_code == 200, r.text
+        jobs = (r.json() or {}).get("jobs") or []
+        assert any(j.get("id") == job.job_id for j in jobs)
+
+        r2 = client.get("/api/v1/jobs?state=queued")
+        assert r2.status_code == 200, r2.text
+        jobs2 = (r2.json() or {}).get("jobs") or []
+        assert any(j.get("id") == job.job_id for j in jobs2)
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
+
+
+def test_reset_job_deletes_job() -> None:
+    client = TestClient(api.app)
+
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    try:
+        r = client.post(f"/api/v1/jobs/{job.job_id}/reset")
+        assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
+
+        r2 = client.get(f"/api/v1/jobs/{job.job_id}")
+        assert r2.status_code == 404, r2.text
+        assert GLOBAL_JOBS.get(job.job_id) is None
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
 
 
 def test_resume_job_returns_409_when_background_submit_rejects(monkeypatch: pytest.MonkeyPatch):
@@ -369,8 +444,9 @@ def test_rerun_all_creates_new_job_without_reupload(monkeypatch: pytest.MonkeyPa
         assert isinstance(job_id, str) and len(job_id) == 32
 
         try:
-            final = _wait_job_done(client, job_id, timeout_seconds=5.0)
-            assert (final.get("job") or {}).get("state") == "done"
+            st1 = _wait_job_done(client, job_id, timeout_seconds=5.0)
+            assert (st1.get("job") or {}).get("state") == "paused"
+            assert (st1.get("job") or {}).get("phase") == "process"
 
             input_cache = out_dir / ".inputs" / f"{job_id}.txt"
             assert input_cache.exists()
@@ -380,6 +456,20 @@ def test_rerun_all_creates_new_job_without_reupload(monkeypatch: pytest.MonkeyPa
             job_id2 = (r2.json().get("job") or {}).get("id")
             assert isinstance(job_id2, str) and len(job_id2) == 32 and job_id2 != job_id
 
+            st2 = _wait_job_done(client, job_id2, timeout_seconds=5.0)
+            assert (st2.get("job") or {}).get("state") == "paused"
+            assert (st2.get("job") or {}).get("phase") == "process"
+
+            # Process + merge rerun job to ensure output path is produced.
+            client.post(
+                f"/api/v1/jobs/{job_id2}/resume",
+                json={"llm": {"base_url": "http://example.com", "model": "m", "max_concurrency": 1}},
+            )
+            st3 = _wait_job_done(client, job_id2, timeout_seconds=5.0)
+            assert (st3.get("job") or {}).get("state") == "paused"
+            assert (st3.get("job") or {}).get("phase") == "merge"
+
+            client.post(f"/api/v1/jobs/{job_id2}/merge", json={"cleanup_debug_dir": True})
             final2 = _wait_job_done(client, job_id2, timeout_seconds=5.0)
             assert (final2.get("job") or {}).get("state") == "done"
             assert (out_dir / (final2.get("job") or {}).get("output_filename")).exists()

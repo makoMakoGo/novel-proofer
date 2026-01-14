@@ -149,11 +149,9 @@ def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> N
     merge_text_chunks_to_path(_iter_chunks(), out_path)
 
 
-def _finalize_job(job_id: str, work_dir: Path, out_path: Path, total: int, error_msg: str) -> bool:
-    """Check job status after LLM processing and finalize output.
+def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
+    """Finalize job after PROCESS stage (no merge)."""
 
-    Returns True if job completed successfully, False if there were errors.
-    """
     if GLOBAL_JOBS.is_cancelled(job_id):
         GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
         return False
@@ -167,27 +165,52 @@ def _finalize_job(job_id: str, work_dir: Path, out_path: Path, total: int, error
         GLOBAL_JOBS.update(
             job_id,
             state="error",
+            phase="process",
             finished_at=time.time(),
             error=error_msg,
             done_chunks=cur.done_chunks,
         )
         return False
 
-    _merge_chunk_outputs(work_dir, total, out_path)
-
-    final_stats = dict(cur.stats)
+    # All chunks processed; wait for explicit merge.
     GLOBAL_JOBS.update(
         job_id,
-        state="done",
-        finished_at=time.time(),
-        stats=final_stats,
+        state="paused",
+        phase="merge",
+        finished_at=None,
+        error=None,
         done_chunks=total,
     )
-    if _should_cleanup_debug_dir(job_id):
-        _best_effort_cleanup_work_dir(job_id, work_dir)
-    else:
-        GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_skipped", 1)
     return True
+
+
+def _post_llm_deterministic_pass(job_id: str, work_dir: Path) -> None:
+    """Enforce local formatting invariants on per-chunk outputs (best-effort)."""
+
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        return
+    fmt = getattr(st, "format", None)
+    if fmt is None:
+        return
+
+    post_stats: dict[str, int] = {}
+    for cs in st.chunk_statuses:
+        if GLOBAL_JOBS.is_cancelled(job_id):
+            return
+        if cs.state != "done":
+            continue
+        p = _chunk_path(work_dir, "out", cs.index)
+        if not p.exists():
+            continue
+        chunk_out = p.read_text(encoding="utf-8")
+        fixed, s = apply_rules(chunk_out, fmt)
+        if fixed != chunk_out:
+            _atomic_write_text(p, fixed)
+        _merge_stats(post_stats, s)
+
+    for k, v in post_stats.items():
+        GLOBAL_JOBS.add_stat(job_id, f"post_{k}", v)
 
 
 def _validate_llm_output(input_text: str, output_text: str, *, allow_shorter: bool = False) -> None:
@@ -320,6 +343,7 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
     GLOBAL_JOBS.update(
         job_id,
         state="running",
+        phase="process",
         started_at=time.time(),
         finished_at=None,
         error=None,
@@ -387,14 +411,16 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
         return
 
     work_dir = Path(st.work_dir)
-    out_path = Path(st.output_path)
     (work_dir / "pre").mkdir(parents=True, exist_ok=True)
     (work_dir / "out").mkdir(parents=True, exist_ok=True)
+    (work_dir / "resp").mkdir(parents=True, exist_ok=True)
     _ensure_job_debug_readme(work_dir)
 
     GLOBAL_JOBS.update(
         job_id,
         state="running",
+        phase="validate",
+        format=fmt,
         started_at=time.time(),
         finished_at=None,
         error=None,
@@ -418,6 +444,9 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
             if GLOBAL_JOBS.is_cancelled(job_id):
                 GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
                 return
+            if GLOBAL_JOBS.is_paused(job_id):
+                GLOBAL_JOBS.update(job_id, state="paused", phase="validate", finished_at=None)
+                return
             total += 1
 
         GLOBAL_JOBS.init_chunks(job_id, total_chunks=total, llm_model=llm.model)
@@ -433,6 +462,9 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
             if GLOBAL_JOBS.is_cancelled(job_id):
                 GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
                 return
+            if GLOBAL_JOBS.is_paused(job_id):
+                GLOBAL_JOBS.update(job_id, state="paused", phase="validate", finished_at=None)
+                return
 
             fixed, s = apply_rules(c, fmt)
             _atomic_write_text(_chunk_path(work_dir, "pre", i), fixed)
@@ -444,39 +476,12 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
         if GLOBAL_JOBS.is_cancelled(job_id):
             GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
             return
-
-        outcome = _run_llm_for_indices(job_id, list(range(total)), work_dir, llm)
-        if outcome == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
-            GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
-            return
-        if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
-            GLOBAL_JOBS.update(job_id, state="paused", finished_at=None)
+        if GLOBAL_JOBS.is_paused(job_id):
+            GLOBAL_JOBS.update(job_id, state="paused", phase="validate", finished_at=None)
             return
 
-        # Post-LLM deterministic pass: enforce local formatting invariants on outputs.
-        post_stats: dict[str, int] = {}
-        cur = GLOBAL_JOBS.get(job_id)
-        if cur is not None:
-            for cs in cur.chunk_statuses:
-                if GLOBAL_JOBS.is_cancelled(job_id):
-                    GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
-                    return
-                if cs.state != "done":
-                    continue
-                p = _chunk_path(work_dir, "out", cs.index)
-                if not p.exists():
-                    continue
-                chunk_out = p.read_text(encoding="utf-8")
-                fixed, s = apply_rules(chunk_out, fmt)
-                if fixed != chunk_out:
-                    _atomic_write_text(p, fixed)
-                _merge_stats(post_stats, s)
-        for k, v in post_stats.items():
-            GLOBAL_JOBS.add_stat(job_id, f"post_{k}", v)
-
-        _finalize_job(
-            job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks"
-        )
+        # Validation finished; wait for explicit processing.
+        GLOBAL_JOBS.update(job_id, state="paused", phase="process", finished_at=None, error=None)
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
@@ -495,7 +500,6 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
         return
 
     work_dir = Path(st.work_dir)
-    out_path = Path(st.output_path)
     _ensure_job_debug_readme(work_dir)
 
     if not st.chunk_statuses:
@@ -505,11 +509,10 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
     total = len(st.chunk_statuses)
     targets = [c.index for c in st.chunk_statuses if c.state in {"error", "pending", "retrying"}]
     if not targets:
-        if out_path.exists():
-            GLOBAL_JOBS.update(job_id, state="done", finished_at=time.time(), done_chunks=total)
+        _finalize_processing(job_id, total, "some chunks still failed; update LLM config and retry again")
         return
 
-    GLOBAL_JOBS.update(job_id, state="queued", finished_at=None, error=None, last_llm_model=llm.model)
+    GLOBAL_JOBS.update(job_id, state="queued", phase="process", finished_at=None, error=None, last_llm_model=llm.model)
     for i in targets:
         GLOBAL_JOBS.update_chunk(
             job_id,
@@ -527,9 +530,10 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
         GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
         return
     if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
-        GLOBAL_JOBS.update(job_id, state="paused", finished_at=None)
+        GLOBAL_JOBS.update(job_id, state="paused", phase="process", finished_at=None)
         return
-    _finalize_job(job_id, work_dir, out_path, total, "some chunks still failed; update LLM config and retry again")
+    _post_llm_deterministic_pass(job_id, work_dir)
+    _finalize_processing(job_id, total, "some chunks still failed; update LLM config and retry again")
 
 
 def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
@@ -546,15 +550,12 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
         return
 
     work_dir = Path(st.work_dir)
-    out_path = Path(st.output_path)
     _ensure_job_debug_readme(work_dir)
 
     total = len(st.chunk_statuses)
     pending = [c.index for c in st.chunk_statuses if c.state not in {"done", "error"}]
     if not pending:
-        _finalize_job(
-            job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks"
-        )
+        _finalize_processing(job_id, total, "some chunks failed; update LLM config and retry failed chunks")
         return
 
     for i in pending:
@@ -572,7 +573,52 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
         GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
         return
     if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
-        GLOBAL_JOBS.update(job_id, state="paused", finished_at=None)
+        GLOBAL_JOBS.update(job_id, state="paused", phase="process", finished_at=None)
         return
 
-    _finalize_job(job_id, work_dir, out_path, total, "some chunks failed; update LLM config and retry failed chunks")
+    _post_llm_deterministic_pass(job_id, work_dir)
+    _finalize_processing(job_id, total, "some chunks failed; update LLM config and retry failed chunks")
+
+
+def merge_outputs(job_id: str, *, cleanup_debug_dir: bool | None = None) -> None:
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        return
+    if st.state == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+        return
+    if not st.work_dir or not st.output_path:
+        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job missing work_dir/output_path")
+        return
+    if not st.chunk_statuses:
+        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job has no chunk statuses")
+        return
+
+    work_dir = Path(st.work_dir)
+    out_path = Path(st.output_path)
+    total = len(st.chunk_statuses)
+
+    if any(c.state == "error" for c in st.chunk_statuses):
+        GLOBAL_JOBS.update(
+            job_id, state="error", phase="process", finished_at=time.time(), error="cannot merge: chunks failed"
+        )
+        return
+    if any(c.state != "done" for c in st.chunk_statuses):
+        GLOBAL_JOBS.update(
+            job_id, state="error", phase="merge", finished_at=time.time(), error="cannot merge: chunks not complete"
+        )
+        return
+
+    GLOBAL_JOBS.update(job_id, state="running", phase="merge", finished_at=None, error=None)
+    try:
+        _merge_chunk_outputs(work_dir, total, out_path)
+        GLOBAL_JOBS.update(job_id, state="done", phase="done", finished_at=time.time(), done_chunks=total)
+        do_cleanup = bool(st.cleanup_debug_dir) if cleanup_debug_dir is None else bool(cleanup_debug_dir)
+        if do_cleanup:
+            _best_effort_cleanup_work_dir(job_id, work_dir)
+        else:
+            GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_skipped", 1)
+    except Exception as e:
+        if GLOBAL_JOBS.is_cancelled(job_id):
+            GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+            return
+        GLOBAL_JOBS.update(job_id, state="error", phase="merge", finished_at=time.time(), error=str(e))

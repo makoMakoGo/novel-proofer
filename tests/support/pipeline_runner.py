@@ -32,9 +32,22 @@ def run_pipeline_for_text(
                 job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=cleanup_debug_dir
             )
             runner.run_job(job_id, input_path, fmt, llm)
-            st = GLOBAL_JOBS.get(job_id)
-            assert st is not None
-            assert st.state == "done", st.error
+            st1 = GLOBAL_JOBS.get(job_id)
+            assert st1 is not None
+            assert st1.state == "paused", st1.error
+            assert getattr(st1, "phase", None) == "process"
+
+            runner.resume_paused_job(job_id, llm)
+            st2 = GLOBAL_JOBS.get(job_id)
+            assert st2 is not None
+            assert st2.state == "paused", st2.error
+            assert getattr(st2, "phase", None) == "merge"
+
+            runner.merge_outputs(job_id)
+            st3 = GLOBAL_JOBS.get(job_id)
+            assert st3 is not None
+            assert st3.state == "done", st3.error
+            assert getattr(st3, "phase", None) == "done"
             return out_path.read_text(encoding="utf-8")
         finally:
             GLOBAL_JOBS.delete(job_id)

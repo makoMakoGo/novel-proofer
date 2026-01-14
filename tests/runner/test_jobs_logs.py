@@ -144,6 +144,8 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
         try:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
             GLOBAL_JOBS.update(job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
+            # This test focuses on resp overwrite; disable paragraph indentation for stable expectations.
+            GLOBAL_JOBS.update(job_id, format=runner.FormatConfig(paragraph_indent=False))
             cfg = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
 
             runner._llm_worker(job_id, 0, work_dir, cfg)
@@ -154,12 +156,18 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
             _assert_no_legacy_log_dirs(work_dir)
             _assert_resp_files(work_dir, expect=True)
             assert (work_dir / "resp" / "000000.txt").read_text(encoding="utf-8") == "RAW-OK"
-            assert out_path.read_text(encoding="utf-8") == "修正后内容\n"
 
             st = GLOBAL_JOBS.get(job_id)
             assert st is not None
-            assert st.state == "done"
+            assert st.state == "paused"
+            assert getattr(st, "phase", None) == "merge"
             assert st.chunk_statuses[0].state == "done"
+
+            runner.merge_outputs(job_id)
+            st2 = GLOBAL_JOBS.get(job_id)
+            assert st2 is not None
+            assert st2.state == "done"
+            assert out_path.read_text(encoding="utf-8") == "修正后内容\n"
         finally:
             GLOBAL_JOBS.delete(job_id)
 
@@ -189,6 +197,8 @@ def test_resume_paused_job_overwrites_existing_resp(monkeypatch: pytest.MonkeyPa
         try:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
             GLOBAL_JOBS.update(job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
+            # This test focuses on resp overwrite; disable paragraph indentation for stable expectations.
+            GLOBAL_JOBS.update(job_id, format=runner.FormatConfig(paragraph_indent=False))
 
             assert GLOBAL_JOBS.pause(job_id) is True
             assert GLOBAL_JOBS.resume(job_id) is True
@@ -203,6 +213,13 @@ def test_resume_paused_job_overwrites_existing_resp(monkeypatch: pytest.MonkeyPa
             _assert_no_legacy_log_dirs(work_dir)
             _assert_resp_files(work_dir, expect=True)
             assert (work_dir / "resp" / "000000.txt").read_text(encoding="utf-8") == "RAW-RESUME"
+
+            st = GLOBAL_JOBS.get(job_id)
+            assert st is not None
+            assert st.state == "paused"
+            assert getattr(st, "phase", None) == "merge"
+
+            runner.merge_outputs(job_id, cleanup_debug_dir=False)
             assert out_path.read_text(encoding="utf-8") == "修正后内容\n"
         finally:
             GLOBAL_JOBS.delete(job_id)
