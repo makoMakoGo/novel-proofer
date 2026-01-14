@@ -229,6 +229,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         finished_at=None,
         last_error_code=None,
         last_error_message=None,
+        llm_model=llm.model,
         input_chars=None,
         output_chars=None,
     )
@@ -316,7 +317,14 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
 def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: LLMConfig) -> str:
     max_workers = max(1, int(llm.max_concurrency))
-    GLOBAL_JOBS.update(job_id, state="running", started_at=time.time(), finished_at=None, error=None)
+    GLOBAL_JOBS.update(
+        job_id,
+        state="running",
+        started_at=time.time(),
+        finished_at=None,
+        error=None,
+        last_llm_model=llm.model,
+    )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
         # Submit gradually so cancel can actually stop launching new work.
@@ -384,7 +392,14 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
     (work_dir / "out").mkdir(parents=True, exist_ok=True)
     _ensure_job_debug_readme(work_dir)
 
-    GLOBAL_JOBS.update(job_id, state="running", started_at=time.time(), finished_at=None, error=None)
+    GLOBAL_JOBS.update(
+        job_id,
+        state="running",
+        started_at=time.time(),
+        finished_at=None,
+        error=None,
+        last_llm_model=llm.model,
+    )
 
     try:
         if not input_path.exists():
@@ -405,7 +420,7 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
                 return
             total += 1
 
-        GLOBAL_JOBS.init_chunks(job_id, total_chunks=total)
+        GLOBAL_JOBS.init_chunks(job_id, total_chunks=total, llm_model=llm.model)
 
         local_stats: dict[str, int] = {}
         for i, c in enumerate(
@@ -494,7 +509,7 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
             GLOBAL_JOBS.update(job_id, state="done", finished_at=time.time(), done_chunks=total)
         return
 
-    GLOBAL_JOBS.update(job_id, state="queued", finished_at=None, error=None)
+    GLOBAL_JOBS.update(job_id, state="queued", finished_at=None, error=None, last_llm_model=llm.model)
     for i in targets:
         GLOBAL_JOBS.update_chunk(
             job_id,
@@ -502,6 +517,7 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
             state="pending",
             started_at=None,
             finished_at=None,
+            llm_model=llm.model,
             input_chars=None,
             output_chars=None,
         )
@@ -548,6 +564,7 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
             state="pending",
             started_at=None,
             finished_at=None,
+            llm_model=llm.model,
         )
 
     outcome = _run_llm_for_indices(job_id, pending, work_dir, llm)

@@ -342,6 +342,7 @@ class JobOut(BaseModel):
     progress: JobProgress
     last_error_code: int | None = None
     last_retry_count: int = 0
+    llm_model: str | None = None
     stats: dict[str, int] = Field(default_factory=dict)
     error: str | None = None
     cleanup_debug_dir: bool = True
@@ -353,6 +354,7 @@ class ChunkOut(BaseModel):
     started_at: float | None = None
     finished_at: float | None = None
     retries: int = 0
+    llm_model: str | None = None
     input_chars: int | None = None
     output_chars: int | None = None
     last_error_code: int | None = None
@@ -401,6 +403,7 @@ def _job_to_out(st: JobStatus) -> JobOut:
         progress=JobProgress(total_chunks=st.total_chunks, done_chunks=st.done_chunks, percent=pct),
         last_error_code=st.last_error_code,
         last_retry_count=st.last_retry_count,
+        llm_model=getattr(st, "last_llm_model", None),
         stats=dict(st.stats),
         error=st.error,
         cleanup_debug_dir=bool(getattr(st, "cleanup_debug_dir", True)),
@@ -414,6 +417,7 @@ def _chunk_to_out(cs: ChunkStatus) -> ChunkOut:
         started_at=cs.started_at,
         finished_at=cs.finished_at,
         retries=cs.retries,
+        llm_model=getattr(cs, "llm_model", None),
         input_chars=cs.input_chars,
         output_chars=cs.output_chars,
         last_error_code=cs.last_error_code,
@@ -603,6 +607,7 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
     fmt = _format_from_options(opts.format)
     llm = _llm_from_options(opts.llm)
 
+    GLOBAL_JOBS.update(job.job_id, last_llm_model=llm.model)
     submit_background_job(job.job_id, run_job, job.job_id, _input_cache_path(job.job_id), fmt, llm)
 
     st = GLOBAL_JOBS.get(job.job_id)
@@ -651,6 +656,7 @@ async def rerun_all(job_id: str, options: JobOptions = Body(...)):
     fmt = _format_from_options(options.format)
     llm = _llm_from_options(options.llm)
 
+    GLOBAL_JOBS.update(job.job_id, last_llm_model=llm.model)
     submit_background_job(job.job_id, run_job, job.job_id, _input_cache_path(job.job_id), fmt, llm)
 
     st = GLOBAL_JOBS.get(job.job_id)
@@ -676,7 +682,7 @@ async def get_job(
     if chunks != 1:
         return payload
 
-    allowed_filters = {"all", "pending", "processing", "retrying", "done", "error"}
+    allowed_filters = {"all", "pending", "processing", "retrying", "done", "error", "active"}
     chunk_state = str(chunk_state or "all").strip().lower()
     if chunk_state not in allowed_filters:
         chunk_state = "all"
@@ -688,7 +694,10 @@ async def get_job(
     for c in st.chunk_statuses:
         chunk_counts[c.state] = chunk_counts.get(c.state, 0) + 1
 
-        if chunk_state != "all" and c.state != chunk_state:
+        if chunk_state == "active":
+            if c.state not in {"processing", "retrying"}:
+                continue
+        elif chunk_state != "all" and c.state != chunk_state:
             continue
 
         if matched < offset:
@@ -744,14 +753,18 @@ async def resume_job(job_id: str, body: RetryFailedRequest = Body(default_factor
         raise HTTPException(status_code=409, detail="failed to resume job")
 
     llm = _llm_from_options(body.llm or LLMOptions())
+    prev_llm_model = getattr(st, "last_llm_model", None)
+    GLOBAL_JOBS.update(job_id, last_llm_model=llm.model)
     try:
         submit_background_job(job_id, resume_paused_job, job_id, llm)
     except ValueError as e:
         # If the previous runner is still exiting, revert to paused and ask the client to retry later.
         GLOBAL_JOBS.pause(job_id)
+        GLOBAL_JOBS.update(job_id, last_llm_model=prev_llm_model)
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         GLOBAL_JOBS.pause(job_id)
+        GLOBAL_JOBS.update(job_id, last_llm_model=prev_llm_model)
         raise HTTPException(status_code=500, detail=str(e)) from e
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
@@ -774,9 +787,12 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
     if not failed:
         raise HTTPException(status_code=409, detail="no failed chunks to retry")
 
+    llm = _llm_from_options(body.llm or LLMOptions())
+    prev_llm_model = getattr(st, "last_llm_model", None)
+
     # Important: flip the visible job/chunk states before starting the worker thread, otherwise
     # clients may poll and immediately "bounce" back to the error UI state.
-    GLOBAL_JOBS.update(job_id, state="queued", finished_at=None, error=None)
+    GLOBAL_JOBS.update(job_id, state="queued", finished_at=None, error=None, last_llm_model=llm.model)
     for i in failed:
         GLOBAL_JOBS.update_chunk(
             job_id,
@@ -786,17 +802,20 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
             finished_at=None,
         )
 
-    llm = _llm_from_options(body.llm or LLMOptions())
     try:
         submit_background_job(job_id, retry_failed_chunks, job_id, llm)
     except ValueError as e:
         # If the previous runner is still exiting, revert to the error state and ask the client to retry later.
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=st.finished_at, error=st.error)
+        GLOBAL_JOBS.update(
+            job_id, state="error", finished_at=st.finished_at, error=st.error, last_llm_model=prev_llm_model
+        )
         for i in failed:
             GLOBAL_JOBS.update_chunk(job_id, i, state="error")
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=st.finished_at, error=st.error)
+        GLOBAL_JOBS.update(
+            job_id, state="error", finished_at=st.finished_at, error=st.error, last_llm_model=prev_llm_model
+        )
         for i in failed:
             GLOBAL_JOBS.update_chunk(job_id, i, state="error")
         raise HTTPException(status_code=500, detail=str(e)) from e

@@ -26,6 +26,7 @@ class ChunkStatus:
     retries: int = 0
     last_error_code: int | None = None
     last_error_message: str | None = None
+    llm_model: str | None = None
 
     # Diagnostics (optional)
     input_chars: int | None = None
@@ -49,6 +50,7 @@ class JobStatus:
     # Diagnostics
     last_error_code: int | None = None
     last_retry_count: int = 0
+    last_llm_model: str | None = None
 
     stats: dict[str, int] = field(default_factory=dict)
     chunk_statuses: list[ChunkStatus] = field(default_factory=list)
@@ -68,12 +70,16 @@ def _chunk_to_dict(cs: ChunkStatus) -> dict:
         "retries": int(cs.retries),
         "last_error_code": cs.last_error_code,
         "last_error_message": cs.last_error_message,
+        "llm_model": cs.llm_model,
         "input_chars": cs.input_chars,
         "output_chars": cs.output_chars,
     }
 
 
 def _chunk_from_dict(d: dict) -> ChunkStatus:
+    llm_model = d.get("llm_model")
+    if llm_model is not None:
+        llm_model = str(llm_model).strip() or None
     return ChunkStatus(
         index=int(d.get("index", 0)),
         state=str(d.get("state", "pending")),
@@ -82,6 +88,7 @@ def _chunk_from_dict(d: dict) -> ChunkStatus:
         retries=int(d.get("retries", 0) or 0),
         last_error_code=d.get("last_error_code"),
         last_error_message=d.get("last_error_message"),
+        llm_model=llm_model,
         input_chars=d.get("input_chars"),
         output_chars=d.get("output_chars"),
     )
@@ -103,6 +110,7 @@ def _job_to_dict(st: JobStatus) -> dict:
             "done_chunks": int(st.done_chunks),
             "last_error_code": st.last_error_code,
             "last_retry_count": int(st.last_retry_count),
+            "last_llm_model": st.last_llm_model,
             "stats": dict(st.stats),
             "error": st.error,
             "work_dir": st.work_dir,
@@ -136,6 +144,10 @@ def _job_from_dict(d: dict) -> JobStatus:
     if not isinstance(stats, dict):
         stats = {}
 
+    last_llm_model = job.get("last_llm_model")
+    if last_llm_model is not None:
+        last_llm_model = str(last_llm_model).strip() or None
+
     return JobStatus(
         job_id=str(job.get("job_id", "")),
         state=str(job.get("state", "queued")),
@@ -148,6 +160,7 @@ def _job_from_dict(d: dict) -> JobStatus:
         done_chunks=int(job.get("done_chunks", 0) or 0),
         last_error_code=job.get("last_error_code"),
         last_retry_count=int(job.get("last_retry_count", 0) or 0),
+        last_llm_model=last_llm_model,
         stats=dict(stats),
         chunk_statuses=chunks,
         error=job.get("error"),
@@ -250,6 +263,7 @@ class JobStore:
             retries=cs.retries,
             last_error_code=cs.last_error_code,
             last_error_message=cs.last_error_message,
+            llm_model=cs.llm_model,
             input_chars=cs.input_chars,
             output_chars=cs.output_chars,
         )
@@ -268,6 +282,7 @@ class JobStore:
             done_chunks=st.done_chunks,
             last_error_code=st.last_error_code,
             last_retry_count=st.last_retry_count,
+            last_llm_model=st.last_llm_model,
             stats=dict(st.stats),
             chunk_statuses=[self._snapshot_chunk(c) for c in st.chunk_statuses],
             error=st.error,
@@ -321,7 +336,7 @@ class JobStore:
         if snap is not None:
             self._persist_snapshot(snap)
 
-    def init_chunks(self, job_id: str, total_chunks: int) -> None:
+    def init_chunks(self, job_id: str, total_chunks: int, *, llm_model: str | None = None) -> None:
         snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
@@ -329,7 +344,9 @@ class JobStore:
                 return
             st.total_chunks = total_chunks
             st.done_chunks = 0
-            st.chunk_statuses = [ChunkStatus(index=i, state="pending") for i in range(total_chunks)]
+            st.chunk_statuses = [
+                ChunkStatus(index=i, state="pending", llm_model=llm_model) for i in range(total_chunks)
+            ]
             snap = self._snapshot_job(st)
         if snap is not None:
             self._persist_snapshot(snap)
