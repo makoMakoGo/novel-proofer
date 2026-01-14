@@ -438,18 +438,16 @@ class JobStore:
         return True
 
     def delete(self, job_id: str) -> bool:
-        snap: JobStatus | None = None
         path: Path | None = None
+        existed: bool
         with self._lock:
             existed = job_id in self._jobs
-            st = self._jobs.get(job_id)
-            if st is not None:
-                snap = self._snapshot_job(st)
+            if existed:
                 path = self._persist_path_for_job_id(job_id)
             self._jobs.pop(job_id, None)
             self._cancelled.discard(job_id)
             self._paused.discard(job_id)
-        if snap is not None and path is not None:
+        if path is not None:
             try:
                 if path.exists():
                     path.unlink()
