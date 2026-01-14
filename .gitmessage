@@ -1,0 +1,13 @@
+# Conventional Commit message template
+#
+# Format:
+#   type(scope): subject
+#
+# Examples:
+#   feat(ui): add drag-and-drop upload
+#   fix(llm): handle empty chunks
+#   refactor(llm,ui,test): align separator cleanup and ui defaults
+#
+# Allowed types: feat fix docs style refactor perf test build ci chore revert
+# Scope: optional, lowercase, supports commas for multiple scopes
+

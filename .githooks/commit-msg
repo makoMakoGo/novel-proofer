@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+msg_file="${1:?missing commit message file path}"
+
+# Read first line as the subject (strip CR for Windows)
+subject="$(head -n 1 "$msg_file" | tr -d '\r')"
+
+# Allow merge commits, reverts created by Git, and fixup/squash commits.
+if [[ "$subject" =~ ^(Merge\ |Revert\ |fixup!\ |squash!\ ) ]]; then
+  exit 0
+fi
+
+pattern='^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-z0-9][a-z0-9,._-]*\))?(!)?: [^[:space:]].+$'
+if [[ "$subject" =~ $pattern ]]; then
+  exit 0
+fi
+
+cat >&2 <<'EOF'
+Invalid commit message.
+
+Expected Conventional Commits (lowercase):
+  type(scope): subject
+
+Examples:
+  feat(ui): add drag-and-drop upload
+  fix(llm): handle empty chunks
+  refactor(llm,ui,test): align separator cleanup and ui defaults
+
+Allowed types: feat fix docs style refactor perf test build ci chore revert
+EOF
+exit 1

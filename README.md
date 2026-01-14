@@ -102,7 +102,24 @@ flowchart TD
 - 🔧 [Detailed Architecture Doc](docs/ARCHITECTURE.md) - 系统设计原理（Why + How）
 - ⚔️ [Full Testcase Instructions](docs/TESTCASES.md) 
 
+## Development
+
+### Git hooks (recommended)
+
+This repo includes optional Git hooks + a commit template to enforce Conventional Commits.
+
+Run once after clone:
+
+```bash
+.\tools\setup-git.ps1
+```
+
+Or on macOS/Linux:
+
+```bash
+bash tools/setup-git.sh
+```
+
 ## Known Issues
 
 - 偶尔出现乱码，经检查原文件并无乱码
-
