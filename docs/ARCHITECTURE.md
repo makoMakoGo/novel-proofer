@@ -42,13 +42,16 @@
 novel_proofer/
 ├── server.py          # 入口：uvicorn CLI 包装
 ├── api.py             # REST 端点、请求验证、响应序列化
+├── background.py      # 后台任务：受控线程池（job 级并发）
+├── logging_setup.py   # logging 初始化：文件日志（RotatingFileHandler）
 ├── dotenv_store.py    # 本地 .env 读写（LLM 默认配置）
-├── jobs.py            # JobStore：线程安全的 job/chunk 状态管理
+├── jobs.py            # JobStore：线程安全 + 可选快照持久化
 ├── runner.py          # 编排器：chunking → local rules → LLM → merge
-└── formatting/
+├── formatting/
 │   ├── config.py      # FormatConfig 数据类
 │   ├── rules.py       # 确定性文本转换（标点、缩进）
-│   └── chunking.py    # 按行边界分片
+│   ├── chunking.py    # 按行边界分片（支持文件流式）
+│   └── merge.py       # 分片合并（runner/fixer 复用）
 └── llm/
     ├── config.py      # LLMConfig、系统提示词
     ├── client.py      # OpenAI 兼容流式客户端 + 重试逻辑
@@ -58,11 +61,14 @@ novel_proofer/
 | 模块 | 职责 | 关键方法 |
 |------|------|---------|
 | `api.py` | REST 端点、请求验证 | `create_job()`, `get_job()`, `pause_job()` |
+| `background.py` | 后台任务线程池（job 级并发） | `submit()`, `shutdown()` |
 | `dotenv_store.py` | 本地 `.env` 读写（保留未知键/注释） | `read_llm_defaults()`, `update_llm_defaults()` |
-| `jobs.py` | 线程安全状态管理 | `create()`, `update()`, `update_chunk()` |
+| `logging_setup.py` | 文件日志初始化 | `ensure_file_logging()` |
+| `jobs.py` | 线程安全状态管理（含持久化） | `configure_persistence()`, `load_persisted_jobs()`, `update_chunk()` |
 | `runner.py` | 流程编排 | `run_job()`, `_llm_worker()`, `_finalize_job()` |
 | `formatting/rules.py` | 本地规则 | `apply_rules()` |
-| `formatting/chunking.py` | 分片 | `chunk_by_lines_with_first_chunk_max()` |
+| `formatting/chunking.py` | 分片 | `chunk_by_lines_with_first_chunk_max()`, `iter_chunks_by_lines_with_first_chunk_max_from_file()` |
+| `formatting/merge.py` | 合并输出 | `merge_text_chunks_to_path()`, `merge_text_parts()` |
 | `llm/client.py` | LLM 调用 | `call_llm_text_resilient_with_meta_and_raw()` |
 | `llm/think_filter.py` | Think 标签过滤 | `ThinkTagFilter.feed()` |
 
@@ -71,11 +77,13 @@ novel_proofer/
 ```
 上传文件 (POST /api/v1/jobs)
     ↓
-文件解码 (UTF-8/GBK/GB18030)
+上传落盘（限制大小；避免整文件读入内存）
     ↓
-输入缓存（保存到 output/.inputs/{job_id}.txt，用于“重跑全部（新任务）无需重新上传”）
+转码为 UTF-8 输入缓存（保存到 output/.inputs/{job_id}.txt；用于“重跑全部（新任务）无需重新上传”）
     ↓
-分片 (chunk_by_lines_with_first_chunk_max)
+后台任务提交（受控线程池；避免阻塞 FastAPI 事件循环）
+    ↓
+分片（Runner 从文件流式分片：iter_chunks_by_lines_with_first_chunk_max_from_file）
     ↓
 本地规则预处理 (apply_rules) → 保存到 pre/
     ↓
@@ -88,10 +96,14 @@ LLM 并发处理 (_llm_worker × N)
     ↓
 本地规则二次收敛 (apply_rules)
     ↓
-合并输出 (_merge_chunk_outputs)
+合并输出（formatting/merge.py）
     ↓
 最终文件 → output/
 ```
+
+同时：
+- Job 状态快照：`output/.state/jobs/{job_id}.json`（用于重启恢复）
+- 文件日志：`output/logs/novel-proofer.log`（滚动文件，便于排查问题）
 
 ---
 
@@ -299,6 +311,24 @@ max_chars = max(200, min(4_000, max_chars))  # 限制在 200-4000
 first_chunk_max_chars = min(4_000, max(max_chars, 2_000))  # 至少 2000，最多 4000
 ```
 
+### 4.4 文件流式分片（降低内存）
+
+函数：`iter_chunks_by_lines_with_first_chunk_max_from_file()`
+
+`chunk_by_lines_with_first_chunk_max()` 适合“已有字符串”的场景（例如 `formatting/fixer.py` 直接处理文本）。但 API 上传文件时，如果把整本小说一次性读入内存再分片，既浪费内存，也会让后续扩展（更大输入、更多并发）变得更脆弱。
+
+因此 `runner.py` 使用文件流式分片：按行读取输入缓存文件，保持与字符串版相同的“优先空行边界”的策略，同时避免加载全量文本。
+
+```python
+# 第一遍：先统计分片数，初始化 JobStore 的 chunk 列表
+total = sum(1 for _ in iter_chunks_by_lines_with_first_chunk_max_from_file(path, ...))
+GLOBAL_JOBS.init_chunks(job_id, total_chunks=total)
+
+# 第二遍：逐片处理（本地规则 → 写入 pre/ → LLM 并发处理 → 合并）
+for i, chunk in enumerate(iter_chunks_by_lines_with_first_chunk_max_from_file(path, ...)):
+    ...
+```
+
 ---
 
 ## 5. LLM 集成
@@ -494,6 +524,16 @@ class JobStore:
         self._jobs: dict[str, JobStatus] = {}
         self._cancelled: set[str] = set()
         self._paused: set[str] = set()
+        self._persist_dir: Path | None = None  # 可选持久化目录（output/.state/jobs）
+
+    def configure_persistence(self, *, persist_dir: Path) -> None:
+        self._persist_dir = persist_dir
+
+    def load_persisted_jobs(self) -> int:
+        # 读取 output/.state/jobs/*.json 并“自愈”状态，使其在重启后可继续：
+        # - queued/running -> paused（因为重启后没有 in-flight 任务）
+        # - processing/retrying -> pending（让 resume/retry 可以继续跑）
+        ...
 
     def update(self, job_id, **kwargs):
         with self._lock:
@@ -506,12 +546,19 @@ class JobStore:
             # paused 状态不被 running 覆盖
             if k == "state" and st.state == "paused" and v in {"queued", "running"}:
                 continue
+
+            snap = self._snapshot_job(st)
+
+        # 每次更新后持久化快照（best-effort）
+        self._persist_snapshot(snap)
 ```
 
 **设计要点**：
 - 所有状态更新通过 `update()` / `update_chunk()` 方法（受锁保护）
 - 使用 snapshot 模式返回数据（避免外部修改内部状态）
 - `is_cancelled()` / `is_paused()` 用于 worker 检查是否应该停止
+- 可选持久化：Job 快照写入 `output/.state/jobs/{job_id}.json`，用于重启恢复
+- 重启自愈：将无意义的“运行中”状态收敛为可继续的 `paused/pending`
 
 ---
 
@@ -522,13 +569,13 @@ class JobStore:
 ### 7.1 主流程
 
 ```python
-def run_job(job_id, input_text, fmt, llm):
-    # [1] 分片
-    chunks = chunk_by_lines_with_first_chunk_max(input_text, ...)
-    GLOBAL_JOBS.init_chunks(job_id, total_chunks=len(chunks))
+def run_job(job_id, input_path, fmt, llm):
+    # [1] 分片（文件流式）：先统计分片数，再初始化 chunk 列表
+    total = sum(1 for _ in iter_chunks_by_lines_with_first_chunk_max_from_file(input_path, ...))
+    GLOBAL_JOBS.init_chunks(job_id, total_chunks=total)
 
     # [2] 本地规则预处理
-    for i, c in enumerate(chunks):
+    for i, c in enumerate(iter_chunks_by_lines_with_first_chunk_max_from_file(input_path, ...)):
         fixed, stats = apply_rules(c, fmt)
         _atomic_write_text(work_dir / "pre" / f"{i:06d}.txt", fixed)
 
@@ -599,21 +646,13 @@ def _align_trailing_newlines(reference, text, *, max_newlines=3):
 
 ```python
 def _merge_chunk_outputs(work_dir, total_chunks, out_path):
-    prev_nonblank = False
-    for i in range(total_chunks):
-        chunk_text = read(work_dir / "out" / f"{i:06d}.txt")
-        lines = _iter_normalized_lines_for_merge(chunk_text)
+    def _iter_chunks():
+        for i in range(total_chunks):
+            chunk_text = read(work_dir / "out" / f"{i:06d}.txt")
+            yield (chunk_text, i == total_chunks - 1)
 
-        for line in lines:
-            if line == "":
-                write("\n")
-                prev_nonblank = False
-            else:
-                # 相邻非空行之间补空行（段落分隔）
-                if prev_nonblank:
-                    write("\n")
-                write(line + "\n")
-                prev_nonblank = True
+    # 合并逻辑抽到 formatting/merge.py，runner 与 fixer 复用同一套规则
+    merge_text_chunks_to_path(_iter_chunks(), out_path)
 ```
 
 **Why 需要补空行**：LLM 可能在分片边界处丢失段落分隔，合并时需要恢复。
@@ -635,6 +674,10 @@ def _merge_chunk_outputs(work_dir, total_chunks, out_path):
 | **逐步提交并发任务** | 支持取消/暂停，避免资源浪费 |
 | **Think 标签过滤容错** | 过度过滤时回退为保留内容 |
 | **合并时补空行** | 恢复分片边界处丢失的段落分隔 |
+| **后台任务使用受控线程池** | 避免阻塞 FastAPI 事件循环，且避免 job 级并发无限制增长 |
+| **输入缓存落盘 + 文件流式分片** | 内存占用更稳定；支持 rerun-all 无需重新上传 |
+| **Job 状态快照持久化** | 本地单机无需引入 DB，也能在重启后继续/重试 |
+| **文件日志滚动** | 替代 `print()`，便于定位 LLM/IO/状态问题 |
 
 ---
 
@@ -665,5 +708,4 @@ def _merge_chunk_outputs(work_dir, total_chunks, out_path):
 | `temperature` | 0.0 | 确定性输出 |
 | `timeout_seconds` | 180.0 | 单个请求超时 |
 | `max_concurrency` | 20 | 并发分片数 |
-| `think_tag_filtering` | Always | 过滤 think 标签（强制开启，不可关闭） |
-| `extra_params` | None | 额外的 OpenAI 参数 |
+| `extra_params` | None | 额外的 OpenAI 参数透传（例如 thinking config 等） |
