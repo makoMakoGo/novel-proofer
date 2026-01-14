@@ -1,8 +1,9 @@
-# 状态机：Job / Chunk 状态转移（含重试语义）
+# 状态机：Job / Phase / Chunk（含重试语义）
 
-本文描述 novel-proofer 的两层状态机：
+本文描述 novel-proofer 的三层状态模型：
 
-- **Job 状态**：一个任务整体的生命周期（`queued|running|paused|done|error|cancelled`）。
+- **Job 运行态（`job.state`）**：一个任务整体的生命周期（`queued|running|paused|done|error|cancelled`）。
+- **Job 阶段（`job.phase`）**：任务处于哪一段 workflow（`validate|process|merge|done`）。
 - **Chunk 状态**：任务内每个分片的生命周期（`pending|processing|retrying|done|error`）。
 
 > 设计原则：`retrying` **不是**“待重试队列”，而是**同一次分片处理内部**的“自动重试/退避等待”中间态；手动“重试失败分片”应当把分片重置为 `pending` 再重新调度。
@@ -47,14 +48,21 @@ stateDiagram-v2
 
 ## Job 状态机
 
-### 状态语义
+### Job 阶段语义（`job.phase`）
+
+- `validate`：校验/准备阶段：解码、切片、确定性规则预处理，生成可恢复中间态（`pre/` 等）。
+- `process`：处理阶段：对 chunk 发起 LLM 请求与校验，写入 `out/resp/`；失败支持自动重试与手动重试失败分片。
+- `merge`：合并阶段：所有 chunk 成功后，等待用户显式点击“合并输出”。
+- `done`：完成：已合并生成最终输出文件。
+
+### Job 运行态语义（`job.state`）
 
 - `queued`：已提交任务/准备开始（等待后台线程池调度）。
-- `running`：正在处理（worker 池在跑分片）。
-- `paused`：已暂停（等待 in-flight 完全落地后停住；可继续恢复）。
-- `error`：任务失败（存在 `chunk=error`，需要调整 LLM 配置后重试失败部分）。
-- `done`：任务完成（输出已合并生成）。
-- `cancelled`：任务已取消（尽快停止调度并落地可恢复状态）。
+- `running`：正在运行（校验/处理/合并任一阶段的后台任务正在执行）。
+- `paused`：已暂停/待用户操作：用于表示“可恢复且当前未运行”。
+- `error`：任务失败（通常是处理阶段存在 `chunk=error`；或合并阶段异常）。
+- `done`：任务完成（已合并生成输出）。
+- `cancelled`：仅用于“取消并清理（reset）”的硬取消信号，通常会很快被删除并从 jobs 列表消失；UI 不应把它当作可恢复状态。
 
 ### Mermaid（Job）
 
@@ -62,18 +70,22 @@ stateDiagram-v2
 stateDiagram-v2
   [*] --> queued: 创建/提交任务
 
-  queued --> running: worker 开始跑分片
-  running --> paused: /pause\n(等待 in-flight 完成后停住)
-  paused --> queued: /resume
+  queued --> running: 开始校验\n(phase=validate)
+  running --> paused: 校验完成\n(phase=process)
 
-  running --> done: 全部分片 done\n+ 输出合并完成
-  running --> error: 存在分片 error\n+ finalize 失败
+  paused --> running: 开始处理/继续\n(phase=process)
+  running --> paused: /pause\n(phase 不变)
+  running --> error: 处理失败\n(phase=process)
+  error --> queued: /retry-failed\n(失败分片 reset->pending)
 
-  error --> queued: /retry-failed\n(把失败分片重置为 pending)
+  running --> paused: 处理完成\n(phase=merge)
+  paused --> running: /merge\n(phase=merge)
+  running --> done: 合并完成\n(phase=done)
 
-  queued --> cancelled: /cancel
-  running --> cancelled: /cancel
-  paused --> cancelled: /cancel
+  queued --> cancelled: /reset
+  running --> cancelled: /reset
+  paused --> cancelled: /reset
+  error --> cancelled: /reset
 ```
 
 ### 关键字段（Job）
@@ -86,4 +98,4 @@ stateDiagram-v2
 
 - `retrying` 在**展示层**应视为 `processing` 的子状态：进度条与“处理中”统计/过滤可把 `processing + retrying` 合并为 “Active/处理中”。
 - 表格行内仍保留诊断能力：通过 `重试次数` 与 `信息(last_error_*)` 表达“正在重试/曾重试/最终错误”。
-
+- 主流程按钮推荐按 `job.phase` 呈现为：**开始校验 / 开始处理 / 合并输出**；并将“取消（可恢复）”与“取消并清理（reset）”区分。
