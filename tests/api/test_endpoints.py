@@ -103,7 +103,12 @@ def test_create_job_local_mode_writes_output_and_is_queryable(monkeypatch: pytes
             assert isinstance(output_filename, str) and output_filename
             out_path = out_dir / output_filename
             assert out_path.exists()
-            assert out_path.read_text(encoding="utf-8").strip() != ""
+            expected = out_path.read_text(encoding="utf-8")
+            assert expected.strip() != ""
+
+            dl = client.get(f"/api/v1/jobs/{job_id}/download")
+            assert dl.status_code == 200, dl.text
+            assert dl.text == expected
         finally:
             # Best-effort cleanup: delete job from store to avoid cross-test bleed.
             GLOBAL_JOBS.delete(str(job_id))

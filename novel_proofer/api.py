@@ -753,6 +753,32 @@ async def get_job(
     return payload
 
 
+@app.get("/api/v1/jobs/{job_id}/download")
+async def download_job_output(job_id: str):
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if st.state != "done":
+        raise HTTPException(status_code=409, detail="job is not done")
+    if not st.output_path:
+        raise HTTPException(status_code=404, detail="job output missing")
+
+    out_path = Path(st.output_path)
+    try:
+        resolved = out_path.resolve()
+        out_root = OUTPUT_DIR.resolve()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if resolved != out_root and out_root not in resolved.parents:
+        raise HTTPException(status_code=400, detail="invalid output path")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="output file not found")
+
+    filename = st.output_filename or resolved.name
+    return FileResponse(str(resolved), filename=filename, media_type="text/plain; charset=utf-8")
+
+
 @app.get("/api/v1/jobs", response_model=JobListResponse)
 async def list_jobs(
     *,
