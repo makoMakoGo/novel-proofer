@@ -8,7 +8,7 @@ import re
 import shutil
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +33,7 @@ from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import GLOBAL_JOBS, ChunkStatus, JobStatus
 from novel_proofer.llm.config import LLMConfig
 from novel_proofer.logging_setup import ensure_file_logging
-from novel_proofer.runner import resume_paused_job, retry_failed_chunks, run_job
+from novel_proofer.runner import merge_outputs, resume_paused_job, retry_failed_chunks, run_job
 
 logger = logging.getLogger(__name__)
 
@@ -332,6 +332,7 @@ class JobProgress(BaseModel):
 class JobOut(BaseModel):
     id: str
     state: str
+    phase: str
     created_at: float
     started_at: float | None
     finished_at: float | None
@@ -340,8 +341,10 @@ class JobOut(BaseModel):
     output_path: str | None
     debug_dir: str
     progress: JobProgress
+    format: FormatOptions
     last_error_code: int | None = None
     last_retry_count: int = 0
+    llm_model: str | None = None
     stats: dict[str, int] = Field(default_factory=dict)
     error: str | None = None
     cleanup_debug_dir: bool = True
@@ -353,6 +356,7 @@ class ChunkOut(BaseModel):
     started_at: float | None = None
     finished_at: float | None = None
     retries: int = 0
+    llm_model: str | None = None
     input_chars: int | None = None
     output_chars: int | None = None
     last_error_code: int | None = None
@@ -379,18 +383,39 @@ class RetryFailedRequest(BaseModel):
     llm: LLMOptions | None = None
 
 
+class MergeRequest(BaseModel):
+    cleanup_debug_dir: bool | None = None
+
+
+class JobSummaryOut(BaseModel):
+    id: str
+    state: str
+    phase: str
+    created_at: float
+    input_filename: str
+    output_filename: str
+    progress: JobProgress
+    last_error_code: int | None = None
+    llm_model: str | None = None
+
+
+class JobListResponse(BaseModel):
+    jobs: list[JobSummaryOut]
+
+
 def _job_to_out(st: JobStatus) -> JobOut:
     pct = 0
     if st.total_chunks > 0:
         pct = int((st.done_chunks / st.total_chunks) * 100)
 
     output_path = None
-    if st.output_path:
+    if st.state == "done" and st.output_path:
         output_path = _rel_output_path(Path(st.output_path))
 
     return JobOut(
         id=st.job_id,
         state=st.state,
+        phase=str(getattr(st, "phase", "validate")),
         created_at=st.created_at,
         started_at=st.started_at,
         finished_at=st.finished_at,
@@ -399,8 +424,21 @@ def _job_to_out(st: JobStatus) -> JobOut:
         output_path=output_path,
         debug_dir=_rel_debug_dir(st.job_id),
         progress=JobProgress(total_chunks=st.total_chunks, done_chunks=st.done_chunks, percent=pct),
+        format=FormatOptions(
+            max_chunk_chars=int(getattr(getattr(st, "format", None), "max_chunk_chars", 2000)),
+            paragraph_indent=bool(getattr(getattr(st, "format", None), "paragraph_indent", True)),
+            indent_with_fullwidth_space=bool(getattr(getattr(st, "format", None), "indent_with_fullwidth_space", True)),
+            normalize_blank_lines=bool(getattr(getattr(st, "format", None), "normalize_blank_lines", True)),
+            trim_trailing_spaces=bool(getattr(getattr(st, "format", None), "trim_trailing_spaces", True)),
+            normalize_ellipsis=bool(getattr(getattr(st, "format", None), "normalize_ellipsis", True)),
+            normalize_em_dash=bool(getattr(getattr(st, "format", None), "normalize_em_dash", True)),
+            normalize_cjk_punctuation=bool(getattr(getattr(st, "format", None), "normalize_cjk_punctuation", True)),
+            fix_cjk_punct_spacing=bool(getattr(getattr(st, "format", None), "fix_cjk_punct_spacing", True)),
+            normalize_quotes=bool(getattr(getattr(st, "format", None), "normalize_quotes", False)),
+        ),
         last_error_code=st.last_error_code,
         last_retry_count=st.last_retry_count,
+        llm_model=getattr(st, "last_llm_model", None),
         stats=dict(st.stats),
         error=st.error,
         cleanup_debug_dir=bool(getattr(st, "cleanup_debug_dir", True)),
@@ -414,6 +452,7 @@ def _chunk_to_out(cs: ChunkStatus) -> ChunkOut:
         started_at=cs.started_at,
         finished_at=cs.finished_at,
         retries=cs.retries,
+        llm_model=getattr(cs, "llm_model", None),
         input_chars=cs.input_chars,
         output_chars=cs.output_chars,
         last_error_code=cs.last_error_code,
@@ -603,6 +642,7 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
     fmt = _format_from_options(opts.format)
     llm = _llm_from_options(opts.llm)
 
+    GLOBAL_JOBS.update(job.job_id, phase="validate", format=fmt, last_llm_model=llm.model)
     submit_background_job(job.job_id, run_job, job.job_id, _input_cache_path(job.job_id), fmt, llm)
 
     st = GLOBAL_JOBS.get(job.job_id)
@@ -651,6 +691,7 @@ async def rerun_all(job_id: str, options: JobOptions = Body(...)):
     fmt = _format_from_options(options.format)
     llm = _llm_from_options(options.llm)
 
+    GLOBAL_JOBS.update(job.job_id, phase="validate", format=fmt, last_llm_model=llm.model)
     submit_background_job(job.job_id, run_job, job.job_id, _input_cache_path(job.job_id), fmt, llm)
 
     st = GLOBAL_JOBS.get(job.job_id)
@@ -676,7 +717,7 @@ async def get_job(
     if chunks != 1:
         return payload
 
-    allowed_filters = {"all", "pending", "processing", "retrying", "done", "error"}
+    allowed_filters = {"all", "pending", "processing", "retrying", "done", "error", "active"}
     chunk_state = str(chunk_state or "all").strip().lower()
     if chunk_state not in allowed_filters:
         chunk_state = "all"
@@ -688,7 +729,10 @@ async def get_job(
     for c in st.chunk_statuses:
         chunk_counts[c.state] = chunk_counts.get(c.state, 0) + 1
 
-        if chunk_state != "all" and c.state != chunk_state:
+        if chunk_state == "active":
+            if c.state not in {"processing", "retrying"}:
+                continue
+        elif chunk_state != "all" and c.state != chunk_state:
             continue
 
         if matched < offset:
@@ -709,12 +753,88 @@ async def get_job(
     return payload
 
 
+@app.get("/api/v1/jobs/{job_id}/download")
+async def download_job_output(job_id: str):
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if st.state != "done":
+        raise HTTPException(status_code=409, detail="job is not done")
+    if not st.output_path:
+        raise HTTPException(status_code=404, detail="job output missing")
+
+    out_path = Path(st.output_path)
+    try:
+        resolved = out_path.resolve()
+        out_root = OUTPUT_DIR.resolve()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if resolved != out_root and out_root not in resolved.parents:
+        raise HTTPException(status_code=400, detail="invalid output path")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="output file not found")
+
+    filename = st.output_filename or resolved.name
+    return FileResponse(str(resolved), filename=filename, media_type="text/plain; charset=utf-8")
+
+
+@app.get("/api/v1/jobs", response_model=JobListResponse)
+async def list_jobs(
+    *,
+    state: str = Query(""),
+    phase: str = Query(""),
+    limit: int = Query(50, ge=0, le=500),
+    offset: int = Query(0, ge=0),
+    include_cancelled: int = Query(0, ge=0, le=1),
+):
+    wanted_states = {s.strip().lower() for s in str(state or "").split(",") if s.strip()}
+    wanted_phases = {s.strip().lower() for s in str(phase or "").split(",") if s.strip()}
+
+    jobs = GLOBAL_JOBS.list()
+    out: list[JobSummaryOut] = []
+    for st in jobs:
+        if not include_cancelled and st.state == "cancelled":
+            continue
+        if wanted_states and st.state.lower() not in wanted_states:
+            continue
+        st_phase = str(getattr(st, "phase", "") or "").lower()
+        if wanted_phases and st_phase not in wanted_phases:
+            continue
+        out.append(
+            JobSummaryOut(
+                id=st.job_id,
+                state=st.state,
+                phase=st_phase or "validate",
+                created_at=st.created_at,
+                input_filename=st.input_filename,
+                output_filename=st.output_filename,
+                progress=JobProgress(
+                    total_chunks=int(st.total_chunks or 0),
+                    done_chunks=int(st.done_chunks or 0),
+                    percent=int((st.done_chunks / st.total_chunks) * 100) if st.total_chunks else 0,
+                ),
+                last_error_code=st.last_error_code,
+                llm_model=getattr(st, "last_llm_model", None),
+            )
+        )
+
+    if offset:
+        out = out[offset:]
+    if limit:
+        out = out[:limit]
+
+    return JobListResponse(jobs=out)
+
+
 @app.post("/api/v1/jobs/{job_id}/cancel", response_model=JobActionResponse)
 async def cancel_job(job_id: str):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    GLOBAL_JOBS.cancel(job_id)
+    # Recoverable cancel: pause the job (if in-flight) so UI can detach safely and later load/resume.
+    if st.state in {"queued", "running"} and not GLOBAL_JOBS.pause(job_id):
+        raise HTTPException(status_code=409, detail="failed to pause job")
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
 
@@ -740,18 +860,30 @@ async def resume_job(job_id: str, body: RetryFailedRequest = Body(default_factor
         raise HTTPException(status_code=409, detail="job is cancelled")
     if st.state != "paused":
         raise HTTPException(status_code=409, detail="job is not paused")
+    if getattr(st, "phase", "") == "merge":
+        raise HTTPException(status_code=409, detail="job is ready to merge")
+    if getattr(st, "phase", "") == "done":
+        raise HTTPException(status_code=409, detail="job is already done")
     if not GLOBAL_JOBS.resume(job_id):
         raise HTTPException(status_code=409, detail="failed to resume job")
 
     llm = _llm_from_options(body.llm or LLMOptions())
+    prev_llm_model = getattr(st, "last_llm_model", None)
+    GLOBAL_JOBS.update(job_id, last_llm_model=llm.model)
     try:
-        submit_background_job(job_id, resume_paused_job, job_id, llm)
+        if getattr(st, "phase", "") == "validate":
+            fmt = getattr(st, "format", FormatConfig())
+            submit_background_job(job_id, run_job, job_id, _input_cache_path(job_id), fmt, llm)
+        else:
+            submit_background_job(job_id, resume_paused_job, job_id, llm)
     except ValueError as e:
         # If the previous runner is still exiting, revert to paused and ask the client to retry later.
         GLOBAL_JOBS.pause(job_id)
+        GLOBAL_JOBS.update(job_id, last_llm_model=prev_llm_model)
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         GLOBAL_JOBS.pause(job_id)
+        GLOBAL_JOBS.update(job_id, last_llm_model=prev_llm_model)
         raise HTTPException(status_code=500, detail=str(e)) from e
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
@@ -761,19 +893,114 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
+    if GLOBAL_JOBS.is_cancelled(job_id):
+        raise HTTPException(status_code=409, detail="job is cancelled")
     if st.state == "running":
         raise HTTPException(status_code=409, detail="job is running")
     if st.state == "cancelled":
         raise HTTPException(status_code=409, detail="job is cancelled")
+    if st.state != "error":
+        raise HTTPException(status_code=409, detail=f"job is not in error state (state={st.state})")
+
+    failed = [c.index for c in st.chunk_statuses if c.state == "error"]
+    if not failed:
+        raise HTTPException(status_code=409, detail="no failed chunks to retry")
 
     llm = _llm_from_options(body.llm or LLMOptions())
+    prev_llm_model = getattr(st, "last_llm_model", None)
+
+    # Important: flip the visible job/chunk states before starting the worker thread, otherwise
+    # clients may poll and immediately "bounce" back to the error UI state.
+    GLOBAL_JOBS.update(job_id, state="queued", phase="process", finished_at=None, error=None, last_llm_model=llm.model)
+    for i in failed:
+        GLOBAL_JOBS.update_chunk(
+            job_id,
+            i,
+            state="pending",
+            started_at=None,
+            finished_at=None,
+        )
+
     try:
         submit_background_job(job_id, retry_failed_chunks, job_id, llm)
     except ValueError as e:
+        # If the previous runner is still exiting, revert to the error state and ask the client to retry later.
+        GLOBAL_JOBS.update(
+            job_id, state="error", finished_at=st.finished_at, error=st.error, last_llm_model=prev_llm_model
+        )
+        for i in failed:
+            GLOBAL_JOBS.update_chunk(job_id, i, state="error")
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
+        GLOBAL_JOBS.update(
+            job_id, state="error", finished_at=st.finished_at, error=st.error, last_llm_model=prev_llm_model
+        )
+        for i in failed:
+            GLOBAL_JOBS.update_chunk(job_id, i, state="error")
         raise HTTPException(status_code=500, detail=str(e)) from e
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
+
+
+@app.post("/api/v1/jobs/{job_id}/merge", response_model=JobActionResponse)
+async def merge_job(job_id: str, body: MergeRequest = Body(default_factory=MergeRequest)):
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    if GLOBAL_JOBS.is_cancelled(job_id) or st.state == "cancelled":
+        raise HTTPException(status_code=409, detail="job is cancelled")
+    if st.state == "running":
+        raise HTTPException(status_code=409, detail="job is running")
+    if st.state != "paused":
+        raise HTTPException(status_code=409, detail=f"job is not paused (state={st.state})")
+    if getattr(st, "phase", "") != "merge":
+        raise HTTPException(status_code=409, detail=f"job is not ready to merge (phase={getattr(st, 'phase', None)})")
+    if not st.chunk_statuses or any(c.state != "done" for c in st.chunk_statuses):
+        raise HTTPException(status_code=409, detail="job is not ready to merge (chunks incomplete)")
+
+    if not GLOBAL_JOBS.resume(job_id):
+        raise HTTPException(status_code=409, detail="failed to start merge")
+
+    try:
+        submit_background_job(job_id, merge_outputs, job_id, cleanup_debug_dir=body.cleanup_debug_dir)
+    except ValueError as e:
+        GLOBAL_JOBS.pause(job_id)
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        GLOBAL_JOBS.pause(job_id)
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
+
+
+@app.post("/api/v1/jobs/{job_id}/reset", response_model=JobActionResponse)
+async def reset_job(job_id: str):
+    st = GLOBAL_JOBS.get(job_id)
+    if st is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    # Signal cancellation first so any in-flight LLM calls stop launching new work.
+    GLOBAL_JOBS.cancel(job_id)
+
+    def _cleanup_and_delete() -> None:
+        try:
+            _cleanup_job_dir(job_id)
+            _cleanup_input_cache(job_id)
+            _cleanup_job_state(job_id)
+        except Exception:
+            logger.exception("reset cleanup failed: job_id=%s", job_id)
+        with suppress(Exception):
+            GLOBAL_JOBS.delete(job_id)
+
+    try:
+        from novel_proofer.background import add_done_callback as add_done_callback  # local import to avoid cycles
+
+        add_done_callback(job_id, _cleanup_and_delete)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    return JobActionResponse(ok=True, job=None)
 
 
 @app.post("/api/v1/jobs/{job_id}/cleanup-debug", response_model=JobActionResponse)

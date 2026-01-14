@@ -55,11 +55,24 @@ def test_run_job_local_mode_cleans_up_by_default(monkeypatch: pytest.MonkeyPatch
                 LLMConfig(base_url="http://example.com", model="m", max_concurrency=1),
             )
 
-            st = GLOBAL_JOBS.get(job_id)
-            assert st is not None
-            assert st.state == "done"
+            st1 = GLOBAL_JOBS.get(job_id)
+            assert st1 is not None
+            assert st1.state == "paused"
+            assert getattr(st1, "phase", None) == "process"
+
+            runner.resume_paused_job(job_id, LLMConfig(base_url="http://example.com", model="m", max_concurrency=1))
+            st2 = GLOBAL_JOBS.get(job_id)
+            assert st2 is not None
+            assert st2.state == "paused"
+            assert getattr(st2, "phase", None) == "merge"
+
+            runner.merge_outputs(job_id)
+            st3 = GLOBAL_JOBS.get(job_id)
+            assert st3 is not None
+            assert st3.state == "done"
+            assert getattr(st3, "phase", None) == "done"
             assert out_path.exists()
-            # cleanup_debug_dir defaults to True
+            # cleanup_debug_dir defaults to True (cleanup happens at merge).
             assert not work_dir.exists()
         finally:
             GLOBAL_JOBS.delete(job_id)
@@ -95,14 +108,28 @@ def test_run_job_local_mode_keeps_debug_dir_when_opted_out(monkeypatch: pytest.M
                 LLMConfig(base_url="http://example.com", model="m", max_concurrency=1),
             )
 
-            st = GLOBAL_JOBS.get(job_id)
-            assert st is not None
-            assert st.state == "done"
+            st1 = GLOBAL_JOBS.get(job_id)
+            assert st1 is not None
+            assert st1.state == "paused"
+            assert getattr(st1, "phase", None) == "process"
+
+            runner.resume_paused_job(job_id, LLMConfig(base_url="http://example.com", model="m", max_concurrency=1))
+            st2 = GLOBAL_JOBS.get(job_id)
+            assert st2 is not None
+            assert st2.state == "paused"
+            assert getattr(st2, "phase", None) == "merge"
+
+            runner.merge_outputs(job_id)
+            st3 = GLOBAL_JOBS.get(job_id)
+            assert st3 is not None
+            assert st3.state == "done"
+            assert getattr(st3, "phase", None) == "done"
             assert out_path.exists()
             assert work_dir.exists()
             assert (work_dir / "README.txt").exists()
             assert (work_dir / "pre").exists()
             assert (work_dir / "out").exists()
+            assert (work_dir / "resp").exists()
             assert not (work_dir / "req").exists()
             assert not (work_dir / "error").exists()
         finally:

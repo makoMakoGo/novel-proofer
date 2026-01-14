@@ -10,10 +10,14 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from novel_proofer.formatting.config import FormatConfig
+
 logger = logging.getLogger(__name__)
 
-_JOB_STATE_VERSION = 1
+_JOB_STATE_VERSION = 2
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
+
+_JOB_PHASES = {"validate", "process", "merge", "done"}
 
 
 @dataclass
@@ -26,6 +30,7 @@ class ChunkStatus:
     retries: int = 0
     last_error_code: int | None = None
     last_error_message: str | None = None
+    llm_model: str | None = None
 
     # Diagnostics (optional)
     input_chars: int | None = None
@@ -37,6 +42,8 @@ class JobStatus:
     job_id: str
     # queued|running|paused|done|error|cancelled
     state: str
+    # validate|process|merge|done
+    phase: str
     created_at: float
     started_at: float | None
     finished_at: float | None
@@ -46,9 +53,13 @@ class JobStatus:
     total_chunks: int
     done_chunks: int
 
+    # Options snapshot (used for resume/recovery and UI locks)
+    format: FormatConfig = field(default_factory=FormatConfig)
+
     # Diagnostics
     last_error_code: int | None = None
     last_retry_count: int = 0
+    last_llm_model: str | None = None
 
     stats: dict[str, int] = field(default_factory=dict)
     chunk_statuses: list[ChunkStatus] = field(default_factory=list)
@@ -68,12 +79,16 @@ def _chunk_to_dict(cs: ChunkStatus) -> dict:
         "retries": int(cs.retries),
         "last_error_code": cs.last_error_code,
         "last_error_message": cs.last_error_message,
+        "llm_model": cs.llm_model,
         "input_chars": cs.input_chars,
         "output_chars": cs.output_chars,
     }
 
 
 def _chunk_from_dict(d: dict) -> ChunkStatus:
+    llm_model = d.get("llm_model")
+    if llm_model is not None:
+        llm_model = str(llm_model).strip() or None
     return ChunkStatus(
         index=int(d.get("index", 0)),
         state=str(d.get("state", "pending")),
@@ -82,6 +97,7 @@ def _chunk_from_dict(d: dict) -> ChunkStatus:
         retries=int(d.get("retries", 0) or 0),
         last_error_code=d.get("last_error_code"),
         last_error_message=d.get("last_error_message"),
+        llm_model=llm_model,
         input_chars=d.get("input_chars"),
         output_chars=d.get("output_chars"),
     )
@@ -93,6 +109,7 @@ def _job_to_dict(st: JobStatus) -> dict:
         "job": {
             "job_id": str(st.job_id),
             "state": str(st.state),
+            "phase": str(st.phase),
             "created_at": float(st.created_at),
             "started_at": st.started_at,
             "finished_at": st.finished_at,
@@ -101,8 +118,21 @@ def _job_to_dict(st: JobStatus) -> dict:
             "output_path": st.output_path,
             "total_chunks": int(st.total_chunks),
             "done_chunks": int(st.done_chunks),
+            "format": {
+                "max_chunk_chars": int(st.format.max_chunk_chars),
+                "paragraph_indent": bool(st.format.paragraph_indent),
+                "indent_with_fullwidth_space": bool(st.format.indent_with_fullwidth_space),
+                "normalize_blank_lines": bool(st.format.normalize_blank_lines),
+                "trim_trailing_spaces": bool(st.format.trim_trailing_spaces),
+                "normalize_ellipsis": bool(st.format.normalize_ellipsis),
+                "normalize_em_dash": bool(st.format.normalize_em_dash),
+                "normalize_cjk_punctuation": bool(st.format.normalize_cjk_punctuation),
+                "fix_cjk_punct_spacing": bool(st.format.fix_cjk_punct_spacing),
+                "normalize_quotes": bool(st.format.normalize_quotes),
+            },
             "last_error_code": st.last_error_code,
             "last_retry_count": int(st.last_retry_count),
+            "last_llm_model": st.last_llm_model,
             "stats": dict(st.stats),
             "error": st.error,
             "work_dir": st.work_dir,
@@ -118,7 +148,7 @@ def _job_from_dict(d: dict) -> JobStatus:
         version = int(version_raw)
     except Exception:
         version = None
-    if version is not None and version != _JOB_STATE_VERSION:
+    if version is not None and version not in {1, _JOB_STATE_VERSION}:
         logger.warning("job state version mismatch: expected %d, got %s", _JOB_STATE_VERSION, version_raw)
 
     job = d.get("job") if isinstance(d, dict) else None
@@ -136,9 +166,40 @@ def _job_from_dict(d: dict) -> JobStatus:
     if not isinstance(stats, dict):
         stats = {}
 
+    last_llm_model = job.get("last_llm_model")
+    if last_llm_model is not None:
+        last_llm_model = str(last_llm_model).strip() or None
+
+    phase = job.get("phase")
+    phase = str(phase).strip().lower() if phase is not None else ""
+    if phase not in _JOB_PHASES:
+        phase = ""
+
+    fmt_obj: FormatConfig
+    fmt_raw = job.get("format")
+    if isinstance(fmt_raw, dict):
+        try:
+            fmt_obj = FormatConfig(
+                max_chunk_chars=int(fmt_raw.get("max_chunk_chars", 2000) or 2000),
+                paragraph_indent=bool(fmt_raw.get("paragraph_indent", True)),
+                indent_with_fullwidth_space=bool(fmt_raw.get("indent_with_fullwidth_space", True)),
+                normalize_blank_lines=bool(fmt_raw.get("normalize_blank_lines", True)),
+                trim_trailing_spaces=bool(fmt_raw.get("trim_trailing_spaces", True)),
+                normalize_ellipsis=bool(fmt_raw.get("normalize_ellipsis", True)),
+                normalize_em_dash=bool(fmt_raw.get("normalize_em_dash", True)),
+                normalize_cjk_punctuation=bool(fmt_raw.get("normalize_cjk_punctuation", True)),
+                fix_cjk_punct_spacing=bool(fmt_raw.get("fix_cjk_punct_spacing", True)),
+                normalize_quotes=bool(fmt_raw.get("normalize_quotes", False)),
+            )
+        except Exception:
+            fmt_obj = FormatConfig()
+    else:
+        fmt_obj = FormatConfig()
+
     return JobStatus(
         job_id=str(job.get("job_id", "")),
         state=str(job.get("state", "queued")),
+        phase=phase or "validate",
         created_at=float(job.get("created_at", time.time())),
         started_at=job.get("started_at"),
         finished_at=job.get("finished_at"),
@@ -146,8 +207,10 @@ def _job_from_dict(d: dict) -> JobStatus:
         output_filename=str(job.get("output_filename", "")),
         total_chunks=int(job.get("total_chunks", len(chunks)) or 0),
         done_chunks=int(job.get("done_chunks", 0) or 0),
+        format=fmt_obj,
         last_error_code=job.get("last_error_code"),
         last_retry_count=int(job.get("last_retry_count", 0) or 0),
+        last_llm_model=last_llm_model,
         stats=dict(stats),
         chunk_statuses=chunks,
         error=job.get("error"),
@@ -160,6 +223,7 @@ def _job_from_dict(d: dict) -> JobStatus:
 class JobStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._persist_lock = threading.Lock()
         self._jobs: dict[str, JobStatus] = {}
         self._cancelled: set[str] = set()
         self._paused: set[str] = set()
@@ -182,8 +246,16 @@ class JobStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
         try:
-            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp.replace(path)
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            for attempt in range(10):
+                try:
+                    tmp.replace(path)
+                    break
+                except PermissionError:
+                    if attempt >= 9:
+                        raise
+                    # Windows can transiently lock files (e.g., AV scanners / concurrent readers).
+                    time.sleep(0.02 * (attempt + 1))
         finally:
             with suppress(Exception):
                 tmp.unlink(missing_ok=True)
@@ -193,7 +265,8 @@ class JobStore:
         if path is None:
             return
         try:
-            self._atomic_write_json(path, _job_to_dict(snapshot))
+            with self._persist_lock:
+                self._atomic_write_json(path, _job_to_dict(snapshot))
         except Exception:
             logger.exception("failed to persist job state: job_id=%s", snapshot.job_id)
 
@@ -213,6 +286,34 @@ class JobStore:
         # Keep counters consistent even if older files were incomplete.
         st.total_chunks = max(int(st.total_chunks), len(st.chunk_statuses))
         st.done_chunks = sum(1 for c in st.chunk_statuses if c.state == "done")
+
+        # Phase migration / normalization (v1 files don't have phase).
+        if st.phase not in _JOB_PHASES:
+            st.phase = "validate"
+
+        # Derive phase when missing or clearly stale.
+        if not st.chunk_statuses:
+            # Not validated yet (or legacy file missing chunk info).
+            if st.state == "done":
+                st.phase = "done"
+            else:
+                st.phase = "validate"
+        else:
+            if st.state == "done":
+                st.phase = "done"
+            else:
+                # If everything is done but final output might not exist, allow explicit merge.
+                all_done = all(c.state == "done" for c in st.chunk_statuses)
+                if all_done:
+                    st.phase = "merge"
+                else:
+                    st.phase = "process"
+
+        # Ensure phase/state compatibility.
+        if st.phase == "done" and st.state != "done":
+            st.phase = "merge" if st.chunk_statuses and all(c.state == "done" for c in st.chunk_statuses) else "process"
+        if st.state == "done":
+            st.phase = "done"
         return st
 
     def load_persisted_jobs(self) -> int:
@@ -220,24 +321,35 @@ class JobStore:
         if persist_dir is None or not persist_dir.exists():
             return 0
 
-        loaded: list[JobStatus] = []
+        loaded: list[tuple[JobStatus, bool]] = []
         for p in persist_dir.glob("*.json"):
             try:
                 obj = json.loads(p.read_text(encoding="utf-8"))
+                src_version = obj.get("version")
+                needs_rewrite = True
+                try:
+                    needs_rewrite = int(src_version) != _JOB_STATE_VERSION
+                except Exception:
+                    needs_rewrite = True
                 st = self._heal_loaded_job(_job_from_dict(obj))
                 if not st.job_id:
                     continue
-                loaded.append(st)
+                loaded.append((st, needs_rewrite))
             except Exception:
                 logger.exception("failed to load persisted job: %s", p)
 
         with self._lock:
-            for st in loaded:
+            for st, _needs_rewrite in loaded:
                 self._jobs[st.job_id] = st
                 if st.state == "cancelled":
                     self._cancelled.add(st.job_id)
                 if st.state == "paused":
                     self._paused.add(st.job_id)
+
+        # Rewrite snapshots in latest schema (best-effort) to complete migration.
+        for st, needs_rewrite in loaded:
+            if needs_rewrite:
+                self._persist_snapshot(self._snapshot_job(st))
 
         return len(loaded)
 
@@ -250,6 +362,7 @@ class JobStore:
             retries=cs.retries,
             last_error_code=cs.last_error_code,
             last_error_message=cs.last_error_message,
+            llm_model=cs.llm_model,
             input_chars=cs.input_chars,
             output_chars=cs.output_chars,
         )
@@ -258,6 +371,7 @@ class JobStore:
         return JobStatus(
             job_id=st.job_id,
             state=st.state,
+            phase=st.phase,
             created_at=st.created_at,
             started_at=st.started_at,
             finished_at=st.finished_at,
@@ -266,8 +380,10 @@ class JobStore:
             output_path=st.output_path,
             total_chunks=st.total_chunks,
             done_chunks=st.done_chunks,
+            format=st.format,
             last_error_code=st.last_error_code,
             last_retry_count=st.last_retry_count,
+            last_llm_model=st.last_llm_model,
             stats=dict(st.stats),
             chunk_statuses=[self._snapshot_chunk(c) for c in st.chunk_statuses],
             error=st.error,
@@ -280,6 +396,7 @@ class JobStore:
         status = JobStatus(
             job_id=job_id,
             state="queued",
+            phase="validate",
             created_at=time.time(),
             started_at=None,
             finished_at=None,
@@ -301,6 +418,12 @@ class JobStore:
                 return None
             return self._snapshot_job(st)
 
+    def list(self) -> list[JobStatus]:
+        with self._lock:
+            items = list(self._jobs.values())
+        items.sort(key=lambda s: s.created_at, reverse=True)
+        return [self._snapshot_job(s) for s in items]
+
     def update(self, job_id: str, **kwargs) -> None:
         snap: JobStatus | None = None
         with self._lock:
@@ -321,7 +444,7 @@ class JobStore:
         if snap is not None:
             self._persist_snapshot(snap)
 
-    def init_chunks(self, job_id: str, total_chunks: int) -> None:
+    def init_chunks(self, job_id: str, total_chunks: int, *, llm_model: str | None = None) -> None:
         snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
@@ -329,7 +452,9 @@ class JobStore:
                 return
             st.total_chunks = total_chunks
             st.done_chunks = 0
-            st.chunk_statuses = [ChunkStatus(index=i, state="pending") for i in range(total_chunks)]
+            st.chunk_statuses = [
+                ChunkStatus(index=i, state="pending", llm_model=llm_model) for i in range(total_chunks)
+            ]
             snap = self._snapshot_job(st)
         if snap is not None:
             self._persist_snapshot(snap)
@@ -346,14 +471,19 @@ class JobStore:
                 return
             cs = st.chunk_statuses[index]
             prev_state = cs.state
+            should_persist = False
             for k, v in kwargs.items():
                 setattr(cs, k, v)
             if "state" in kwargs and cs.state != prev_state:
+                should_persist = True
                 if prev_state == "done" and st.done_chunks > 0:
                     st.done_chunks -= 1
                 if cs.state == "done":
                     st.done_chunks += 1
-            snap = self._snapshot_job(st)
+            if any(k in kwargs for k in ("retries", "last_error_code", "last_error_message")):
+                should_persist = True
+            if should_persist:
+                snap = self._snapshot_job(st)
         if snap is not None:
             self._persist_snapshot(snap)
 
@@ -378,15 +508,12 @@ class JobStore:
             self._persist_snapshot(snap)
 
     def add_stat(self, job_id: str, key: str, inc: int = 1) -> None:
-        snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
                 return
             st.stats[key] = st.stats.get(key, 0) + inc
-            snap = self._snapshot_job(st)
-        if snap is not None:
-            self._persist_snapshot(snap)
+        # Stats are best-effort diagnostics; avoid persisting on every increment for performance.
 
     def cancel(self, job_id: str) -> bool:
         snap: JobStatus | None = None

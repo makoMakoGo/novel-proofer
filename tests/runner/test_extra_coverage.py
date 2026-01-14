@@ -209,6 +209,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
     fmt = runner.FormatConfig(max_chunk_chars=2000)
     llm = LLMConfig(base_url="http://example.com", model="m")
     orig_run_llm_for_indices = runner._run_llm_for_indices
+    orig_apply_rules = runner.apply_rules
 
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)
@@ -256,15 +257,18 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
         finally:
             GLOBAL_JOBS.delete(job2_id)
 
-        # LLM enabled: outcome paused/cancelled.
+        # Processing stage: outcome paused/cancelled.
+        monkeypatch.setattr(runner, "apply_rules", orig_apply_rules)
+
         job3_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0).job_id
         try:
             work_dir = base / "w3"
             out_path = base / "o3.txt"
             input_path = _write_input(base / "i3.txt", "x\n")
             GLOBAL_JOBS.update(job3_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
-            monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "paused")
             runner.run_job(job3_id, input_path, fmt, llm)
+            monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "paused")
+            runner.resume_paused_job(job3_id, llm)
             st = GLOBAL_JOBS.get(job3_id)
             assert st is not None and st.state == "paused"
         finally:
@@ -276,8 +280,9 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
             out_path = base / "o4.txt"
             input_path = _write_input(base / "i4.txt", "x\n")
             GLOBAL_JOBS.update(job4_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
-            monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "cancelled")
             runner.run_job(job4_id, input_path, fmt, llm)
+            monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "cancelled")
+            runner.resume_paused_job(job4_id, llm)
             st = GLOBAL_JOBS.get(job4_id)
             assert st is not None and st.state == "cancelled"
         finally:
@@ -317,6 +322,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
 
             monkeypatch.setattr(runner, "_atomic_write_text", atomic_and_cancel)
             runner.run_job(job5_id, input_path, fmt, llm)
+            runner.resume_paused_job(job5_id, llm)
             st = GLOBAL_JOBS.get(job5_id)
             assert st is not None and st.state == "cancelled"
         finally:
@@ -374,7 +380,7 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
         finally:
             GLOBAL_JOBS.delete(job2_id)
 
-        # No failed chunks and output exists -> done.
+        # No failed chunks -> finalize to merge-ready.
         job3_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1).job_id
         try:
             out_path = base / "o2.txt"
@@ -384,7 +390,8 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             GLOBAL_JOBS.update_chunk(job3_id, 0, state="done")
             runner.retry_failed_chunks(job3_id, llm)
             st = GLOBAL_JOBS.get(job3_id)
-            assert st is not None and st.state == "done"
+            assert st is not None and st.state == "paused"
+            assert getattr(st, "phase", None) == "merge"
         finally:
             GLOBAL_JOBS.delete(job3_id)
 
@@ -400,6 +407,7 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             runner.retry_failed_chunks(job4_id, llm)
             st = GLOBAL_JOBS.get(job4_id)
             assert st is not None and st.state == "paused"
+            assert getattr(st, "phase", None) == "process"
         finally:
             GLOBAL_JOBS.delete(job4_id)
 
@@ -430,6 +438,7 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             GLOBAL_JOBS.update_chunk(job6_id, 0, state="done")
             runner.resume_paused_job(job6_id, llm)
             st = GLOBAL_JOBS.get(job6_id)
-            assert st is not None and st.state == "done"
+            assert st is not None and st.state == "paused"
+            assert getattr(st, "phase", None) == "merge"
         finally:
             GLOBAL_JOBS.delete(job6_id)
