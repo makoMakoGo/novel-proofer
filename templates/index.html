@@ -263,7 +263,7 @@
           <div id="tab-debug" class="tab-content hidden">
             
             <!-- Stats -->
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-100" id="statsBar">
+            <div class="grid grid-cols-2 sm:grid-cols-6 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-100" id="statsBar">
               <div class="text-center">
                 <div class="text-xs text-slate-400 mb-1">Total</div>
                 <div class="font-mono font-bold text-lg text-slate-700" id="statTotal">0</div>
@@ -273,12 +273,20 @@
                 <div class="font-mono font-bold text-lg text-green-600" id="statDone">0</div>
               </div>
               <div class="text-center">
-                <div class="text-xs text-slate-400 mb-1">Error</div>
-                <div class="font-mono font-bold text-lg text-red-500" id="statError">0</div>
+                <div class="text-xs text-slate-400 mb-1">Processing</div>
+                <div class="font-mono font-bold text-lg text-blue-600" id="statProcessing">0</div>
+              </div>
+              <div class="text-center">
+                <div class="text-xs text-slate-400 mb-1">Pending</div>
+                <div class="font-mono font-bold text-lg text-slate-500" id="statPending">0</div>
               </div>
               <div class="text-center">
                 <div class="text-xs text-slate-400 mb-1">Retry</div>
                 <div class="font-mono font-bold text-lg text-amber-500" id="statRetrying">0</div>
+              </div>
+              <div class="text-center">
+                <div class="text-xs text-slate-400 mb-1">Error</div>
+                <div class="font-mono font-bold text-lg text-red-500" id="statError">0</div>
               </div>
             </div>
 
@@ -286,8 +294,10 @@
             <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
                <button type="button" class="filter-btn active px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="all">全部</button>
                <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="error">错误</button>
+               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="retrying">重试中</button>
                <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="processing">处理中</button>
                <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="pending">待处理</button>
+               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="done">完成</button>
             </div>
 
             <!-- Table -->
@@ -360,6 +370,8 @@
     const chunksTableWrap = document.getElementById('chunksTableWrap');
     const statTotal = document.getElementById('statTotal');
     const statDone = document.getElementById('statDone');
+    const statProcessing = document.getElementById('statProcessing');
+    const statPending = document.getElementById('statPending');
     const statError = document.getElementById('statError');
     const statRetrying = document.getElementById('statRetrying');
 
@@ -666,8 +678,10 @@
       const counts = chunkCounts || {};
       statTotal.textContent = String(totalChunksFromServer || 0);
       statDone.textContent = String(counts.done || 0);
-      statError.textContent = String(counts.error || 0);
+      statProcessing.textContent = String(counts.processing || 0);
+      statPending.textContent = String(counts.pending || 0);
       statRetrying.textContent = String(counts.retrying || 0);
+      statError.textContent = String(counts.error || 0);
     }
 
     function showChunks(data) {
@@ -764,8 +778,9 @@
     }
 
     function setPaused(paused) {
-      btnStart.disabled = false;
-      btnStart.classList.remove('opacity-50', 'cursor-not-allowed');
+      btnStart.disabled = paused;
+      btnStart.classList.toggle('opacity-50', paused);
+      btnStart.classList.toggle('cursor-not-allowed', paused);
 
       const toggleBtn = (btn, show) => {
           if (show) {
@@ -1164,20 +1179,23 @@
       setCleanupVisible(false);
 
       const opts = buildJobOptions(fd, extra.value);
-      const requestFd = new FormData();
-      requestFd.append('file', file);
-      requestFd.append('options', JSON.stringify(opts));
-
-      const res = await fetch('api/v1/jobs', { method: 'POST', body: requestFd });
-      const data = await res.json();
-      if (!res.ok) {
-        show(data);
+      const r = await requestRerunAll(jobId, opts);
+      if (!r.ok) {
+        show(r.error);
         setBusy(false);
+        setRetryVisible(true);
+        setRerunAllVisible(true);
+        setCleanupVisible(true);
         return;
       }
 
-      currentJobId = data?.job?.id;
+      currentJobId = r?.data?.job?.id;
       currentJobState = 'queued';
+      chunksData = [];
+      chunkCounts = null;
+      totalChunksFromServer = 0;
+      updateStats();
+      renderChunksTable();
       await poll(currentJobId);
     });
 

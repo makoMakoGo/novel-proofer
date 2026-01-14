@@ -494,11 +494,12 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
             GLOBAL_JOBS.update(job_id, state="done", finished_at=time.time(), done_chunks=total)
         return
 
+    GLOBAL_JOBS.update(job_id, state="queued", finished_at=None, error=None)
     for i in failed:
         GLOBAL_JOBS.update_chunk(
             job_id,
             i,
-            state="pending",
+            state="retrying",
             started_at=None,
             finished_at=None,
             last_error_code=None,

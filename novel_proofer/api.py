@@ -761,10 +761,30 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
+    if GLOBAL_JOBS.is_cancelled(job_id):
+        raise HTTPException(status_code=409, detail="job is cancelled")
     if st.state == "running":
         raise HTTPException(status_code=409, detail="job is running")
     if st.state == "cancelled":
         raise HTTPException(status_code=409, detail="job is cancelled")
+    if st.state != "error":
+        raise HTTPException(status_code=409, detail=f"job is not in error state (state={st.state})")
+
+    failed = [c.index for c in st.chunk_statuses if c.state == "error"]
+    if not failed:
+        raise HTTPException(status_code=409, detail="no failed chunks to retry")
+
+    # Important: flip the visible job/chunk states before starting the worker thread, otherwise
+    # clients may poll and immediately "bounce" back to the error UI state.
+    GLOBAL_JOBS.update(job_id, state="queued", finished_at=None, error=None)
+    for i in failed:
+        GLOBAL_JOBS.update_chunk(
+            job_id,
+            i,
+            state="retrying",
+            started_at=None,
+            finished_at=None,
+        )
 
     llm = _llm_from_options(body.llm or LLMOptions())
     try:

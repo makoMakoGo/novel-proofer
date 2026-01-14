@@ -222,6 +222,9 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
     monkeypatch.setattr(api, "retry_failed_chunks", lambda *_a, **_k: None)
     job3 = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
     try:
+        GLOBAL_JOBS.init_chunks(job3.job_id, total_chunks=2)
+        GLOBAL_JOBS.update_chunk(job3.job_id, 0, state="done")
+        GLOBAL_JOBS.update_chunk(job3.job_id, 1, state="error")
         GLOBAL_JOBS.update(job3.job_id, state="error")
         r = client.post(
             f"/api/v1/jobs/{job3.job_id}/retry-failed",
@@ -229,6 +232,9 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         )
         assert r.status_code == 200
         assert r.json().get("ok") is True
+        st3 = GLOBAL_JOBS.get(job3.job_id)
+        assert st3 is not None and st3.state == "queued"
+        assert any(c.state == "retrying" for c in st3.chunk_statuses)
     finally:
         GLOBAL_JOBS.delete(job3.job_id)
 
