@@ -101,24 +101,8 @@ flowchart TD
 - 📖 [Complete Usage Guide](docs/USAGE.md) - 安装配置、规则说明、异常处理、调试方法
 - 🔧 [Detailed Architecture Doc](docs/ARCHITECTURE.md) - 系统设计原理（Why + How）
 - ⚔️ [Full Testcase Instructions](docs/TESTCASES.md) 
+- 🧑‍💻 [Development Guide](docs/DEVELOP.md) - 协作开发约定（分支/提交/测试/Hook）
 
-## Development
-
-### Git hooks (recommended)
-
-This repo includes optional Git hooks + a commit template to enforce Conventional Commits.
-
-Run once after clone:
-
-```bash
-.\tools\setup-git.ps1
-```
-
-Or on macOS/Linux:
-
-```bash
-bash tools/setup-git.sh
-```
 
 ## Known Issues
 
