@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 _JOB_STATE_VERSION = 1
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
 
 @dataclass
@@ -110,6 +113,14 @@ def _job_to_dict(st: JobStatus) -> dict:
 
 
 def _job_from_dict(d: dict) -> JobStatus:
+    version_raw = d.get("version", _JOB_STATE_VERSION) if isinstance(d, dict) else _JOB_STATE_VERSION
+    try:
+        version = int(version_raw)
+    except Exception:
+        version = None
+    if version is not None and version != _JOB_STATE_VERSION:
+        logger.warning("job state version mismatch: expected %d, got %s", _JOB_STATE_VERSION, version_raw)
+
     job = d.get("job") if isinstance(d, dict) else None
     if not isinstance(job, dict):
         raise ValueError("invalid job state file: missing job object")
@@ -163,15 +174,19 @@ class JobStore:
         if not self._persist_dir:
             return None
         job_id = (job_id or "").strip()
-        if not job_id:
+        if not job_id or not _JOB_ID_RE.fullmatch(job_id):
             return None
         return self._persist_dir / f"{job_id}.json"
 
     def _atomic_write_json(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        try:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(path)
+        finally:
+            with suppress(Exception):
+                tmp.unlink(missing_ok=True)
 
     def _persist_snapshot(self, snapshot: JobStatus) -> None:
         path = self._persist_path_for_job_id(snapshot.job_id)
@@ -353,12 +368,11 @@ class JobStore:
             st.last_retry_count += inc
             if last_error_code is not None:
                 st.last_error_code = last_error_code
-            if not (0 <= index < len(st.chunk_statuses)):
-                return
-            cs = st.chunk_statuses[index]
-            cs.retries += inc
-            cs.last_error_code = last_error_code
-            cs.last_error_message = last_error_message
+            if 0 <= index < len(st.chunk_statuses):
+                cs = st.chunk_statuses[index]
+                cs.retries += inc
+                cs.last_error_code = last_error_code
+                cs.last_error_message = last_error_message
             snap = self._snapshot_job(st)
         if snap is not None:
             self._persist_snapshot(snap)
