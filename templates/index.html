@@ -110,6 +110,9 @@
             <button type="button" id="btnReset" class="px-5 py-2.5 bg-white border border-red-200 text-red-700 hover:bg-red-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
               取消并清理
             </button>
+            <button type="button" id="btnDownload" class="px-5 py-2.5 bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
+              下载输出
+            </button>
             <button type="button" id="btnLoad" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium rounded-lg transition-colors">
               加载任务
             </button>
@@ -173,7 +176,7 @@
                     <span class="text-slate-400">输入：</span><span class="truncate" id="jobInputName">-</span>
                   </div>
                   <div class="min-w-0">
-                    <span class="text-slate-400">输出：</span><span class="truncate" id="jobOutputName">-</span>
+                    <span class="text-slate-400">输出：</span><a class="truncate text-slate-600" id="jobOutputName">-</a>
                   </div>
                 </div>
                 <div class="mt-2 text-[11px] text-slate-400 font-mono truncate" id="jobOutputPath">-</div>
@@ -405,6 +408,7 @@
     const btnRetry = document.getElementById('btnRetry');
     const btnCancel = document.getElementById('btnCancel');
     const btnReset = document.getElementById('btnReset');
+    const btnDownload = document.getElementById('btnDownload');
     const btnLoad = document.getElementById('btnLoad');
     const btnSaveLlmDefaults = document.getElementById('btnSaveLlmDefaults');
     const llmDirtyHint = document.getElementById('llmDirtyHint');
@@ -817,7 +821,22 @@
       const j = job || null;
       if (jobIdShort) jobIdShort.textContent = j?.id ? String(j.id).slice(0, 8) : '-';
       if (jobInputName) jobInputName.textContent = j?.input_filename ? String(j.input_filename) : '-';
-      if (jobOutputName) jobOutputName.textContent = j?.output_filename ? String(j.output_filename) : '-';
+      if (jobOutputName) {
+        const outName = j?.output_filename ? String(j.output_filename) : '-';
+        jobOutputName.textContent = outName;
+        const isDone = String(j?.state || '').toLowerCase() === 'done' && !!j?.id && !!j?.output_path;
+        if (isDone && outName !== '-') {
+          jobOutputName.classList.add('text-ink', 'hover:underline');
+          jobOutputName.classList.remove('text-slate-600');
+          jobOutputName.setAttribute('href', `api/v1/jobs/${encodeURIComponent(j.id)}/download`);
+          jobOutputName.setAttribute('download', outName);
+        } else {
+          jobOutputName.classList.remove('text-ink', 'hover:underline');
+          jobOutputName.classList.add('text-slate-600');
+          jobOutputName.removeAttribute('href');
+          jobOutputName.removeAttribute('download');
+        }
+      }
       if (jobOutputPath) jobOutputPath.textContent = j?.output_path ? String(j.output_path) : '-';
     }
 
@@ -949,11 +968,25 @@
       _setVisible(btnRetry, canRetry);
       _setDisabled(btnRetry, !canRetry);
 
-      _setVisible(btnCancel, hasJob);
-      _setDisabled(btnCancel, !hasJob);
+      const showCancel = hasJob;
+      _setVisible(btnCancel, showCancel);
+      _setDisabled(btnCancel, !showCancel);
+      if (btnCancel) {
+        if (state === 'done') btnCancel.textContent = '新任务';
+        else if (state === 'paused' || state === 'error') btnCancel.textContent = '返回初始态';
+        else btnCancel.textContent = '取消（可恢复）';
+      }
 
-      _setVisible(btnReset, hasJob);
-      _setDisabled(btnReset, !hasJob);
+      const showReset = hasJob;
+      _setVisible(btnReset, showReset);
+      _setDisabled(btnReset, !showReset);
+      if (btnReset) {
+        btnReset.textContent = (state === 'done') ? '清理任务记录' : '取消并清理';
+      }
+
+      const canDownload = hasJob && state === 'done';
+      _setVisible(btnDownload, canDownload);
+      _setDisabled(btnDownload, !canDownload);
 
       _setVisible(btnLoad, true);
       _setDisabled(btnLoad, false);
@@ -1250,13 +1283,25 @@
 
     const ATTACHED_JOB_KEY = 'novel_proofer.attached_job_id.v2';
     let pollTimer = null;
+    let pollJobId = null;
     let pollInFlight = false;
 
+    function stopPolling() {
+      if (!pollTimer) return;
+      clearInterval(pollTimer);
+      pollTimer = null;
+      pollJobId = null;
+    }
+
+    function ensurePolling(jobId) {
+      if (pollTimer && pollJobId === jobId) return;
+      stopPolling();
+      pollJobId = jobId;
+      pollTimer = setInterval(() => refreshJobOnce(jobId), 1000);
+    }
+
     function detachUi({ clearFile = true } = {}) {
-      if (pollTimer) {
-        clearInterval(pollTimer);
-        pollTimer = null;
-      }
+      stopPolling();
       pollInFlight = false;
 
       currentJobId = null;
@@ -1344,8 +1389,15 @@
         } else if (job?.state === 'paused' && job?.phase === 'merge') {
           show('处理完成：可点击“合并输出”。');
         } else if (job?.state === 'done') {
-          show(job?.output_path ? `完成。已输出到：${job.output_path}` : '完成。已输出到项目 output/ 目录。');
+          show(job?.output_path ? `完成。输出：${job.output_path}\n可点击“下载输出”或“新任务”。` : '完成。已输出到项目 output/ 目录。');
         }
+
+        const counts = chunkCounts || {};
+        const active = Number(counts.processing || 0) + Number(counts.retrying || 0);
+        const stLower = String(job?.state || '').toLowerCase();
+        const shouldPoll = stLower === 'queued' || stLower === 'running' || (stLower === 'paused' && active > 0);
+        if (shouldPoll) ensurePolling(jobId);
+        else stopPolling();
 
         if (activeTab === 'debug') {
           forceChunksFetch = true;
@@ -1354,12 +1406,6 @@
       } finally {
         pollInFlight = false;
       }
-    }
-
-    function startPolling(jobId) {
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(() => refreshJobOnce(jobId), 1000);
-      refreshJobOnce(jobId);
     }
 
     async function attachJob(jobId) {
@@ -1375,8 +1421,8 @@
       updateStats();
       renderChunksTable();
 
+      ensurePolling(jid);
       await refreshJobOnce(jid);
-      startPolling(jid);
     }
 
     btnPause?.addEventListener('click', async () => {
@@ -1429,6 +1475,18 @@
       await refreshJobOnce(jobId);
     });
 
+    btnDownload?.addEventListener('click', () => {
+      const jobId = currentJobId;
+      if (!jobId) return;
+      const url = `api/v1/jobs/${encodeURIComponent(jobId)}/download`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+
     btnValidate?.addEventListener('click', async () => {
       // Start new validation when idle; resume validate only if paused in validate phase.
       if (!currentJobId) {
@@ -1450,9 +1508,19 @@
     btnCancel?.addEventListener('click', async () => {
       const jobId = currentJobId;
       if (!jobId) return;
-      const ok = confirm('确认“取消（可恢复）”？将停止当前任务并返回初始态，可稍后通过“加载任务”继续。');
-      if (!ok) return;
-      show('正在取消（可恢复）…');
+      const st = String(currentJobState || '').toLowerCase();
+      if (st === 'done') {
+        detachUi({ clearFile: true });
+        show('已返回初始态。可通过“加载任务”查看历史任务/输出。');
+        return;
+      }
+
+      const confirmMsg = (st === 'queued' || st === 'running')
+        ? '确认“取消（可恢复）”？将停止当前任务并返回初始态，可稍后通过“加载任务”继续。'
+        : '确认返回初始态？该任务可稍后通过“加载任务”继续/查看。';
+      if (!confirm(confirmMsg)) return;
+
+      show('正在返回初始态…');
       await requestCancel(jobId);
       detachUi({ clearFile: true });
       show('已返回初始态。可通过“加载任务”继续该任务。');
@@ -1461,9 +1529,13 @@
     btnReset?.addEventListener('click', async () => {
       const jobId = currentJobId;
       if (!jobId) return;
-      const ok = confirm('确认“取消并清理”？该任务中间产物与状态将被删除且不可恢复。');
-      if (!ok) return;
-      show('正在取消并清理…');
+      const st = String(currentJobState || '').toLowerCase();
+      const confirmMsg = (st === 'done')
+        ? '确认“清理任务记录”？该任务的中间态/状态记录将被删除且不可恢复（不会删除最终输出文件 output/）。'
+        : '确认“取消并清理”？该任务中间产物与状态将被删除且不可恢复。';
+      if (!confirm(confirmMsg)) return;
+
+      show((st === 'done') ? '正在清理任务记录…' : '正在取消并清理…');
       const r = await requestReset(jobId);
       if (!r.ok) {
         show(r.error);
