@@ -111,8 +111,14 @@
 
           <!-- Progress Bar -->
           <div class="mb-8 hidden" id="progress">
-            <div class="flex justify-between text-xs font-medium text-slate-500 mb-2" id="meta">
-              <span id="metaLeft">准备中</span>
+            <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs font-medium text-slate-500 mb-2" id="meta">
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span id="metaLeft">准备中</span>
+                <span class="hidden inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 font-mono" id="metaModelWrap">
+                  <span class="text-slate-400 font-sans">模型</span>
+                  <span id="metaModel" class="max-w-[16rem] truncate">-</span>
+                </span>
+              </div>
               <span id="metaRight">0%</span>
             </div>
             <div class="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
@@ -263,7 +269,7 @@
           <div id="tab-debug" class="tab-content hidden">
             
             <!-- Stats -->
-            <div class="grid grid-cols-2 sm:grid-cols-6 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-100" id="statsBar">
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6 bg-slate-50 p-4 rounded-xl border border-slate-100" id="statsBar">
               <div class="text-center">
                 <div class="text-xs text-slate-400 mb-1">Total</div>
                 <div class="font-mono font-bold text-lg text-slate-700" id="statTotal">0</div>
@@ -281,35 +287,31 @@
                 <div class="font-mono font-bold text-lg text-slate-500" id="statPending">0</div>
               </div>
               <div class="text-center">
-                <div class="text-xs text-slate-400 mb-1">Retry</div>
-                <div class="font-mono font-bold text-lg text-amber-500" id="statRetrying">0</div>
-              </div>
-              <div class="text-center">
                 <div class="text-xs text-slate-400 mb-1">Error</div>
                 <div class="font-mono font-bold text-lg text-red-500" id="statError">0</div>
               </div>
             </div>
 
             <!-- Filter -->
-            <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
-               <button type="button" class="filter-btn active px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="all">全部</button>
-               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="error">错误</button>
-               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="retrying">重试中</button>
-               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="processing">处理中</button>
-               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="pending">待处理</button>
-               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="done">完成</button>
-            </div>
+             <div class="flex gap-2 mb-4 overflow-x-auto pb-2">
+                <button type="button" class="filter-btn active px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="all">全部</button>
+                <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="error">错误</button>
+               <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="active">处理中</button>
+                <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="pending">待处理</button>
+                <button type="button" class="filter-btn px-3 py-1.5 rounded-full text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 transition-all whitespace-nowrap" data-filter="done">完成</button>
+             </div>
 
             <!-- Table -->
             <div class="border border-slate-200 rounded-lg overflow-hidden" id="chunksTableWrap">
                <div class="overflow-x-auto max-h-[500px]">
-                <table class="w-full text-left text-xs">
+                <table class="w-full text-left text-xs table-fixed">
                   <thead class="bg-slate-50 text-slate-500 font-medium sticky top-0 z-10 shadow-sm">
                     <tr>
-                      <th class="p-3 w-16">#</th>
-                      <th class="p-3 w-32">状态</th>
-                      <th class="p-3 w-16">重试</th>
-                      <th class="p-3 w-24">I/O</th>
+                      <th class="p-3 w-14 text-center">#</th>
+                      <th class="p-3 w-20 text-center">状态</th>
+                      <th class="p-3 w-40">LLM</th>
+                      <th class="p-3 w-14 text-center">重试</th>
+                      <th class="p-3 w-28">I/O</th>
                       <th class="p-3">信息</th>
                     </tr>
                   </thead>
@@ -349,6 +351,8 @@
     const meta = document.getElementById('meta');
     const metaLeft = document.getElementById('metaLeft');
     const metaRight = document.getElementById('metaRight');
+    const metaModelWrap = document.getElementById('metaModelWrap');
+    const metaModel = document.getElementById('metaModel');
     const btnStart = document.getElementById('btnStart');
     const btnPause = document.getElementById('btnPause');
     const btnCancel = document.getElementById('btnCancel');
@@ -373,7 +377,6 @@
     const statProcessing = document.getElementById('statProcessing');
     const statPending = document.getElementById('statPending');
     const statError = document.getElementById('statError');
-    const statRetrying = document.getElementById('statRetrying');
 
     let currentJobId = null;
     let currentJobState = null;
@@ -548,7 +551,8 @@
           processing: { class: 'bg-blue-50 text-blue-600', label: '处理中' },
           done: { class: 'bg-green-50 text-green-600', label: '完成' },
           error: { class: 'bg-red-50 text-red-600', label: '错误' },
-          retrying: { class: 'bg-amber-50 text-amber-600', label: '重试中' }
+          // retrying is a subset of "processing" (backoff + next attempt), keep state but merge display.
+          retrying: { class: 'bg-amber-50 text-amber-600', label: '处理中' }
       };
       
       const c = config[state] || config.pending;
@@ -654,16 +658,22 @@
          if (c.input_chars != null && c.output_chars != null) inOut = `${c.input_chars}/${c.output_chars}`;
          else if (c.input_chars != null) inOut = `${c.input_chars}/-`;
 
-          const errCode = (c.last_error_code != null) ? String(c.last_error_code) : '';
-          const errFull = c.last_error_message ? String(c.last_error_message) : '';
-          const err = formatErrorDisplay(errCode, errFull);
-          let errMsg = '-';
-          if (err) {
-            const detail = escapeHtml(err.detail);
-            const brief = escapeHtml(err.brief);
-            if (c.state === 'error') {
-              errMsg = `<span class="text-red-500 cursor-help border-b border-dotted border-red-300" title="${detail}">${brief}</span>`;
-            } else if (c.state === 'retrying') {
+          const llmFull = (c.llm_model != null) ? String(c.llm_model) : '';
+          const llmShort = llmFull ? truncateStr(llmFull, 36) : '-';
+          const llmCell = llmFull
+            ? `<span class="text-slate-500 font-mono text-[11px] cursor-help border-b border-dotted border-slate-200" title="${escapeHtml(llmFull)}">${escapeHtml(llmShort)}</span>`
+            : `<span class="text-slate-300">-</span>`;
+
+           const errCode = (c.last_error_code != null) ? String(c.last_error_code) : '';
+           const errFull = c.last_error_message ? String(c.last_error_message) : '';
+           const err = formatErrorDisplay(errCode, errFull);
+           let errMsg = '-';
+           if (err) {
+             const detail = escapeHtml(err.detail);
+             const brief = escapeHtml(err.brief);
+             if (c.state === 'error') {
+               errMsg = `<span class="text-red-500 cursor-help border-b border-dotted border-red-300" title="${detail}">${brief}</span>`;
+             } else if (c.state === 'retrying') {
               errMsg = `<span class="text-amber-600 cursor-help border-b border-dotted border-amber-300" title="${detail}">${brief}</span>`;
             } else if (c.state === 'done') {
               const retries = Number(c.retries || 0);
@@ -676,10 +686,11 @@
           }
 
          return `<tr class="hover:bg-slate-50 transition-colors">
-           <td class="p-3 text-slate-400 font-mono">${c.index}</td>
-           <td class="p-3">${getStatusBadge(c.state)}</td>
-           <td class="p-3 text-slate-500">${c.retries}</td>
-           <td class="p-3 text-slate-500 font-mono text-[11px]">${inOut}</td>
+           <td class="p-3 text-slate-400 font-mono text-center whitespace-nowrap">${c.index}</td>
+           <td class="p-3 text-center whitespace-nowrap">${getStatusBadge(c.state)}</td>
+           <td class="p-3 whitespace-nowrap">${llmCell}</td>
+           <td class="p-3 text-slate-500 text-center whitespace-nowrap">${c.retries}</td>
+           <td class="p-3 text-slate-500 font-mono text-[11px] whitespace-nowrap">${inOut}</td>
            <td class="p-3 text-slate-600">${errMsg}</td>
          </tr>`;
        }).join('');
@@ -692,9 +703,8 @@
       const counts = chunkCounts || {};
       statTotal.textContent = String(totalChunksFromServer || 0);
       statDone.textContent = String(counts.done || 0);
-      statProcessing.textContent = String(counts.processing || 0);
+      statProcessing.textContent = String((counts.processing || 0) + (counts.retrying || 0));
       statPending.textContent = String(counts.pending || 0);
-      statRetrying.textContent = String(counts.retrying || 0);
       statError.textContent = String(counts.error || 0);
     }
 
@@ -742,7 +752,15 @@
       // meta.style.display = 'flex'; // handled by class
       const pct = total > 0 ? Math.floor((done / total) * 100) : (state === 'done' ? 100 : 0);
       bar.style.width = pct + '%';
-      metaLeft.textContent = `${state}  ${done}/${total}`;
+      const stateShortLabels = {
+        queued: '排队中',
+        running: '处理中',
+        paused: '已暂停',
+        done: '已完成',
+        cancelled: '已取消',
+        error: '出错'
+      };
+      metaLeft.textContent = `${stateShortLabels[state] || state} ${done}/${total}`;
       metaRight.textContent = pct + '%';
       
       const stateLabels = {
@@ -1277,6 +1295,12 @@
 
         currentJobState = data?.job?.state;
         setProgress(data?.job?.progress?.done_chunks || 0, data?.job?.progress?.total_chunks || 0, data?.job?.state);
+        const model = data?.job?.llm_model ? String(data.job.llm_model) : '';
+        if (metaModel) {
+          metaModel.textContent = model || '-';
+          metaModel.title = model || '';
+        }
+        if (metaModelWrap) metaModelWrap.classList.toggle('hidden', !model);
         if (wantChunks) showChunks(data);
 
         if (data?.job?.state === 'done') {
