@@ -488,27 +488,25 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
         return
 
     total = len(st.chunk_statuses)
-    failed = [c.index for c in st.chunk_statuses if c.state == "error"]
-    if not failed:
+    targets = [c.index for c in st.chunk_statuses if c.state in {"error", "pending", "retrying"}]
+    if not targets:
         if out_path.exists():
             GLOBAL_JOBS.update(job_id, state="done", finished_at=time.time(), done_chunks=total)
         return
 
     GLOBAL_JOBS.update(job_id, state="queued", finished_at=None, error=None)
-    for i in failed:
+    for i in targets:
         GLOBAL_JOBS.update_chunk(
             job_id,
             i,
-            state="retrying",
+            state="pending",
             started_at=None,
             finished_at=None,
-            last_error_code=None,
-            last_error_message=None,
             input_chars=None,
             output_chars=None,
         )
 
-    outcome = _run_llm_for_indices(job_id, failed, work_dir, llm)
+    outcome = _run_llm_for_indices(job_id, targets, work_dir, llm)
     if outcome == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
         GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
         return

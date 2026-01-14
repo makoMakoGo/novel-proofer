@@ -234,7 +234,7 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         assert r.json().get("ok") is True
         st3 = GLOBAL_JOBS.get(job3.job_id)
         assert st3 is not None and st3.state == "queued"
-        assert any(c.state == "retrying" for c in st3.chunk_statuses)
+        assert any(c.state == "pending" for c in st3.chunk_statuses)
     finally:
         GLOBAL_JOBS.delete(job3.job_id)
 

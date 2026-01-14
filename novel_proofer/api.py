@@ -781,7 +781,7 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
         GLOBAL_JOBS.update_chunk(
             job_id,
             i,
-            state="retrying",
+            state="pending",
             started_at=None,
             finished_at=None,
         )
@@ -790,8 +790,15 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
     try:
         submit_background_job(job_id, retry_failed_chunks, job_id, llm)
     except ValueError as e:
+        # If the previous runner is still exiting, revert to the error state and ask the client to retry later.
+        GLOBAL_JOBS.update(job_id, state="error", finished_at=st.finished_at, error=st.error)
+        for i in failed:
+            GLOBAL_JOBS.update_chunk(job_id, i, state="error")
         raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
+        GLOBAL_JOBS.update(job_id, state="error", finished_at=st.finished_at, error=st.error)
+        for i in failed:
+            GLOBAL_JOBS.update_chunk(job_id, i, state="error")
         raise HTTPException(status_code=500, detail=str(e)) from e
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
