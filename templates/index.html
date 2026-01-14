@@ -654,12 +654,26 @@
          if (c.input_chars != null && c.output_chars != null) inOut = `${c.input_chars}/${c.output_chars}`;
          else if (c.input_chars != null) inOut = `${c.input_chars}/-`;
 
-         const errCode = (c.last_error_code != null) ? String(c.last_error_code) : '';
-         const errFull = c.last_error_message ? String(c.last_error_message) : '';
-         const err = formatErrorDisplay(errCode, errFull);
-         const errMsg = err
-           ? `<span class="text-red-500 cursor-help border-b border-dotted border-red-300" title="${escapeHtml(err.detail)}">${escapeHtml(err.brief)}</span>`
-           : '-';
+          const errCode = (c.last_error_code != null) ? String(c.last_error_code) : '';
+          const errFull = c.last_error_message ? String(c.last_error_message) : '';
+          const err = formatErrorDisplay(errCode, errFull);
+          let errMsg = '-';
+          if (err) {
+            const detail = escapeHtml(err.detail);
+            const brief = escapeHtml(err.brief);
+            if (c.state === 'error') {
+              errMsg = `<span class="text-red-500 cursor-help border-b border-dotted border-red-300" title="${detail}">${brief}</span>`;
+            } else if (c.state === 'retrying') {
+              errMsg = `<span class="text-amber-600 cursor-help border-b border-dotted border-amber-300" title="${detail}">${brief}</span>`;
+            } else if (c.state === 'done') {
+              const retries = Number(c.retries || 0);
+              if (retries > 0) {
+                errMsg = `<span class="text-slate-400 cursor-help border-b border-dotted border-slate-300" title="${detail}">曾重试: ${brief}</span>`;
+              }
+            } else {
+              errMsg = `<span class="text-slate-400 cursor-help border-b border-dotted border-slate-300" title="${detail}">${brief}</span>`;
+            }
+          }
 
          return `<tr class="hover:bg-slate-50 transition-colors">
            <td class="p-3 text-slate-400 font-mono">${c.index}</td>
@@ -745,10 +759,14 @@
       }
     }
 
+    function setStartDisabled(disabled) {
+      btnStart.disabled = disabled;
+      btnStart.classList.toggle('opacity-50', disabled);
+      btnStart.classList.toggle('cursor-not-allowed', disabled);
+    }
+
     function setBusy(busy) {
-      btnStart.disabled = busy;
-      btnStart.classList.toggle('opacity-50', busy);
-      btnStart.classList.toggle('cursor-not-allowed', busy);
+      setStartDisabled(busy);
       
       const toggleBtn = (btn, show) => {
           if (show) {
@@ -778,9 +796,7 @@
     }
 
     function setPaused(paused) {
-      btnStart.disabled = paused;
-      btnStart.classList.toggle('opacity-50', paused);
-      btnStart.classList.toggle('cursor-not-allowed', paused);
+      setStartDisabled(paused);
 
       const toggleBtn = (btn, show) => {
           if (show) {
@@ -817,6 +833,7 @@
       }
       toggleBtn(btnRetry, visible);
       btnRetry.disabled = !visible;
+      if (visible) setStartDisabled(true);
     }
 
     function setRerunAllVisible(visible) {
@@ -830,6 +847,7 @@
       }
       toggleBtn(btnRerunAll, visible);
       btnRerunAll.disabled = !visible;
+      if (visible) setStartDisabled(true);
     }
 
     function setCleanupVisible(visible) {
@@ -843,6 +861,7 @@
       }
       toggleBtn(btnCleanup, visible);
       btnCleanup.disabled = !visible;
+      if (visible) setStartDisabled(true);
     }
 
     function _llmSnapshot() {
@@ -1232,6 +1251,7 @@
       setCleanupVisible(false);
       currentJobId = null;
       currentJobState = null;
+      setStartDisabled(false);
       chunksData = [];
       updateStats();
       renderChunksTable();
@@ -1311,7 +1331,7 @@
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      if (currentJobId && (currentJobState === 'queued' || currentJobState === 'running' || currentJobState === 'paused')) return;
+      if (currentJobId) return;
       currentJobId = null;
       currentJobState = null;
       setRetryVisible(false);
