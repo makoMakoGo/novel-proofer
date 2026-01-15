@@ -317,6 +317,25 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         assert r2.status_code == 404
 
 
+def test_pause_only_allowed_in_process_phase() -> None:
+    client = TestClient(api.app)
+
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    try:
+        r0 = client.post(f"/api/v1/jobs/{job.job_id}/pause")
+        assert r0.status_code == 409
+
+        GLOBAL_JOBS.update(job.job_id, state="running", phase="merge")
+        r1 = client.post(f"/api/v1/jobs/{job.job_id}/pause")
+        assert r1.status_code == 409
+
+        GLOBAL_JOBS.update(job.job_id, state="queued", phase="process")
+        r2 = client.post(f"/api/v1/jobs/{job.job_id}/pause")
+        assert r2.status_code == 200, r2.text
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
+
+
 def test_list_jobs_includes_created_job() -> None:
     client = TestClient(api.app)
 
@@ -356,6 +375,7 @@ def test_resume_job_returns_409_when_background_submit_rejects(monkeypatch: pyte
 
     job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
     try:
+        GLOBAL_JOBS.update(job.job_id, phase="process")
         r0 = client.post(f"/api/v1/jobs/{job.job_id}/pause")
         assert r0.status_code == 200
 

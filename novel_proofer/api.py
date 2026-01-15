@@ -843,6 +843,9 @@ async def pause_job(job_id: str):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
+    phase = str(getattr(st, "phase", "") or "").strip().lower()
+    if phase != "process":
+        raise HTTPException(status_code=409, detail=f"cannot pause job in phase={phase or None}")
     if not GLOBAL_JOBS.pause(job_id):
         raise HTTPException(status_code=409, detail=f"cannot pause job in state={st.state}")
     st2 = GLOBAL_JOBS.get(job_id) or st

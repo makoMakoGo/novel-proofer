@@ -1069,7 +1069,7 @@
       _setVisible(btnMerge, canMerge);
       _setDisabled(btnMerge, !canMerge);
 
-      const canPause = hasJob && (state === 'queued' || state === 'running');
+      const canPause = hasJob && (state === 'queued' || state === 'running') && phase === 'process';
       _setVisible(btnPause, canPause);
       _setDisabled(btnPause, !canPause);
 
