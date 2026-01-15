@@ -73,17 +73,46 @@
           <!-- File Upload Section -->
           <div class="mb-8">
             <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">源文件</label>
-            <div class="file-drop group relative w-full p-8 border-2 border-dashed border-slate-200 rounded-xl hover:border-ink/50 hover:bg-slate-50 transition-all duration-200 cursor-pointer text-center" id="fileDrop">
-              <div class="pointer-events-none">
-                <div class="mb-3 text-slate-400 group-hover:text-ink transition-colors">
-                  <svg class="w-8 h-8 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- 区域1: 文件选择框 -->
+              <div class="file-drop group relative p-6 border-2 border-dashed border-slate-200 rounded-xl hover:border-ink/50 hover:bg-slate-50 transition-all duration-200 cursor-pointer text-center" id="fileDrop">
+                <div class="pointer-events-none">
+                  <div class="mb-2 text-slate-400 group-hover:text-ink transition-colors">
+                    <svg class="w-7 h-7 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <div class="text-sm font-medium text-slate-600 group-hover:text-ink transition-colors">点击选择或拖拽 TXT 文件</div>
                 </div>
-                <div class="text-sm font-medium text-slate-600 group-hover:text-ink transition-colors">点击选择或拖拽 TXT 文件</div>
-                <div class="mt-2 text-xs text-slate-400 font-mono" id="fileName">未选择任何文件</div>
+                <input name="file" type="file" accept=".txt,text/plain" required class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
               </div>
-              <input name="file" type="file" accept=".txt,text/plain" required class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+              <!-- 区域2: 文件信息显示 -->
+              <div class="p-6 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/50 flex flex-col justify-center" id="fileInfoPanel">
+                <div class="text-center text-slate-400" id="fileInfoEmpty">
+                  <svg class="w-7 h-7 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="text-sm">未选择任何文件</div>
+                </div>
+                <div class="hidden" id="fileInfoContent">
+                  <div class="space-y-3">
+                    <div class="flex items-center gap-2">
+                      <svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <span class="text-xs text-slate-500">文件名</span>
+                      <span class="text-sm font-medium text-slate-700 truncate flex-1" id="fileName">-</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                      </svg>
+                      <span class="text-xs text-slate-500">字数</span>
+                      <span class="text-sm font-medium text-slate-700 font-mono" id="fileWordCount">-</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -357,8 +386,8 @@
                       <th class="py-3 px-2 w-16 text-center font-semibold text-slate-600">状态</th>
                       <th class="py-3 px-2 w-40 text-center font-semibold text-slate-600">LLM 模型</th>
                       <th class="py-3 px-2 w-12 text-center font-semibold text-slate-600">重试</th>
-                      <th class="py-3 px-2 w-28 text-center font-semibold text-slate-600">Chars (In/Out)</th>
-                      <th class="py-3 px-2 text-left font-semibold text-slate-600">信息</th>
+                      <th class="py-3 px-2 w-28 text-center font-semibold text-slate-600">In/Out</th>
+                      <th class="py-3 px-2 text-center font-semibold text-slate-600">信息</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-100 bg-white" id="chunksBody">
@@ -385,6 +414,17 @@
        </div>
     </div>
     
+  </div>
+
+  <!-- Custom Modal -->
+  <div id="modalBackdrop" class="fixed inset-0 bg-black/20 backdrop-blur-[2px] z-50 hidden items-center justify-center transition-opacity duration-200">
+    <div id="modalBox" class="bg-white rounded-xl shadow-md max-w-xl w-full mx-4 transform transition-all duration-200 scale-95 opacity-0 border border-slate-200/60">
+      <div class="px-5 py-4">
+        <h3 id="modalTitle" class="text-base font-medium text-slate-800 mb-3">标题</h3>
+        <div id="modalBody" class="text-sm text-slate-600 mb-5">内容</div>
+        <div id="modalActions" class="flex justify-end gap-3"></div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -418,6 +458,10 @@
     const outputPreview = document.getElementById('outputPreview');
     const fileDrop = document.getElementById('fileDrop');
     const fileName = document.getElementById('fileName');
+    const fileInfoPanel = document.getElementById('fileInfoPanel');
+    const fileInfoEmpty = document.getElementById('fileInfoEmpty');
+    const fileInfoContent = document.getElementById('fileInfoContent');
+    const fileWordCount = document.getElementById('fileWordCount');
     const jobIdShort = document.getElementById('jobIdShort');
     const jobInputName = document.getElementById('jobInputName');
     const jobOutputName = document.getElementById('jobOutputName');
@@ -517,7 +561,23 @@
 
     function refreshFileName() {
       const file = fileInput?.files?.[0];
-      if (fileName) fileName.textContent = file ? file.name : '未选择任何文件';
+      if (file) {
+        if (fileName) fileName.textContent = file.name;
+        if (fileInfoEmpty) fileInfoEmpty.classList.add('hidden');
+        if (fileInfoContent) fileInfoContent.classList.remove('hidden');
+        if (fileWordCount) fileWordCount.textContent = '读取中...';
+        file.text().then(text => {
+          const count = text.replace(/\s/g, '').length;
+          if (fileWordCount) fileWordCount.textContent = count.toLocaleString();
+        }).catch(() => {
+          if (fileWordCount) fileWordCount.textContent = '读取失败';
+        });
+      } else {
+        if (fileName) fileName.textContent = '-';
+        if (fileInfoEmpty) fileInfoEmpty.classList.remove('hidden');
+        if (fileInfoContent) fileInfoContent.classList.add('hidden');
+        if (fileWordCount) fileWordCount.textContent = '-';
+      }
       refreshOutputPreview();
     }
 
@@ -749,7 +809,7 @@
            <td class="py-3 px-2 whitespace-nowrap text-xs text-center">${llmCell}</td>
            <td class="py-3 px-2 text-slate-400 text-center whitespace-nowrap font-mono text-xs">${c.retries || 0}</td>
            <td class="py-3 px-2 text-slate-400 font-mono text-[11px] text-center whitespace-nowrap tracking-tight">${inOut}</td>
-           <td class="py-3 px-2 text-slate-600 text-xs text-left">${errMsg}</td>
+           <td class="py-3 px-2 text-slate-600 text-xs text-center">${errMsg}</td>
          </tr>`;
        }).join('');
 
@@ -804,6 +864,101 @@
       out.classList.remove('hidden');
       outText.textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
     }
+
+    // --- Custom Modal API ---
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const modalBox = document.getElementById('modalBox');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalBody = document.getElementById('modalBody');
+    const modalActions = document.getElementById('modalActions');
+    let modalCloseCallback = null;
+
+    function openModal() {
+      modalBackdrop.classList.remove('hidden');
+      modalBackdrop.classList.add('flex');
+      requestAnimationFrame(() => {
+        modalBox.classList.remove('scale-95', 'opacity-0');
+        modalBox.classList.add('scale-100', 'opacity-100');
+      });
+    }
+
+    function closeModal() {
+      modalBox.classList.remove('scale-100', 'opacity-100');
+      modalBox.classList.add('scale-95', 'opacity-0');
+      setTimeout(() => {
+        modalBackdrop.classList.add('hidden');
+        modalBackdrop.classList.remove('flex');
+        if (modalCloseCallback) { modalCloseCallback(); modalCloseCallback = null; }
+      }, 200);
+    }
+
+    modalBackdrop?.addEventListener('click', (e) => {
+      if (e.target === modalBackdrop) closeModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modalBackdrop.classList.contains('hidden')) closeModal();
+    });
+
+    function showConfirm(message) {
+      return new Promise((resolve) => {
+        modalTitle.textContent = '确认操作';
+        modalBody.innerHTML = `<p class="whitespace-pre-wrap">${message}</p>`;
+        modalActions.innerHTML = `
+          <button type="button" class="modal-cancel px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors">取消</button>
+          <button type="button" class="modal-confirm px-4 py-2 bg-ink text-white text-sm font-medium rounded-lg hover:bg-zinc-800 transition-colors">确认</button>
+        `;
+        modalCloseCallback = () => resolve(false);
+        modalActions.querySelector('.modal-cancel').onclick = () => { closeModal(); resolve(false); };
+        modalActions.querySelector('.modal-confirm').onclick = () => { closeModal(); resolve(true); };
+        openModal();
+      });
+    }
+
+    function showJobPicker(jobs) {
+      return new Promise((resolve) => {
+        modalTitle.textContent = '选择要加载的任务';
+        const listHtml = jobs.slice(0, 20).map((j, i) => {
+          const jobId = escapeHtml(j?.id ? String(j.id) : '');
+          const id8 = escapeHtml(j?.id ? String(j.id).slice(0, 8) : '-');
+          const st = escapeHtml(j?.state || '-');
+          const phase = escapeHtml(j?.phase || '-');
+          const prog = escapeHtml(`${j?.progress?.done_chunks || 0}/${j?.progress?.total_chunks || 0}`);
+          const name = escapeHtml(j?.input_filename ? String(j.input_filename) : '');
+          const stColor = { done: 'bg-emerald-100 text-emerald-700', error: 'bg-red-100 text-red-700', paused: 'bg-amber-100 text-amber-700', cancelled: 'bg-slate-200 text-slate-600' }[j?.state] || 'bg-slate-100 text-slate-600';
+          return `<button type="button" data-job-id="${jobId}" class="job-item w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors flex items-center gap-3">
+            <span class="font-mono text-xs text-slate-400">${id8}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded ${stColor}">${st}:${phase}</span>
+            <span class="text-xs text-slate-500 font-mono">${prog}</span>
+            <span class="text-sm text-slate-700 truncate flex-1">${name}</span>
+          </button>`;
+        }).join('');
+        modalBody.innerHTML = `
+          <div class="space-y-2 max-h-64 overflow-y-auto mb-4">${listHtml || '<p class="text-slate-400 text-sm">暂无可加载任务</p>'}</div>
+          <div class="flex items-center gap-2 pt-3 border-t border-slate-100">
+            <input type="text" id="manualJobId" placeholder="或输入完整 job_id" class="flex-1 px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-ink/20 focus:border-ink font-mono" />
+            <button type="button" class="modal-manual px-3 py-1.5 text-sm font-medium text-slate-600 hover:text-ink transition-colors">加载</button>
+          </div>
+        `;
+        modalActions.innerHTML = `<button type="button" class="modal-cancel px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors">取消</button>`;
+        modalCloseCallback = () => resolve(null);
+        modalActions.querySelector('.modal-cancel').onclick = () => { closeModal(); resolve(null); };
+        modalBody.querySelectorAll('.job-item').forEach(btn => {
+          btn.onclick = () => { closeModal(); resolve(btn.dataset.jobId); };
+        });
+        modalBody.querySelector('.modal-manual').onclick = () => {
+          const val = modalBody.querySelector('#manualJobId').value.trim();
+          if (val) { closeModal(); resolve(val); }
+        };
+        modalBody.querySelector('#manualJobId').addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            const val = e.target.value.trim();
+            if (val) { closeModal(); resolve(val); }
+          }
+        });
+        openModal();
+      });
+    }
+    // --- End Modal API ---
 
     function _phaseLabel(phase) {
       const v = String(phase || '').toLowerCase();
@@ -964,7 +1119,7 @@
       _setVisible(btnMerge, canMerge);
       _setDisabled(btnMerge, !canMerge);
 
-      const canPause = hasJob && (state === 'queued' || state === 'running');
+      const canPause = hasJob && (state === 'queued' || state === 'running') && phase === 'process';
       _setVisible(btnPause, canPause);
       _setDisabled(btnPause, !canPause);
 
@@ -1521,9 +1676,9 @@
       }
 
       const confirmMsg = (st === 'queued' || st === 'running')
-        ? '确认“取消（可恢复）”？将停止当前任务并返回初始态，可稍后通过“加载任务”继续。'
-        : '确认返回初始态？该任务可稍后通过“加载任务”继续/查看。';
-      if (!confirm(confirmMsg)) return;
+        ? '确认"取消（可恢复）"？将停止当前任务并返回初始态，可稍后通过"加载任务"继续。'
+        : '确认返回初始态？该任务可稍后通过"加载任务"继续/查看。';
+      if (!(await showConfirm(confirmMsg))) return;
 
       show('正在返回初始态…');
       await requestCancel(jobId);
@@ -1536,9 +1691,9 @@
       if (!jobId) return;
       const st = String(currentJobState || '').toLowerCase();
       const confirmMsg = (st === 'done')
-        ? '确认“清理任务记录”？该任务的中间态/状态记录将被删除且不可恢复（不会删除最终输出文件 output/）。'
-        : '确认“取消并清理”？该任务中间产物与状态将被删除且不可恢复。';
-      if (!confirm(confirmMsg)) return;
+        ? '确认"清理任务记录"？该任务的中间态/状态记录将被删除且不可恢复（不会删除最终输出文件 output/）。'
+        : '确认"取消并清理"？该任务中间产物与状态将被删除且不可恢复。';
+      if (!(await showConfirm(confirmMsg))) return;
 
       show((st === 'done') ? '正在清理任务记录…' : '正在取消并清理…');
       const r = await requestReset(jobId);
@@ -1562,24 +1717,8 @@
         return;
       }
 
-      const lines = jobs.slice(0, 20).map((j, i) => {
-        const id8 = j?.id ? String(j.id).slice(0, 8) : '-';
-        const st = `${j?.state || '-'}:${j?.phase || '-'}`;
-        const prog = `${j?.progress?.done_chunks || 0}/${j?.progress?.total_chunks || 0}`;
-        const name = j?.input_filename ? String(j.input_filename) : '';
-        return `${i + 1}) ${id8}  ${st}  ${prog}  ${name}`;
-      }).join('\n');
-
-      const choice = prompt(`选择要加载的任务：\n\n${lines}\n\n输入编号(1-20)或完整 job_id：`);
-      if (!choice) return;
-      const trimmed = String(choice).trim();
-      const idx = Number(trimmed);
-      let chosenId = null;
-      if (Number.isFinite(idx) && idx >= 1 && idx <= jobs.slice(0, 20).length) {
-        chosenId = jobs[idx - 1].id;
-      } else {
-        chosenId = trimmed;
-      }
+      const chosenId = await showJobPicker(jobs);
+      if (!chosenId) return;
       await attachJob(chosenId);
     });
 
