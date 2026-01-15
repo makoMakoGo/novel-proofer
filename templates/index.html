@@ -73,17 +73,46 @@
           <!-- File Upload Section -->
           <div class="mb-8">
             <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">源文件</label>
-            <div class="file-drop group relative w-full p-8 border-2 border-dashed border-slate-200 rounded-xl hover:border-ink/50 hover:bg-slate-50 transition-all duration-200 cursor-pointer text-center" id="fileDrop">
-              <div class="pointer-events-none">
-                <div class="mb-3 text-slate-400 group-hover:text-ink transition-colors">
-                  <svg class="w-8 h-8 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- 区域1: 文件选择框 -->
+              <div class="file-drop group relative p-6 border-2 border-dashed border-slate-200 rounded-xl hover:border-ink/50 hover:bg-slate-50 transition-all duration-200 cursor-pointer text-center" id="fileDrop">
+                <div class="pointer-events-none">
+                  <div class="mb-2 text-slate-400 group-hover:text-ink transition-colors">
+                    <svg class="w-7 h-7 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <div class="text-sm font-medium text-slate-600 group-hover:text-ink transition-colors">点击选择或拖拽 TXT 文件</div>
                 </div>
-                <div class="text-sm font-medium text-slate-600 group-hover:text-ink transition-colors">点击选择或拖拽 TXT 文件</div>
-                <div class="mt-2 text-xs text-slate-400 font-mono" id="fileName">未选择任何文件</div>
+                <input name="file" type="file" accept=".txt,text/plain" required class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
               </div>
-              <input name="file" type="file" accept=".txt,text/plain" required class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+              <!-- 区域2: 文件信息显示 -->
+              <div class="p-6 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/50 flex flex-col justify-center" id="fileInfoPanel">
+                <div class="text-center text-slate-400" id="fileInfoEmpty">
+                  <svg class="w-7 h-7 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div class="text-sm">未选择任何文件</div>
+                </div>
+                <div class="hidden" id="fileInfoContent">
+                  <div class="space-y-3">
+                    <div class="flex items-center gap-2">
+                      <svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <span class="text-xs text-slate-500">文件名</span>
+                      <span class="text-sm font-medium text-slate-700 truncate flex-1" id="fileName">-</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                      </svg>
+                      <span class="text-xs text-slate-500">字数</span>
+                      <span class="text-sm font-medium text-slate-700 font-mono" id="fileWordCount">-</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -429,6 +458,10 @@
     const outputPreview = document.getElementById('outputPreview');
     const fileDrop = document.getElementById('fileDrop');
     const fileName = document.getElementById('fileName');
+    const fileInfoPanel = document.getElementById('fileInfoPanel');
+    const fileInfoEmpty = document.getElementById('fileInfoEmpty');
+    const fileInfoContent = document.getElementById('fileInfoContent');
+    const fileWordCount = document.getElementById('fileWordCount');
     const jobIdShort = document.getElementById('jobIdShort');
     const jobInputName = document.getElementById('jobInputName');
     const jobOutputName = document.getElementById('jobOutputName');
@@ -528,7 +561,23 @@
 
     function refreshFileName() {
       const file = fileInput?.files?.[0];
-      if (fileName) fileName.textContent = file ? file.name : '未选择任何文件';
+      if (file) {
+        if (fileName) fileName.textContent = file.name;
+        if (fileInfoEmpty) fileInfoEmpty.classList.add('hidden');
+        if (fileInfoContent) fileInfoContent.classList.remove('hidden');
+        if (fileWordCount) fileWordCount.textContent = '读取中...';
+        file.text().then(text => {
+          const count = text.replace(/\s/g, '').length;
+          if (fileWordCount) fileWordCount.textContent = count.toLocaleString();
+        }).catch(() => {
+          if (fileWordCount) fileWordCount.textContent = '读取失败';
+        });
+      } else {
+        if (fileName) fileName.textContent = '-';
+        if (fileInfoEmpty) fileInfoEmpty.classList.remove('hidden');
+        if (fileInfoContent) fileInfoContent.classList.add('hidden');
+        if (fileWordCount) fileWordCount.textContent = '-';
+      }
       refreshOutputPreview();
     }
 
