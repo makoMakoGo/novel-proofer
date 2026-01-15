@@ -918,13 +918,14 @@
       return new Promise((resolve) => {
         modalTitle.textContent = '选择要加载的任务';
         const listHtml = jobs.slice(0, 20).map((j, i) => {
-          const id8 = j?.id ? String(j.id).slice(0, 8) : '-';
-          const st = j?.state || '-';
-          const phase = j?.phase || '-';
-          const prog = `${j?.progress?.done_chunks || 0}/${j?.progress?.total_chunks || 0}`;
-          const name = j?.input_filename ? String(j.input_filename) : '';
-          const stColor = { done: 'bg-emerald-100 text-emerald-700', error: 'bg-red-100 text-red-700', paused: 'bg-amber-100 text-amber-700', cancelled: 'bg-slate-200 text-slate-600' }[st] || 'bg-slate-100 text-slate-600';
-          return `<button type="button" data-job-id="${j.id}" class="job-item w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors flex items-center gap-3">
+          const jobId = escapeHtml(j?.id ? String(j.id) : '');
+          const id8 = escapeHtml(j?.id ? String(j.id).slice(0, 8) : '-');
+          const st = escapeHtml(j?.state || '-');
+          const phase = escapeHtml(j?.phase || '-');
+          const prog = escapeHtml(`${j?.progress?.done_chunks || 0}/${j?.progress?.total_chunks || 0}`);
+          const name = escapeHtml(j?.input_filename ? String(j.input_filename) : '');
+          const stColor = { done: 'bg-emerald-100 text-emerald-700', error: 'bg-red-100 text-red-700', paused: 'bg-amber-100 text-amber-700', cancelled: 'bg-slate-200 text-slate-600' }[j?.state] || 'bg-slate-100 text-slate-600';
+          return `<button type="button" data-job-id="${jobId}" class="job-item w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors flex items-center gap-3">
             <span class="font-mono text-xs text-slate-400">${id8}</span>
             <span class="text-xs px-1.5 py-0.5 rounded ${stColor}">${st}:${phase}</span>
             <span class="text-xs text-slate-500 font-mono">${prog}</span>
