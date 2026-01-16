@@ -1250,7 +1250,8 @@
       const hasLocalFile = !!fileInput?.files?.[0];
       const canStartValidate = (!hasJob) && hasLocalFile && !createJobInFlight;
       const canValidate = canResumeValidate || canStartValidate;
-      if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续预处理' : (createJobInFlight ? '提交中...' : '开始预处理');
+      const isSubmitting = (!hasJob) && createJobInFlight;
+      if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续预处理' : (isSubmitting ? '提交中...' : '开始预处理');
 
       const canProcess = hasJob && state === 'paused' && phase === 'process';
       if (btnProcess) {
