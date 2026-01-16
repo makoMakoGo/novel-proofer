@@ -132,9 +132,12 @@
           <!-- Action Buttons -->
           <div class="grid gap-3 mb-5">
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="actionPrimary">
-              <button type="button" id="btnValidate" class="w-full px-5 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg transition-colors active:scale-[0.99]">
-                开始预处理
-              </button>
+              <div class="w-full flex flex-col">
+                <button type="button" id="btnValidate" class="w-full px-5 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg transition-colors active:scale-[0.99]">
+                  开始预处理
+                </button>
+                <div id="validateHint" class="mt-1 text-[11px] text-slate-400 hidden">请先选择或拖拽 TXT 文件</div>
+              </div>
               <button type="button" id="btnProcess" class="w-full px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>
                 开始校对
               </button>
@@ -450,6 +453,7 @@
     const metaModel = document.getElementById('metaModel');
     const wfStateBadge = document.getElementById('wfStateBadge');
     const btnValidate = document.getElementById('btnValidate');
+    const validateHint = document.getElementById('validateHint');
     const btnProcess = document.getElementById('btnProcess');
     const btnMerge = document.getElementById('btnMerge');
     const btnPause = document.getElementById('btnPause');
@@ -497,6 +501,7 @@
     let chunkCounts = null;
     let totalChunksFromServer = 0;
     let chunksFetchInFlight = false;
+    let createJobInFlight = false;
 
     const UI_STATE_KEY = 'novel_proofer.ui_state.v1';
     const UI_STATE_FIELDS = [
@@ -639,6 +644,7 @@
         if (fileWordCount) fileWordCount.textContent = '-';
       }
       refreshOutputPreview();
+      if (!currentJobId) refreshActionButtons(null);
     }
 
     function refreshSourcePanelFromJob(job) {
@@ -1245,8 +1251,11 @@
 
       // Validate: start new job OR resume validate if paused in validate phase.
       const canResumeValidate = hasJob && state === 'paused' && phase === 'validate';
-      const canValidate = (!hasJob) || canResumeValidate;
-      if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续预处理' : '开始预处理';
+      const hasLocalFile = !!fileInput?.files?.[0];
+      const canStartValidate = (!hasJob) && hasLocalFile && !createJobInFlight;
+      const canValidate = canResumeValidate || canStartValidate;
+      if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续预处理' : (createJobInFlight ? '提交中...' : '开始预处理');
+      if (validateHint) validateHint.classList.toggle('hidden', hasJob || hasLocalFile || createJobInFlight);
 
       const canProcess = hasJob && state === 'paused' && phase === 'process';
       if (btnProcess) {
@@ -1913,6 +1922,7 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (currentJobId) return;
+      if (createJobInFlight) return;
       detachUi({ clearFile: false });
 
       const fd = new FormData(form);
@@ -1933,20 +1943,35 @@
         show('请选择 TXT 文件。');
         return;
       }
-      const opts = buildJobOptions(fd, extra.value);
-      const requestFd = new FormData();
-      requestFd.append('file', file);
-      requestFd.append('options', JSON.stringify(opts));
 
-      const res = await fetch('api/v1/jobs', { method: 'POST', body: requestFd });
-      const data = await res.json();
-      if (!res.ok) {
-        show(data);
-        return;
+      createJobInFlight = true;
+      refreshActionButtons(null);
+
+      try {
+        const opts = buildJobOptions(fd, extra.value);
+        const requestFd = new FormData();
+        requestFd.append('file', file);
+        requestFd.append('options', JSON.stringify(opts));
+
+        const res = await fetch('api/v1/jobs', { method: 'POST', body: requestFd });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          show(data || '创建任务失败。');
+          return;
+        }
+
+        const jobId = String(data?.job?.id || '').trim();
+        if (!jobId) {
+          show('创建任务失败：返回缺少 job_id。');
+          return;
+        }
+        await attachJob(jobId);
+      } catch (e) {
+        show('创建任务失败：网络或服务异常。');
+      } finally {
+        createJobInFlight = false;
+        if (!currentJobId) refreshActionButtons(null);
       }
-
-      const jobId = data?.job?.id;
-      await attachJob(jobId);
     });
 
     // Auto reattach on page reload.
