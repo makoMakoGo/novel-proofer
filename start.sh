@@ -170,7 +170,7 @@ PY
 
   if [[ "$MODE" == "smoke" ]]; then
     echo "[novel-proofer] Running tests..."
-    uv run --frozen --no-sync pytest -q
+    "$PY" -m pytest -q
     echo "[novel-proofer] Tests OK."
     exit 0
   fi
