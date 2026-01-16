@@ -24,12 +24,19 @@ bash start.sh
 > [!NOTE]
 > 如果你是从 Windows 直接复制仓库到 WSL2，并把 Windows 的 `.venv/` 也一起带过来：那个 venv 在 WSL2 下不可用。`start.sh` 会把它自动移动到 `.venv.win*` 并重新创建 Linux venv。
 
-手动启动（Windows）：
+uv（推荐，跨平台）：
 
 ```bash
+uv sync --frozen --no-install-project --no-dev
+uv run --frozen --no-sync -m novel_proofer.server
+```
+
+手动启动（Windows）：
+
+```bat
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 python -m novel_proofer.server
 ```
 
@@ -38,7 +45,7 @@ python -m novel_proofer.server
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 python -m novel_proofer.server
 ```
 

@@ -8,83 +8,38 @@ on:
 
 jobs:
   test:
-    name: lint + test (windows-latest, py3.14)
-    runs-on: windows-latest
+    name: lint + test (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python-version: ["3.12", "3.14"]
     env:
       NOVEL_PROOFER_RUN_LLM_TESTS: "false"
+      UV_NO_PROGRESS: "1"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v7
         with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-      - name: Create venv
+          python-version: ${{ matrix.python-version }}
+      - name: Sync deps
         shell: bash
         run: |
-          python -m venv .venv
-          echo "PY=.venv/Scripts/python.exe" >> "$GITHUB_ENV"
-      - name: Install deps
-        shell: bash
-        run: |
-          "$PY" -m pip install --upgrade pip
-          "$PY" -m pip install -r requirements.txt -r requirements-dev.txt
+          uv sync --frozen --no-install-project --group dev
       - name: Ruff format (check)
         shell: bash
         run: |
-          "$PY" -m ruff format --check
+          uv run --frozen --no-sync ruff format --check
       - name: Ruff lint
         shell: bash
         run: |
-          "$PY" -m ruff check
+          uv run --frozen --no-sync ruff check
       - name: Mypy
         shell: bash
         run: |
-          "$PY" -m mypy novel_proofer
+          uv run --frozen --no-sync mypy novel_proofer
       - name: Pytest
         shell: bash
         run: |
-          "$PY" -m pytest -q
-
-  test_ubuntu:
-    name: lint + test (ubuntu-latest, py3.14)
-    runs-on: ubuntu-latest
-    env:
-      NOVEL_PROOFER_RUN_LLM_TESTS: "false"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
-      - name: Create venv
-        shell: bash
-        run: |
-          python -m venv .venv
-          echo "PY=.venv/bin/python" >> "$GITHUB_ENV"
-      - name: Install deps
-        shell: bash
-        run: |
-          "$PY" -m pip install --upgrade pip
-          "$PY" -m pip install -r requirements.txt -r requirements-dev.txt
-      - name: Ruff format (check)
-        shell: bash
-        run: |
-          "$PY" -m ruff format --check
-      - name: Ruff lint
-        shell: bash
-        run: |
-          "$PY" -m ruff check
-      - name: Mypy
-        shell: bash
-        run: |
-          "$PY" -m mypy novel_proofer
-      - name: Pytest
-        shell: bash
-        run: |
-          "$PY" -m pytest -q
+          uv run --frozen --no-sync pytest -q

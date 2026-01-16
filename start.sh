@@ -14,6 +14,7 @@ fi
 VENV_DIR=".venv"
 PY_LINUX="$VENV_DIR/bin/python"
 
+# If a Windows venv was copied into WSL, it will not be executable.
 if [[ -d "$VENV_DIR" && ! -x "$PY_LINUX" && -f "$VENV_DIR/Scripts/python.exe" ]]; then
   BACKUP_DIR="${VENV_DIR}.win"
   if [[ -e "$BACKUP_DIR" ]]; then
@@ -23,40 +24,63 @@ if [[ -d "$VENV_DIR" && ! -x "$PY_LINUX" && -f "$VENV_DIR/Scripts/python.exe" ]]
   mv "$VENV_DIR" "$BACKUP_DIR"
 fi
 
-NEED_VENV_CREATE=0
+# Prefer uv when available; fall back to pip + requirements.lock.txt.
+if command -v uv >/dev/null 2>&1; then
+  echo "[novel-proofer] Using: $(uv --version 2>&1)"
 
-if [[ ! -x "$PY_LINUX" ]]; then
-  NEED_VENV_CREATE=1
-elif [[ ! -f "$VENV_DIR/bin/activate" ]]; then
-  NEED_VENV_CREATE=1
-elif ! "$PY_LINUX" -m pip --version >/dev/null 2>&1; then
-  NEED_VENV_CREATE=1
-fi
-
-if [[ "$NEED_VENV_CREATE" == "1" ]]; then
-  rm -rf "$VENV_DIR"
-  BASE_PYTHON=""
-  if command -v python3 >/dev/null 2>&1; then
-    BASE_PYTHON="python3"
-  elif command -v python >/dev/null 2>&1; then
-    BASE_PYTHON="python"
+  SYNC_ARGS=(sync --frozen --no-install-project)
+  if [[ "$MODE" == "serve" ]]; then
+    SYNC_ARGS+=(--no-dev)
   else
-    echo "[novel-proofer] Python not found. Please install Python 3.10+."
-    exit 1
+    SYNC_ARGS+=(--group dev)
   fi
 
-  echo "[novel-proofer] .venv not found, creating..."
-  "$BASE_PYTHON" -m venv "$VENV_DIR"
-fi
+  uv "${SYNC_ARGS[@]}"
 
-source "$VENV_DIR/bin/activate"
+  PY="$PY_LINUX"
+  echo "[novel-proofer] Using: $($PY --version 2>&1)"
 
-PY="$PY_LINUX"
-echo "[novel-proofer] Using: $("$PY" --version 2>&1)"
+  if [[ "$MODE" == "smoke" ]]; then
+    echo "[novel-proofer] Running tests..."
+    uv run --frozen --no-sync pytest -q
+    echo "[novel-proofer] Tests OK."
+    exit 0
+  fi
+else
+  NEED_VENV_CREATE=0
 
-requirements_satisfied() {
-  local req_file="$1"
-  "$PY" - "$req_file" <<'PY'
+  if [[ ! -x "$PY_LINUX" ]]; then
+    NEED_VENV_CREATE=1
+  elif [[ ! -f "$VENV_DIR/bin/activate" ]]; then
+    NEED_VENV_CREATE=1
+  elif ! "$PY_LINUX" -m pip --version >/dev/null 2>&1; then
+    NEED_VENV_CREATE=1
+  fi
+
+  if [[ "$NEED_VENV_CREATE" == "1" ]]; then
+    rm -rf "$VENV_DIR"
+    BASE_PYTHON=""
+    if command -v python3 >/dev/null 2>&1; then
+      BASE_PYTHON="python3"
+    elif command -v python >/dev/null 2>&1; then
+      BASE_PYTHON="python"
+    else
+      echo "[novel-proofer] Python not found. Please install Python 3.12+."
+      exit 1
+    fi
+
+    echo "[novel-proofer] .venv not found, creating..."
+    "$BASE_PYTHON" -m venv "$VENV_DIR"
+  fi
+
+  source "$VENV_DIR/bin/activate"
+
+  PY="$PY_LINUX"
+  echo "[novel-proofer] Using: $($PY --version 2>&1)"
+
+  requirements_satisfied() {
+    local req_file="$1"
+    "$PY" - "$req_file" <<PY
 import re
 import sys
 from importlib.metadata import PackageNotFoundError, version
@@ -101,11 +125,11 @@ for raw in lines:
         sys.exit(1)
 sys.exit(0)
 PY
-}
+  }
 
-requirements_has_entries() {
-  local req_file="$1"
-  "$PY" - "$req_file" <<'PY'
+  requirements_has_entries() {
+    local req_file="$1"
+    "$PY" - "$req_file" <<PY
 import re
 import sys
 from pathlib import Path
@@ -123,45 +147,33 @@ for raw in lines:
     sys.exit(0)
 sys.exit(1)
 PY
-}
+  }
 
-install_main_requirements() {
-  if [[ ! -f "requirements.txt" ]]; then
-    echo "[novel-proofer] No requirements.txt, skipping dependency install."
-    return 0
-  fi
-  if ! requirements_has_entries "requirements.txt"; then
-    echo "[novel-proofer] requirements.txt has no dependencies, skipping install."
-    return 0
-  fi
-  if requirements_satisfied "requirements.txt"; then
-    echo "[novel-proofer] Dependencies already installed."
-    return 0
-  fi
-  echo "[novel-proofer] Installing dependencies from requirements.txt..."
-  "$PY" -m pip --disable-pip-version-check install -r requirements.txt
-}
+  install_requirements() {
+    if [[ ! -f "requirements.lock.txt" ]]; then
+      echo "[novel-proofer] No requirements.lock.txt, skipping dependency install."
+      return 0
+    fi
+    if ! requirements_has_entries "requirements.lock.txt"; then
+      echo "[novel-proofer] requirements.lock.txt has no dependencies, skipping install."
+      return 0
+    fi
+    if requirements_satisfied "requirements.lock.txt"; then
+      echo "[novel-proofer] Dependencies already installed."
+      return 0
+    fi
+    echo "[novel-proofer] Installing dependencies from requirements.lock.txt..."
+    "$PY" -m pip --disable-pip-version-check install -r requirements.lock.txt
+  }
 
-install_dev_requirements() {
-  if [[ ! -f "requirements-dev.txt" ]]; then
-    return 0
-  fi
-  if requirements_satisfied "requirements-dev.txt"; then
-    echo "[novel-proofer] Dev dependencies already installed."
-    return 0
-  fi
-  echo "[novel-proofer] Installing dev dependencies..."
-  "$PY" -m pip --disable-pip-version-check install -r requirements-dev.txt
-}
+  install_requirements
 
-install_main_requirements
-
-if [[ "$MODE" == "smoke" ]]; then
-  echo "[novel-proofer] Running tests..."
-  install_dev_requirements
-  "$PY" -m pytest -q
-  echo "[novel-proofer] Tests OK."
-  exit 0
+  if [[ "$MODE" == "smoke" ]]; then
+    echo "[novel-proofer] Running tests..."
+    uv run --frozen --no-sync pytest -q
+    echo "[novel-proofer] Tests OK."
+    exit 0
+  fi
 fi
 
 HOST="${NP_HOST:-127.0.0.1}"
@@ -169,7 +181,7 @@ PORT="${NP_PORT:-18080}"
 
 is_port_free() {
   local candidate="$1"
-  "$PY" - "$candidate" "$HOST" <<'PY'
+  "$PY" - "$candidate" "$HOST" <<PY
 import socket
 import sys
 
