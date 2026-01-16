@@ -132,12 +132,9 @@
           <!-- Action Buttons -->
           <div class="grid gap-3 mb-5">
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="actionPrimary">
-              <div class="w-full flex flex-col">
-                <button type="button" id="btnValidate" class="w-full px-5 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg transition-colors active:scale-[0.99]">
-                  开始预处理
-                </button>
-                <div id="validateHint" class="mt-1 text-[11px] text-slate-400 hidden">请先选择或拖拽 TXT 文件</div>
-              </div>
+              <button type="button" id="btnValidate" class="w-full px-5 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg transition-colors active:scale-[0.99]">
+                开始预处理
+              </button>
               <button type="button" id="btnProcess" class="w-full px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>
                 开始校对
               </button>
@@ -453,7 +450,6 @@
     const metaModel = document.getElementById('metaModel');
     const wfStateBadge = document.getElementById('wfStateBadge');
     const btnValidate = document.getElementById('btnValidate');
-    const validateHint = document.getElementById('validateHint');
     const btnProcess = document.getElementById('btnProcess');
     const btnMerge = document.getElementById('btnMerge');
     const btnPause = document.getElementById('btnPause');
@@ -1255,7 +1251,6 @@
       const canStartValidate = (!hasJob) && hasLocalFile && !createJobInFlight;
       const canValidate = canResumeValidate || canStartValidate;
       if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续预处理' : (createJobInFlight ? '提交中...' : '开始预处理');
-      if (validateHint) validateHint.classList.toggle('hidden', hasJob || hasLocalFile || createJobInFlight);
 
       const canProcess = hasJob && state === 'paused' && phase === 'process';
       if (btnProcess) {
