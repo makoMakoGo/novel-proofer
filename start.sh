@@ -14,6 +14,8 @@ fi
 VENV_DIR=".venv"
 PY_LINUX="$VENV_DIR/bin/python"
 
+PY_CMD=()
+
 # If a Windows venv was copied into WSL, it will not be executable.
 if [[ -d "$VENV_DIR" && ! -x "$PY_LINUX" && -f "$VENV_DIR/Scripts/python.exe" ]]; then
   BACKUP_DIR="${VENV_DIR}.win"
@@ -37,12 +39,12 @@ if command -v uv >/dev/null 2>&1; then
 
   uv "${SYNC_ARGS[@]}"
 
-  PY="$PY_LINUX"
-  echo "[novel-proofer] Using: $($PY --version 2>&1)"
+  PY_CMD=(uv run --frozen --no-sync python)
+  echo "[novel-proofer] Using: $("${PY_CMD[@]}" --version 2>&1)"
 
   if [[ "$MODE" == "smoke" ]]; then
     echo "[novel-proofer] Running tests..."
-    uv run --frozen --no-sync pytest -q
+    "${PY_CMD[@]}" -m pytest -q
     echo "[novel-proofer] Tests OK."
     exit 0
   fi
@@ -76,7 +78,8 @@ else
   source "$VENV_DIR/bin/activate"
 
   PY="$PY_LINUX"
-  echo "[novel-proofer] Using: $($PY --version 2>&1)"
+  PY_CMD=("$PY")
+  echo "[novel-proofer] Using: $("${PY_CMD[@]}" --version 2>&1)"
 
   requirements_satisfied() {
     local req_file="$1"
@@ -181,7 +184,7 @@ PORT="${NP_PORT:-18080}"
 
 is_port_free() {
   local candidate="$1"
-  "$PY" - "$candidate" "$HOST" <<PY
+  "${PY_CMD[@]}" - "$candidate" "$HOST" <<PY
 import socket
 import sys
 
@@ -216,4 +219,4 @@ pick_port "$PORT"
 
 echo "[novel-proofer] Starting server..."
 echo "[novel-proofer] URL: http://${HOST}:${PORT}/"
-exec "$PY" -m novel_proofer.server --host "$HOST" --port "$PORT"
+exec "${PY_CMD[@]}" -m novel_proofer.server --host "$HOST" --port "$PORT"
