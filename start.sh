@@ -62,7 +62,10 @@ import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-from packaging.requirements import InvalidRequirement, Requirement
+try:
+    from packaging.requirements import InvalidRequirement, Requirement
+except Exception:
+    from pip._vendor.packaging.requirements import InvalidRequirement, Requirement
 
 path = Path(sys.argv[1])
 lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
