@@ -54,16 +54,74 @@ source "$VENV_DIR/bin/activate"
 PY="$PY_LINUX"
 echo "[novel-proofer] Using: $("$PY" --version 2>&1)"
 
-if [[ -f "requirements.txt" ]]; then
-  echo "[novel-proofer] Installing dependencies from requirements.txt..."
-  "$PY" -m pip --disable-pip-version-check install -r requirements.txt
-fi
+requirements_satisfied() {
+  local req_file="$1"
+  "$PY" - "$req_file" <<'PY'
+import re
+import sys
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+
+from packaging.requirements import InvalidRequirement, Requirement
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+def normalize(raw: str) -> str:
+    raw = raw.lstrip("\ufeff").strip()
+    raw = re.split(r"\s+#", raw, 1)[0].strip()
+    return raw
+
+def is_satisfied(line: str) -> bool:
+    if not line or line.startswith("#"):
+        return True
+    if line.startswith("-"):
+        return False
+    try:
+        req = Requirement(line)
+    except InvalidRequirement:
+        return False
+    if req.marker is not None and not req.marker.evaluate():
+        return True
+    if getattr(req, "url", None):
+        return False
+    try:
+        v = version(req.name)
+    except PackageNotFoundError:
+        return False
+    if not req.specifier:
+        return True
+    return req.specifier.contains(v, prereleases=True)
+
+for raw in lines:
+    if not is_satisfied(normalize(raw)):
+        sys.exit(1)
+sys.exit(0)
+PY
+}
+
+maybe_install_requirements() {
+  local req_file="$1"
+  local label="$2"
+  if [[ ! -f "$req_file" ]]; then
+    return 0
+  fi
+  if requirements_satisfied "$req_file"; then
+    return 0
+  fi
+  if [[ -n "$label" ]]; then
+    echo "[novel-proofer] Installing ${label} dependencies from ${req_file}..."
+  else
+    echo "[novel-proofer] Installing dependencies from ${req_file}..."
+  fi
+  "$PY" -m pip --disable-pip-version-check install -r "$req_file"
+}
+
+maybe_install_requirements "requirements.txt" ""
 
 if [[ "$MODE" == "smoke" ]]; then
   echo "[novel-proofer] Running tests..."
-  if [[ -f "requirements-dev.txt" ]]; then
-    "$PY" -m pip --disable-pip-version-check install -r requirements-dev.txt
-  fi
+  maybe_install_requirements "requirements-dev.txt" "dev"
   "$PY" -m pytest -q
   echo "[novel-proofer] Tests OK."
   exit 0
