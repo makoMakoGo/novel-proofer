@@ -51,20 +51,40 @@ cp .env.example .env
 
 ### 2. Start the Server
 
-Click the script or run in terminal:
+Windows（推荐）：
 
-```bash
+```bat
 .\start.bat
 ```
 > [!NOTE]
 > `start.bat` 会自动创建并激活 `.venv` 虚拟环境，无需手动配置。其等价于下边手动启动过程👇
-> 
+>
+
+WSL2 / Linux / macOS：
+
+```bash
+bash start.sh
+# or: ./start.sh
+```
+> [!NOTE]
+> 你这笨蛋小狗如果是从 Windows 直接把整个项目文件夹复制到 WSL2，并把 `.venv/` 也一起复制过来：那个 `.venv` 是 Windows 专用的，WSL2 下不能用。`start.sh` 会自动把它移到 `.venv.win*` 并重新创建 Linux venv。
 
 Try manual installation and start alternatively:
+
+Windows：
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
+pip install -r requirements.txt
+python -m novel_proofer.server
+```
+
+WSL2 / Linux / macOS：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python -m novel_proofer.server
 ```

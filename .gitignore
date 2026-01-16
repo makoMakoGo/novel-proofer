@@ -13,6 +13,7 @@ htmlcov/
 
 # Virtual environments
 .venv/
+.venv.win*/
 
 # Local env files
 .env
@@ -34,6 +35,7 @@ tmpclaude-*
 .DS_Store
 Thumbs.db
 desktop.ini
+*:Zone.Identifier
 
 ## AI config not wanted
 .claude/specs/

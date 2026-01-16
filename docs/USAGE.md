@@ -12,11 +12,32 @@
 
 ## 安装与启动
 
-双击 `start.bat` 启动，或手动执行以下命令：
+Windows：双击 `start.bat`（或运行 `.\start.bat`）。
+
+WSL2 / Linux / macOS：运行：
+
+```bash
+bash start.sh
+# or: ./start.sh
+```
+
+> [!NOTE]
+> 如果你是从 Windows 直接复制仓库到 WSL2，并把 Windows 的 `.venv/` 也一起带过来：那个 venv 在 WSL2 下不可用。`start.sh` 会把它自动移动到 `.venv.win*` 并重新创建 Linux venv。
+
+手动启动（Windows）：
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
+pip install -r requirements.txt
+python -m novel_proofer.server
+```
+
+手动启动（WSL2 / Linux / macOS）：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python -m novel_proofer.server
 ```

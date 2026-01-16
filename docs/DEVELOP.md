@@ -18,21 +18,37 @@
 ### 1.1 环境要求
 
 - Python 3.10+
-- Windows 为主要支持平台（仓库提供 `start.bat` 一键启动）
+- Windows / WSL2 / Linux / macOS（仓库提供 `start.bat` 与 `start.sh` 一键启动）
 
 ### 1.2 启动服务
 
-推荐直接运行：
+Windows（推荐）：
 
 ```bash
 .\start.bat
 ```
 
-等价的手动方式：
+WSL2 / Linux / macOS：
+
+```bash
+bash start.sh
+# or: ./start.sh
+```
+
+等价的手动方式（Windows）：
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
+pip install -r requirements.txt
+python -m novel_proofer.server
+```
+
+等价的手动方式（WSL2 / Linux / macOS）：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 python -m novel_proofer.server
 ```
