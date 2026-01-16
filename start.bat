@@ -27,7 +27,7 @@ if not errorlevel 1 (
   echo [novel-proofer] Using: !UVVER!
 
   if /i "%MODE%"=="smoke" (
-    uv sync --frozen --no-install-project
+    uv sync --frozen --no-install-project --group dev
     if errorlevel 1 exit /b 1
 
     for /f "delims=" %%v in ('uv run --frozen --no-sync python --version 2^>^&1') do set "PYVER=%%v"

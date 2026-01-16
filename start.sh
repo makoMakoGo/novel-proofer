@@ -31,6 +31,8 @@ if command -v uv >/dev/null 2>&1; then
   SYNC_ARGS=(sync --frozen --no-install-project)
   if [[ "$MODE" == "serve" ]]; then
     SYNC_ARGS+=(--no-dev)
+  else
+    SYNC_ARGS+=(--group dev)
   fi
 
   uv "${SYNC_ARGS[@]}"
@@ -40,7 +42,7 @@ if command -v uv >/dev/null 2>&1; then
 
   if [[ "$MODE" == "smoke" ]]; then
     echo "[novel-proofer] Running tests..."
-    "$PY" -m pytest -q
+    uv run --frozen --no-sync pytest -q
     echo "[novel-proofer] Tests OK."
     exit 0
   fi
@@ -168,7 +170,7 @@ PY
 
   if [[ "$MODE" == "smoke" ]]; then
     echo "[novel-proofer] Running tests..."
-    "$PY" -m pytest -q
+    uv run --frozen --no-sync pytest -q
     echo "[novel-proofer] Tests OK."
     exit 0
   fi
