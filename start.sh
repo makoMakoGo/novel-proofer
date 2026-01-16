@@ -100,28 +100,62 @@ sys.exit(0)
 PY
 }
 
-maybe_install_requirements() {
+requirements_has_entries() {
   local req_file="$1"
-  local label="$2"
-  if [[ ! -f "$req_file" ]]; then
-    return 0
-  fi
-  if requirements_satisfied "$req_file"; then
-    return 0
-  fi
-  if [[ -n "$label" ]]; then
-    echo "[novel-proofer] Installing ${label} dependencies from ${req_file}..."
-  else
-    echo "[novel-proofer] Installing dependencies from ${req_file}..."
-  fi
-  "$PY" -m pip --disable-pip-version-check install -r "$req_file"
+  "$PY" - "$req_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+for raw in lines:
+    line = raw.lstrip("\ufeff").strip()
+    line = re.split(r"\s+#", line, 1)[0].strip()
+    if not line:
+        continue
+    if line.startswith("#"):
+        continue
+    sys.exit(0)
+sys.exit(1)
+PY
 }
 
-maybe_install_requirements "requirements.txt" ""
+install_main_requirements() {
+  if [[ ! -f "requirements.txt" ]]; then
+    echo "[novel-proofer] No requirements.txt, skipping dependency install."
+    return 0
+  fi
+  if ! requirements_has_entries "requirements.txt"; then
+    echo "[novel-proofer] requirements.txt has no dependencies, skipping install."
+    return 0
+  fi
+  if requirements_satisfied "requirements.txt"; then
+    echo "[novel-proofer] Dependencies already installed."
+    return 0
+  fi
+  echo "[novel-proofer] Installing dependencies from requirements.txt..."
+  "$PY" -m pip --disable-pip-version-check install -r requirements.txt
+}
+
+install_dev_requirements() {
+  if [[ ! -f "requirements-dev.txt" ]]; then
+    return 0
+  fi
+  if requirements_satisfied "requirements-dev.txt"; then
+    echo "[novel-proofer] Dev dependencies already installed."
+    return 0
+  fi
+  echo "[novel-proofer] Installing dev dependencies..."
+  "$PY" -m pip --disable-pip-version-check install -r requirements-dev.txt
+}
+
+install_main_requirements
 
 if [[ "$MODE" == "smoke" ]]; then
   echo "[novel-proofer] Running tests..."
-  maybe_install_requirements "requirements-dev.txt" "dev"
+  install_dev_requirements
   "$PY" -m pytest -q
   echo "[novel-proofer] Tests OK."
   exit 0
