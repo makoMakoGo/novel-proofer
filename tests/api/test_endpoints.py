@@ -227,19 +227,8 @@ def test_create_job_llm_enabled_requires_base_url_and_model(monkeypatch: pytest.
             GLOBAL_JOBS.delete(str(job_id))
 
 
-def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.MonkeyPatch):
+def test_job_actions_pause_resume(monkeypatch: pytest.MonkeyPatch):
     client = TestClient(api.app)
-
-    # Cancel
-    job1 = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
-    try:
-        r = client.post(f"/api/v1/jobs/{job1.job_id}/cancel")
-        assert r.status_code == 200
-        assert r.json().get("ok") is True
-        st = GLOBAL_JOBS.get(job1.job_id)
-        assert st is not None and st.state == "paused"
-    finally:
-        GLOBAL_JOBS.delete(job1.job_id)
 
     # Pause -> Resume (avoid background runner side effects)
     monkeypatch.setattr(api, "resume_paused_job", lambda *_a, **_k: None)
@@ -262,6 +251,45 @@ def test_job_actions_cancel_pause_resume_retry_cleanup(monkeypatch: pytest.Monke
         assert st2 is not None and st2.state in {"queued", "running"}
     finally:
         GLOBAL_JOBS.delete(job2.job_id)
+
+
+def test_job_input_stats_endpoint(monkeypatch: pytest.MonkeyPatch):
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        out_dir = base / "output"
+        jobs_dir = out_dir / ".jobs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+
+        client = TestClient(api.app)
+        job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+        try:
+            api._write_input_cache(job.job_id, "a b\n　　c\n")
+            r = client.get(f"/api/v1/jobs/{job.job_id}/input-stats")
+            assert r.status_code == 200, r.text
+            data = r.json()
+            assert data.get("job_id") == job.job_id
+            assert data.get("input_chars") == 3
+
+            # Fallback: if input cache is missing, derive from debug pre/ chunks.
+            (out_dir / ".inputs" / f"{job.job_id}.txt").unlink(missing_ok=True)
+            job_dir = jobs_dir / job.job_id
+            pre_dir = job_dir / "pre"
+            pre_dir.mkdir(parents=True, exist_ok=True)
+            (pre_dir / "000000.txt").write_text("a b\n", encoding="utf-8")
+            (pre_dir / "000001.txt").write_text("　　c\n", encoding="utf-8")
+            GLOBAL_JOBS.update(job.job_id, work_dir=str(job_dir))
+
+            r2 = client.get(f"/api/v1/jobs/{job.job_id}/input-stats")
+            assert r2.status_code == 200, r2.text
+            data2 = r2.json()
+            assert data2.get("job_id") == job.job_id
+            assert data2.get("input_chars") == 3
+        finally:
+            GLOBAL_JOBS.delete(job.job_id)
 
     # Retry-failed (avoid background runner side effects)
     monkeypatch.setattr(api, "retry_failed_chunks", lambda *_a, **_k: None)

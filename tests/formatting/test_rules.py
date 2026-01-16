@@ -156,3 +156,22 @@ def test_paragraph_indent_mixed_cjk_ascii_not_title() -> None:
     out, _ = apply_rules(text, cfg)
     lines = out.rstrip("\n").split("\n")
     assert lines[2].startswith("\u3000\u3000（你纯M啊）")
+
+
+def test_normalize_cjk_punctuation_preserves_numeric_separators() -> None:
+    cfg = FormatConfig(
+        paragraph_indent=False,
+        indent_with_fullwidth_space=True,
+        normalize_blank_lines=False,
+        trim_trailing_spaces=False,
+        normalize_ellipsis=False,
+        normalize_em_dash=False,
+        normalize_cjk_punctuation=True,
+        fix_cjk_punct_spacing=False,
+        normalize_quotes=False,
+    )
+    text = "价格是3．14元，不是3。1400。\n他写下1，000，000作为目标。\n"
+    out, _ = apply_rules(text, cfg)
+    assert "3.14" in out
+    assert "3.1400" in out
+    assert "1,000,000" in out

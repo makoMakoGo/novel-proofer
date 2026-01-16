@@ -126,6 +126,14 @@ def _normalize_cjk_punctuation(text: str) -> tuple[str, int]:
 
     count = 0
 
+    # Preserve numeric punctuation: some models emit fullwidth separators in numbers.
+    # - 3．14 / 3。14 -> 3.14
+    # - 1，000，000 -> 1,000,000
+    text, n = re.subn(r"(?<=\d)[\uFF0E\u3002](?=\d)", ".", text)  # fullwidth dot / ideographic full stop
+    count += n
+    text, n = re.subn(r"(?<=\d)\uFF0C(?=\d)", ",", text)  # fullwidth comma
+    count += n
+
     # Comma
     text, n = re.subn(rf"(?<=[{_CJK}])(?<!\d),(?!\d)", "，", text)
     count += n

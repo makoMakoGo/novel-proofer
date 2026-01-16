@@ -40,7 +40,9 @@
     
     .tab-btn.active { color: #18181b; }
     .tab-btn.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: #18181b; }
-    
+
+    .wf-step[style*="--wf-underline"]::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: currentColor; border-radius: 1px; }
+
     .filter-btn.active { background-color: #18181b; color: white; border-color: #18181b; }
     
     /* Smooth fade for content */
@@ -67,32 +69,31 @@
     <!-- Main Card -->
     <main class="bg-white rounded-2xl shadow-[0_2px_15px_-3px_rgba(0,0,0,0.07),0_10px_20px_-2px_rgba(0,0,0,0.04)] border border-slate-100 overflow-hidden">
       
-      <div class="p-6 sm:p-8">
+      <div class="p-6 sm:p-8 pt-5 sm:pt-6">
         <form id="mainForm" action="#" method="post" enctype="multipart/form-data">
           
           <!-- File Upload Section -->
           <div class="mb-8">
-            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">源文件</label>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <!-- 区域1: 文件选择框 -->
-              <div class="file-drop group relative p-6 border-2 border-dashed border-slate-200 rounded-xl hover:border-ink/50 hover:bg-slate-50 transition-all duration-200 cursor-pointer text-center" id="fileDrop">
+              <div class="file-drop group relative p-5 border border-dashed border-slate-200 rounded-xl bg-slate-50/30 hover:border-slate-300 hover:bg-slate-50/50 transition-colors duration-200 cursor-pointer text-center" id="fileDrop">
                 <div class="pointer-events-none">
                   <div class="mb-2 text-slate-400 group-hover:text-ink transition-colors">
                     <svg class="w-7 h-7 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                   </div>
-                  <div class="text-sm font-medium text-slate-600 group-hover:text-ink transition-colors">点击选择或拖拽 TXT 文件</div>
+                  <div class="text-sm font-medium text-slate-600 group-hover:text-ink transition-colors" id="fileDropText">点击选择或拖拽 TXT 文件</div>
                 </div>
                 <input name="file" type="file" accept=".txt,text/plain" required class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
               </div>
               <!-- 区域2: 文件信息显示 -->
-              <div class="p-6 border-2 border-dashed border-slate-200 rounded-xl bg-slate-50/50 flex flex-col justify-center" id="fileInfoPanel">
+              <div class="p-5 border border-slate-200 rounded-xl bg-slate-50/30 flex flex-col justify-center" id="fileInfoPanel">
                 <div class="text-center text-slate-400" id="fileInfoEmpty">
                   <svg class="w-7 h-7 mx-auto mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  <div class="text-sm">未选择任何文件</div>
+                  <div class="text-sm" id="fileInfoEmptyText">未选择任何文件</div>
                 </div>
                 <div class="hidden" id="fileInfoContent">
                   <div class="space-y-3">
@@ -116,35 +117,51 @@
             </div>
           </div>
 
+          <!-- Workflow Stepper -->
+          <div class="mb-4 flex items-center gap-3 text-xs">
+            <div class="flex items-center gap-3" id="workflowStepper" aria-label="Workflow">
+              <span class="wf-step relative pb-0.5 cursor-help text-ink font-medium" data-wf-step="validate" title="预处理：解码、切片、本地规则粗处理（不调用 LLM）">预处理</span>
+              <span class="wf-step relative pb-0.5 cursor-help text-slate-400" data-wf-step="process" title="LLM 校对：逐分片调用 LLM + 输出校验 + 自动重试">LLM校对</span>
+              <span class="wf-step relative pb-0.5 cursor-help text-slate-400" data-wf-step="merge" title="合并：将各分片输出合并为最终文件（可选清理中间产物）">合并</span>
+              <span class="wf-step relative pb-0.5 cursor-help text-slate-400" data-wf-step="done" title="完成：输出文件已生成，可下载/新任务">完成</span>
+            </div>
+            <span class="text-slate-300">·</span>
+            <span id="wfStateBadge" class="text-slate-400">未开始</span>
+          </div>
+
           <!-- Action Buttons -->
-          <div class="flex flex-wrap items-center gap-3 mb-4">
-            <button type="button" id="btnValidate" class="px-6 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg shadow-sm hover:shadow transition-all active:scale-[0.98]">
-              开始校验
-            </button>
-            <button type="button" id="btnProcess" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              开始处理
-            </button>
-            <button type="button" id="btnMerge" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              合并输出
-            </button>
-            <button type="button" id="btnPause" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              暂停
-            </button>
-            <button type="button" id="btnRetry" class="px-5 py-2.5 bg-white border border-amber-200 text-amber-700 hover:bg-amber-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              重试失败部分
-            </button>
-            <button type="button" id="btnCancel" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-red-50 hover:text-red-600 hover:border-red-200 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              取消（可恢复）
-            </button>
-            <button type="button" id="btnReset" class="px-5 py-2.5 bg-white border border-red-200 text-red-700 hover:bg-red-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              取消并清理
-            </button>
-            <button type="button" id="btnDownload" class="px-5 py-2.5 bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 text-sm font-medium rounded-lg transition-colors hidden" disabled>
-              下载输出
-            </button>
-            <button type="button" id="btnLoad" class="px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium rounded-lg transition-colors">
-              加载任务
-            </button>
+          <div class="grid gap-3 mb-5">
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="actionPrimary">
+              <button type="button" id="btnValidate" class="w-full px-5 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg transition-colors active:scale-[0.99]">
+                开始预处理
+              </button>
+              <button type="button" id="btnProcess" class="w-full px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>
+                开始校对
+              </button>
+              <button type="button" id="btnMerge" class="w-full px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>
+                合并输出
+              </button>
+              <button type="button" id="btnDownload" class="w-full px-5 py-2.5 bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 text-sm font-medium rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>
+                下载输出
+              </button>
+            </div>
+            <div class="grid grid-cols-2 sm:grid-cols-5 gap-3" id="actionControls">
+              <button type="button" id="btnPause" class="w-full px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>
+                暂停
+              </button>
+              <button type="button" id="btnRetry" class="w-full px-5 py-2.5 bg-white border border-amber-200 text-amber-700 hover:bg-amber-50 text-sm font-medium rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>
+                重试失败部分
+              </button>
+              <button type="button" id="btnCancel" class="w-full px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>
+                新任务
+              </button>
+              <button type="button" id="btnReset" class="w-full px-5 py-2.5 bg-white border border-red-200 text-red-700 hover:bg-red-50 text-sm font-medium rounded-lg transition-colors opacity-50 cursor-not-allowed" disabled>
+                删除任务
+              </button>
+              <button type="button" id="btnLoad" class="w-full px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-sm font-medium rounded-lg transition-colors">
+                加载任务
+              </button>
+            </div>
           </div>
 
           <div class="pt-0 mb-8 flex flex-wrap items-center justify-between gap-3">
@@ -156,30 +173,29 @@
             <div class="text-[10px] text-slate-300">v2.0</div>
           </div>
 
-          <!-- Progress Bar -->
-          <div class="mb-8 hidden" id="progress">
-            <div class="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 text-xs font-medium text-slate-500 mb-2" id="meta">
-              <span id="metaLeft" class="min-w-0 truncate">准备中</span>
-              <span id="metaRight" class="text-right tabular-nums">0%</span>
-              <div class="col-span-2 flex flex-wrap items-center gap-2 min-w-0 hidden" id="metaSub">
-                <span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 font-mono" id="metaPhaseWrap">
-                  <span class="text-slate-400 font-sans">阶段</span>
-                  <span id="metaPhase" class="truncate max-w-[10rem]">-</span>
-                </span>
-                <span class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 font-mono hidden" id="metaModelWrap">
-                  <span class="text-slate-400 font-sans">模型</span>
-                  <span id="metaModel" class="truncate max-w-[18rem]">-</span>
-                </span>
+          <!-- Progress Card -->
+          <div class="mb-8 hidden rounded-xl border border-slate-100 bg-slate-50/40 p-4" id="progress">
+            <div class="flex items-start justify-between gap-4 mb-2">
+              <div class="min-w-0 flex-1">
+                <div class="text-sm font-medium text-slate-700" id="metaLeft">准备中</div>
+                <div class="mt-1 text-xs text-slate-400 truncate hidden" id="metaModelWrap">
+                  <span class="text-slate-400">模型</span>
+                  <span id="metaModel" class="font-mono">-</span>
+                </div>
+              </div>
+              <div class="text-right flex-shrink-0">
+                <div class="text-lg font-bold font-mono text-slate-700" id="metaCounter">0/0</div>
+                <div class="text-xs text-slate-400 font-mono hidden" id="metaPctWrap"><span id="metaPct">0</span>%</div>
               </div>
             </div>
-            <div class="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-              <div class="h-full bg-ink transition-all duration-300 ease-out" style="width: 0%" id="bar"></div>
+            <div class="h-2.5 w-full bg-slate-200 rounded-full overflow-hidden">
+              <div class="h-full bg-ink transition-all duration-300 ease-out rounded-full" style="width: 0%" id="bar"></div>
             </div>
           </div>
 
           <!-- Output Message Area -->
           <div class="mb-8 hidden" id="out">
-            <div class="p-4 bg-slate-50 rounded-lg border border-slate-100">
+            <div class="p-4 bg-slate-50/40 rounded-lg border border-slate-100">
               <pre id="outText" class="text-xs font-mono text-slate-600 whitespace-pre-wrap break-all"></pre>
             </div>
           </div>
@@ -196,19 +212,10 @@
           <div id="tab-progress" class="tab-content block">
             <div class="grid gap-6">
               <div class="bg-slate-50 border border-slate-100 rounded-xl p-4">
-                <div class="flex flex-wrap items-center justify-between gap-2">
-                  <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider">当前任务</div>
-                  <div class="text-xs font-mono text-slate-400" id="jobIdShort">-</div>
+                <div class="flex items-center gap-2 text-sm">
+                  <span class="text-slate-500 font-medium">当前任务:</span>
+                  <span class="font-mono text-slate-700 truncate select-all"><span id="jobInputName">-</span>--<span id="jobId">-</span></span>
                 </div>
-                <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-600">
-                  <div class="min-w-0">
-                    <span class="text-slate-400">输入：</span><span class="truncate" id="jobInputName">-</span>
-                  </div>
-                  <div class="min-w-0">
-                    <span class="text-slate-400">输出：</span><a class="truncate text-slate-600" id="jobOutputName">-</a>
-                  </div>
-                </div>
-                <div class="mt-2 text-[11px] text-slate-400 font-mono truncate" id="jobOutputPath">-</div>
               </div>
 
               <!-- Stats -->
@@ -436,11 +443,12 @@
     const bar = document.getElementById('bar');
     const meta = document.getElementById('meta');
     const metaLeft = document.getElementById('metaLeft');
-    const metaRight = document.getElementById('metaRight');
-    const metaSub = document.getElementById('metaSub');
-    const metaPhase = document.getElementById('metaPhase');
+    const metaCounter = document.getElementById('metaCounter');
+    const metaPctWrap = document.getElementById('metaPctWrap');
+    const metaPct = document.getElementById('metaPct');
     const metaModelWrap = document.getElementById('metaModelWrap');
     const metaModel = document.getElementById('metaModel');
+    const wfStateBadge = document.getElementById('wfStateBadge');
     const btnValidate = document.getElementById('btnValidate');
     const btnProcess = document.getElementById('btnProcess');
     const btnMerge = document.getElementById('btnMerge');
@@ -457,15 +465,15 @@
     const suffixInput = form.querySelector('input[name="suffix"]');
     const outputPreview = document.getElementById('outputPreview');
     const fileDrop = document.getElementById('fileDrop');
+    const fileDropText = document.getElementById('fileDropText');
     const fileName = document.getElementById('fileName');
     const fileInfoPanel = document.getElementById('fileInfoPanel');
     const fileInfoEmpty = document.getElementById('fileInfoEmpty');
+    const fileInfoEmptyText = document.getElementById('fileInfoEmptyText');
     const fileInfoContent = document.getElementById('fileInfoContent');
     const fileWordCount = document.getElementById('fileWordCount');
-    const jobIdShort = document.getElementById('jobIdShort');
+    const jobId = document.getElementById('jobId');
     const jobInputName = document.getElementById('jobInputName');
-    const jobOutputName = document.getElementById('jobOutputName');
-    const jobOutputPath = document.getElementById('jobOutputPath');
     const sliceLockHint = document.getElementById('sliceLockHint');
     const llmLockHint = document.getElementById('llmLockHint');
 
@@ -559,6 +567,58 @@
       outputPreview.textContent = _previewOutputPath();
     }
 
+    function _countNonWhitespaceChars(text) {
+      return String(text || '').replace(/\s/g, '').length;
+    }
+
+    const INPUT_CHARS_MISSING = Symbol('INPUT_CHARS_MISSING');
+    const INPUT_CHARS_ERROR = Symbol('INPUT_CHARS_ERROR');
+
+    const _inputCharsCache = new Map();
+    const _inputCharsInFlight = new Set();
+
+    async function ensureJobInputChars(jobId) {
+      const jid = String(jobId || '').trim();
+      if (!jid) return;
+      if (_inputCharsCache.has(jid)) return;
+      if (_inputCharsInFlight.has(jid)) return;
+      _inputCharsInFlight.add(jid);
+      try {
+        const res = await fetch(`api/v1/jobs/${encodeURIComponent(jid)}/input-stats`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          const marker = (res.status === 404) ? INPUT_CHARS_MISSING : INPUT_CHARS_ERROR;
+          _inputCharsCache.set(jid, marker);
+          if (currentJobId === jid && fileWordCount) {
+            fileWordCount.textContent = (marker === INPUT_CHARS_MISSING) ? '-' : '读取失败';
+          }
+          return;
+        }
+
+        const n = Number(data?.input_chars);
+        if (!Number.isFinite(n) || n < 0) {
+          _inputCharsCache.set(jid, INPUT_CHARS_ERROR);
+          if (currentJobId === jid && fileWordCount) {
+            fileWordCount.textContent = '读取失败';
+          }
+          return;
+        }
+
+        const count = Math.floor(n);
+        _inputCharsCache.set(jid, count);
+        if (currentJobId === jid && fileWordCount) {
+          fileWordCount.textContent = count.toLocaleString();
+        }
+      } catch (e) {
+        _inputCharsCache.set(jid, INPUT_CHARS_ERROR);
+        if (currentJobId === jid && fileWordCount) {
+          fileWordCount.textContent = '读取失败';
+        }
+      } finally {
+        _inputCharsInFlight.delete(jid);
+      }
+    }
+
     function refreshFileName() {
       const file = fileInput?.files?.[0];
       if (file) {
@@ -567,7 +627,7 @@
         if (fileInfoContent) fileInfoContent.classList.remove('hidden');
         if (fileWordCount) fileWordCount.textContent = '读取中...';
         file.text().then(text => {
-          const count = text.replace(/\s/g, '').length;
+          const count = _countNonWhitespaceChars(text);
           if (fileWordCount) fileWordCount.textContent = count.toLocaleString();
         }).catch(() => {
           if (fileWordCount) fileWordCount.textContent = '读取失败';
@@ -579,6 +639,40 @@
         if (fileWordCount) fileWordCount.textContent = '-';
       }
       refreshOutputPreview();
+    }
+
+    function refreshSourcePanelFromJob(job) {
+      const hasJob = !!job?.id;
+      if (fileInput) fileInput.disabled = hasJob;
+      if (fileDrop) {
+        fileDrop.classList.toggle('cursor-pointer', !hasJob);
+        fileDrop.classList.toggle('cursor-not-allowed', hasJob);
+        fileDrop.classList.toggle('opacity-60', hasJob);
+        fileDrop.classList.toggle('hover:border-ink/50', !hasJob);
+        fileDrop.classList.toggle('hover:bg-slate-50', !hasJob);
+      }
+
+      if (hasJob) {
+        const jid = String(job?.id || '').trim();
+        const cached = jid ? _inputCharsCache.get(jid) : null;
+        if (fileDropText) fileDropText.textContent = '已加载任务（无需重新选择文件）';
+        if (fileInfoEmptyText) fileInfoEmptyText.textContent = '已加载任务（无需重新选择文件）';
+        if (fileName) fileName.textContent = String(job?.input_filename || '-');
+        if (fileWordCount) {
+          if (typeof cached === 'number') fileWordCount.textContent = cached.toLocaleString();
+          else if (cached === INPUT_CHARS_MISSING) fileWordCount.textContent = '-';
+          else if (cached === INPUT_CHARS_ERROR) fileWordCount.textContent = '读取失败';
+          else fileWordCount.textContent = '读取中...';
+        }
+        if (fileInfoEmpty) fileInfoEmpty.classList.add('hidden');
+        if (fileInfoContent) fileInfoContent.classList.remove('hidden');
+        if (jid && cached == null) ensureJobInputChars(jid);
+        return;
+      }
+
+      if (fileDropText) fileDropText.textContent = '点击选择或拖拽 TXT 文件';
+      if (fileInfoEmptyText) fileInfoEmptyText.textContent = '未选择任何文件';
+      refreshFileName();
     }
 
     // Tab switching
@@ -962,71 +1056,60 @@
 
     function _phaseLabel(phase) {
       const v = String(phase || '').toLowerCase();
-      const map = { validate: '校验', process: '处理', merge: '合并', done: '完成' };
+      const map = { validate: '预处理', process: 'LLM校对', merge: '合并', done: '完成' };
       return map[v] || (v || '-');
     }
 
     function _stateLabel(state) {
       const v = String(state || '').toLowerCase();
-      const map = { queued: '排队中', running: '运行中', paused: '已暂停', done: '已完成', cancelled: '已取消', error: '出错' };
+      const map = { queued: '排队中', running: '运行中', paused: '已暂停', done: '已完成', cancelled: '已删除', error: '出错' };
       return map[v] || (v || '-');
     }
 
     function setJobCard(job) {
       const j = job || null;
-      if (jobIdShort) jobIdShort.textContent = j?.id ? String(j.id).slice(0, 8) : '-';
+      if (jobId) jobId.textContent = j?.id ? String(j.id) : '-';
       if (jobInputName) jobInputName.textContent = j?.input_filename ? String(j.input_filename) : '-';
-      if (jobOutputName) {
-        const outName = j?.output_filename ? String(j.output_filename) : '-';
-        jobOutputName.textContent = outName;
-        const isDone = String(j?.state || '').toLowerCase() === 'done' && !!j?.id && !!j?.output_path;
-        if (isDone && outName !== '-') {
-          jobOutputName.classList.add('text-ink', 'hover:underline');
-          jobOutputName.classList.remove('text-slate-600');
-          jobOutputName.setAttribute('href', `api/v1/jobs/${encodeURIComponent(j.id)}/download`);
-          jobOutputName.setAttribute('download', outName);
-        } else {
-          jobOutputName.classList.remove('text-ink', 'hover:underline');
-          jobOutputName.classList.add('text-slate-600');
-          jobOutputName.removeAttribute('href');
-          jobOutputName.removeAttribute('download');
-        }
-      }
-      if (jobOutputPath) jobOutputPath.textContent = j?.output_path ? String(j.output_path) : '-';
     }
 
     function setProgressFromJob(job) {
       if (!job) {
         progress.classList.add('hidden');
-        if (metaSub) metaSub.classList.add('hidden');
         if (metaModelWrap) metaModelWrap.classList.add('hidden');
         return;
       }
 
       progress.classList.remove('hidden');
-      const state = String(job.state || '');
-      const phase = String(job.phase || '');
+      const state = String(job.state || '').toLowerCase();
+      const phase = String(job.phase || '').toLowerCase();
       const done = Number(job?.progress?.done_chunks || 0);
       const total = Number(job?.progress?.total_chunks || 0);
       const pct = total > 0 ? Math.floor((done / total) * 100) : (state === 'done' ? 100 : 0);
       bar.style.width = pct + '%';
 
-      const phaseLabel = _phaseLabel(phase);
+      // Bar color by state
+      bar.classList.remove('bg-ink', 'bg-amber-500', 'bg-red-500', 'bg-emerald-500');
+      if (state === 'error') bar.classList.add('bg-red-500');
+      else if (state === 'paused') bar.classList.add('bg-amber-500');
+      else if (state === 'done') bar.classList.add('bg-emerald-500');
+      else bar.classList.add('bg-ink');
+
       let left = _stateLabel(state);
-      if (state === 'running' && phase === 'validate') left = '正在校验…';
-      if (state === 'paused' && phase === 'process') left = (done > 0 ? '处理已暂停' : '校验完成，等待开始处理');
-      if (state === 'running' && phase === 'process') left = '正在处理…';
-      if (state === 'error' && phase === 'process') left = '处理出错';
-      if (state === 'paused' && phase === 'merge') left = '处理完成，等待合并输出';
+      if (state === 'running' && phase === 'validate') left = '正在预处理…';
+      if (state === 'paused' && phase === 'process') left = (done > 0 ? '校对已暂停' : '预处理完成，等待开始校对');
+      if (state === 'running' && phase === 'process') left = '正在校对…';
+      if (state === 'error' && phase === 'process') left = '校对出错';
+      if (state === 'paused' && phase === 'merge') left = '校对完成，等待合并输出';
       if (state === 'running' && phase === 'merge') left = '正在合并输出…';
-      if (state === 'done') left = '已完成';
+      if (state === 'done') left = '完成';
 
-      const counter = total > 0 ? ` ${done}/${total}` : '';
-      metaLeft.textContent = `${left}${counter}`;
-      metaRight.textContent = pct + '%';
+      metaLeft.textContent = left;
+      if (metaCounter) metaCounter.textContent = `${done}/${total}`;
 
-      if (metaSub) metaSub.classList.remove('hidden');
-      if (metaPhase) metaPhase.textContent = phaseLabel;
+      // Show pct only when 0 < pct < 100
+      const showPct = pct > 0 && pct < 100;
+      if (metaPctWrap) metaPctWrap.classList.toggle('hidden', !showPct);
+      if (metaPct) metaPct.textContent = String(pct);
 
       const model = job?.llm_model ? String(job.llm_model).trim() : '';
       if (metaModel) metaModel.textContent = model || '-';
@@ -1086,7 +1169,7 @@
       _setFieldsDisabled(SLICE_FIELDS, hasJob);
       if (sliceLockHint) {
         sliceLockHint.classList.toggle('hidden', !hasJob);
-        if (hasJob) sliceLockHint.textContent = '当前已关联任务，切片设置已锁定（要修改请先“取消（可恢复）/取消并清理”回到初始态）。';
+        if (hasJob) sliceLockHint.textContent = '当前已关联任务，切片设置已锁定（要修改请先点“新任务”解除关联，或删除任务后重新创建）。';
       }
 
       _setFieldsDisabled(LLM_FIELDS, llmLocked);
@@ -1096,59 +1179,130 @@
       }
     }
 
+    function refreshWorkflowStepper(job) {
+      const state = String(job?.state || '').toLowerCase();
+      const phase = String(job?.phase || '').toLowerCase();
+      const hasJob = !!job;
+
+      const order = ['validate', 'process', 'merge', 'done'];
+      const labels = { validate: '预处理', process: 'LLM校对', merge: '合并', done: '完成' };
+      let cur = hasJob ? phase : 'validate';
+      if (!order.includes(cur)) cur = 'validate';
+      if (state === 'done') cur = 'done';
+      const curIdx = order.indexOf(cur);
+
+      document.querySelectorAll('[data-wf-step]').forEach((el) => {
+        const step = String(el.getAttribute('data-wf-step') || '').toLowerCase();
+        const idx = order.indexOf(step);
+        const isDone = idx >= 0 && idx < curIdx;
+        const isActive = idx === curIdx;
+        const isError = isActive && hasJob && state === 'error';
+
+        // Reset classes
+        el.className = 'wf-step relative pb-0.5 cursor-help transition-colors';
+        if (isDone) {
+          el.classList.add('text-slate-400');
+          el.innerHTML = labels[step] + ' <span class="text-emerald-500">✓</span>';
+        } else if (isActive) {
+          el.classList.add(isError ? 'text-red-600' : 'text-ink', 'font-medium');
+          el.innerHTML = labels[step];
+          // Add underline via pseudo-element style
+          el.style.setProperty('--wf-underline', '1');
+        } else {
+          el.classList.add('text-slate-400');
+          el.innerHTML = labels[step];
+        }
+        if (!isActive) el.style.removeProperty('--wf-underline');
+      });
+
+      if (wfStateBadge) {
+        let badgeText = '未开始';
+        let badgeCls = 'text-xs text-slate-400';
+        if (hasJob) {
+          badgeText = _stateLabel(state);
+          if (state === 'paused') badgeCls = 'text-xs text-amber-600';
+          else if (state === 'error') badgeCls = 'text-xs text-red-600';
+          else if (state === 'done') badgeCls = 'text-xs text-emerald-600';
+          else badgeCls = 'text-xs text-slate-500';
+        }
+        wfStateBadge.textContent = badgeText;
+        wfStateBadge.className = badgeCls;
+      }
+    }
+
     function refreshActionButtons(job) {
       const state = String(job?.state || '').toLowerCase();
       const phase = String(job?.phase || '').toLowerCase();
       const hasJob = !!job;
 
+      const BTN_SOLID_INK = 'w-full px-5 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg transition-colors active:scale-[0.99]';
+      const BTN_OUTLINE = 'w-full px-5 py-2.5 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300 text-sm font-medium rounded-lg transition-colors';
+      const BTN_SOLID_EMERALD = 'w-full px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors active:scale-[0.99]';
+      const BTN_OUTLINE_EMERALD = 'w-full px-5 py-2.5 bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 text-sm font-medium rounded-lg transition-colors';
+      const BTN_SOLID_AMBER = 'w-full px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium rounded-lg transition-colors active:scale-[0.99]';
+      const BTN_OUTLINE_AMBER = 'w-full px-5 py-2.5 bg-white border border-amber-200 text-amber-700 hover:bg-amber-50 text-sm font-medium rounded-lg transition-colors';
+      const BTN_OUTLINE_RED = 'w-full px-5 py-2.5 bg-white border border-red-200 text-red-700 hover:bg-red-50 text-sm font-medium rounded-lg transition-colors';
+
       // Validate: start new job OR resume validate if paused in validate phase.
       const canResumeValidate = hasJob && state === 'paused' && phase === 'validate';
-      _setVisible(btnValidate, !hasJob || canResumeValidate);
-      if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续校验' : '开始校验';
-      _setDisabled(btnValidate, false);
+      const canValidate = (!hasJob) || canResumeValidate;
+      if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续预处理' : '开始预处理';
 
       const canProcess = hasJob && state === 'paused' && phase === 'process';
-      _setVisible(btnProcess, canProcess);
-      _setDisabled(btnProcess, !canProcess);
       if (btnProcess) {
         const done = Number(job?.progress?.done_chunks || 0);
-        btnProcess.textContent = (canProcess && done > 0) ? '继续处理' : '开始处理';
+        btnProcess.textContent = (hasJob && phase === 'process' && done > 0) ? '继续校对' : '开始校对';
       }
 
       const canMerge = hasJob && state === 'paused' && phase === 'merge';
-      _setVisible(btnMerge, canMerge);
-      _setDisabled(btnMerge, !canMerge);
 
       const canPause = hasJob && (state === 'queued' || state === 'running') && phase === 'process';
-      _setVisible(btnPause, canPause);
-      _setDisabled(btnPause, !canPause);
 
       const canRetry = hasJob && state === 'error';
-      _setVisible(btnRetry, canRetry);
-      _setDisabled(btnRetry, !canRetry);
 
-      const showCancel = hasJob;
-      _setVisible(btnCancel, showCancel);
-      _setDisabled(btnCancel, !showCancel);
+      const canNewTask = hasJob && !(state === 'queued' || state === 'running');
+
+      const canDeleteTask = hasJob && !((state === 'queued' || state === 'running') && phase === 'process');
+
       if (btnCancel) {
-        if (state === 'done') btnCancel.textContent = '新任务';
-        else if (state === 'paused' || state === 'error') btnCancel.textContent = '返回初始态';
-        else btnCancel.textContent = '取消（可恢复）';
+        btnCancel.textContent = '新任务';
       }
 
-      const showReset = hasJob;
-      _setVisible(btnReset, showReset);
-      _setDisabled(btnReset, !showReset);
       if (btnReset) {
-        btnReset.textContent = (state === 'done') ? '清理任务记录' : '取消并清理';
+        btnReset.textContent = (hasJob && state === 'done') ? '删除任务记录' : '删除任务';
       }
 
       const canDownload = hasJob && state === 'done';
-      _setVisible(btnDownload, canDownload);
-      _setDisabled(btnDownload, !canDownload);
 
-      _setVisible(btnLoad, true);
+      let primaryKey = null;
+      if (!hasJob || (state === 'paused' && phase === 'validate')) primaryKey = 'validate';
+      else if (state === 'paused' && phase === 'process') primaryKey = 'process';
+      else if (state === 'paused' && phase === 'merge') primaryKey = 'merge';
+      else if (state === 'done') primaryKey = 'download';
+      else if ((state === 'queued' || state === 'running') && phase === 'process') primaryKey = 'pause';
+      else if (state === 'error') primaryKey = 'retry';
+
+      if (btnValidate) btnValidate.className = (primaryKey === 'validate') ? BTN_SOLID_INK : BTN_OUTLINE;
+      if (btnProcess) btnProcess.className = (primaryKey === 'process') ? BTN_SOLID_INK : BTN_OUTLINE;
+      if (btnMerge) btnMerge.className = (primaryKey === 'merge') ? BTN_SOLID_INK : BTN_OUTLINE;
+      if (btnDownload) btnDownload.className = (primaryKey === 'download') ? BTN_SOLID_EMERALD : BTN_OUTLINE_EMERALD;
+      if (btnPause) btnPause.className = (primaryKey === 'pause') ? BTN_SOLID_INK : BTN_OUTLINE;
+      if (btnRetry) btnRetry.className = (primaryKey === 'retry') ? BTN_SOLID_AMBER : BTN_OUTLINE_AMBER;
+      if (btnCancel) btnCancel.className = BTN_OUTLINE;
+      if (btnReset) btnReset.className = BTN_OUTLINE_RED;
+      if (btnLoad) btnLoad.className = BTN_OUTLINE;
+
+      _setDisabled(btnValidate, !canValidate);
+      _setDisabled(btnProcess, !canProcess);
+      _setDisabled(btnMerge, !canMerge);
+      _setDisabled(btnPause, !canPause);
+      _setDisabled(btnRetry, !canRetry);
+      _setDisabled(btnCancel, !canNewTask);
+      _setDisabled(btnReset, !canDeleteTask);
+      _setDisabled(btnDownload, !canDownload);
       _setDisabled(btnLoad, false);
+
+      refreshWorkflowStepper(job);
     }
 
     function _llmSnapshot() {
@@ -1323,13 +1477,6 @@
       };
     }
 
-    async function requestCancel(jobId) {
-      if (!jobId) return;
-      try {
-        await fetch(`api/v1/jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
-      } catch (e) {}
-    }
-
     async function requestPause(jobId) {
       if (!jobId) return { ok: false, error: 'missing job_id' };
       try {
@@ -1459,6 +1606,40 @@
       pollTimer = setInterval(() => refreshJobOnce(jobId), 1000);
     }
 
+    let _exitPauseSent = false;
+
+    function _bestEffortPauseJob(jobId) {
+      const jid = String(jobId || '').trim();
+      if (!jid) return;
+      const url = `api/v1/jobs/${encodeURIComponent(jid)}/pause`;
+
+      // Prefer sendBeacon so refresh/close still sends the request (best-effort).
+      try {
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(url, '');
+          return;
+        }
+      } catch (e) {}
+
+      // Fallback: keepalive fetch (also best-effort).
+      try {
+        fetch(url, { method: 'POST', keepalive: true });
+      } catch (e) {}
+    }
+
+    function pauseJobOnExitBestEffort() {
+      // Goal: closing/refreshing the UI pauses in-flight LLM processing to avoid extra cost.
+      // Server-side: /pause only succeeds in phase=process; validate/merge will no-op.
+      if (_exitPauseSent) return;
+      if (!currentJobId) return;
+      _exitPauseSent = true;
+      _bestEffortPauseJob(currentJobId);
+    }
+
+    window.addEventListener('pagehide', pauseJobOnExitBestEffort);
+    window.addEventListener('beforeunload', pauseJobOnExitBestEffort);
+    window.addEventListener('pageshow', () => { _exitPauseSent = false; });
+
     function detachUi({ clearFile = true } = {}) {
       stopPolling();
       pollInFlight = false;
@@ -1483,8 +1664,8 @@
 
       if (clearFile && fileInput) {
         fileInput.value = '';
-        refreshFileName();
       }
+      refreshSourcePanelFromJob(null);
     }
 
     async function refreshJobOnce(jobId) {
@@ -1536,6 +1717,7 @@
         setProgressFromJob(job);
         refreshLocks(job);
         refreshActionButtons(job);
+        refreshSourcePanelFromJob(job);
 
         chunkCounts = r?.data?.chunk_counts || null;
         totalChunksFromServer = Number(job?.progress?.total_chunks || 0);
@@ -1545,9 +1727,9 @@
           show(job?.error || '处理出错');
         } else if (job?.state === 'paused' && job?.phase === 'process') {
           const done = Number(job?.progress?.done_chunks || 0);
-          show(done > 0 ? '处理已暂停：可点击“继续处理”。' : '校验完成：可点击“开始处理”。');
+          show(done > 0 ? '校对已暂停：可点击“继续校对”。' : '预处理完成：可点击“开始校对”。');
         } else if (job?.state === 'paused' && job?.phase === 'merge') {
-          show('处理完成：可点击“合并输出”。');
+          show('校对完成：可点击“合并输出”。');
         } else if (job?.state === 'done') {
           show(job?.output_path ? `完成。输出：${job.output_path}\n可点击“下载输出”或“新任务”。` : '完成。已输出到项目 output/ 目录。');
         }
@@ -1614,7 +1796,7 @@
     btnProcess?.addEventListener('click', async () => {
       const jobId = currentJobId;
       if (!jobId) return;
-      show('开始处理…');
+      show('开始校对…');
       const r = await requestResume(jobId);
       if (!r.ok) {
         show(r.error);
@@ -1655,7 +1837,7 @@
       }
       if (currentJobState === 'paused' && currentJobPhase === 'validate') {
         const jobId = currentJobId;
-        show('继续校验…');
+        show('继续预处理…');
         const r = await requestResume(jobId);
         if (!r.ok) {
           show(r.error);
@@ -1669,40 +1851,46 @@
       const jobId = currentJobId;
       if (!jobId) return;
       const st = String(currentJobState || '').toLowerCase();
-      if (st === 'done') {
-        detachUi({ clearFile: true });
-        show('已返回初始态。可通过“加载任务”查看历史任务/输出。');
+      const phase = String(currentJobPhase || '').toLowerCase();
+      const isRunning = st === 'queued' || st === 'running';
+      if (isRunning) {
+        if (phase === 'process') show('校对进行中：请先“暂停”再开始新任务。');
+        else show('任务运行中：请等待完成后再开始新任务，或直接删除任务。');
         return;
       }
-
-      const confirmMsg = (st === 'queued' || st === 'running')
-        ? '确认"取消（可恢复）"？将停止当前任务并返回初始态，可稍后通过"加载任务"继续。'
-        : '确认返回初始态？该任务可稍后通过"加载任务"继续/查看。';
-      if (!(await showConfirm(confirmMsg))) return;
-
-      show('正在返回初始态…');
-      await requestCancel(jobId);
       detachUi({ clearFile: true });
-      show('已返回初始态。可通过“加载任务”继续该任务。');
+      show('已切换到新任务。可通过“加载任务”返回该任务继续/下载。');
     });
 
     btnReset?.addEventListener('click', async () => {
       const jobId = currentJobId;
       if (!jobId) return;
       const st = String(currentJobState || '').toLowerCase();
-      const confirmMsg = (st === 'done')
-        ? '确认"清理任务记录"？该任务的中间态/状态记录将被删除且不可恢复（不会删除最终输出文件 output/）。'
-        : '确认"取消并清理"？该任务中间产物与状态将被删除且不可恢复。';
+      const phase = String(currentJobPhase || '').toLowerCase();
+      if ((st === 'queued' || st === 'running') && phase === 'process') {
+        show('校对进行中：请先“暂停”再删除任务。');
+        return;
+      }
+      const isRunning = st === 'queued' || st === 'running';
+      const isDone = st === 'done';
+      const isValidateRunning = isRunning && phase === 'validate';
+      const isMergeRunning = isRunning && phase === 'merge';
+      const phaseLabel = isValidateRunning ? '预处理' : (isMergeRunning ? '合并' : '');
+      const confirmMsg = isDone
+        ? '确认"删除任务记录"？该任务的中间态/状态记录将被删除且不可恢复（不会删除最终输出文件 output/）。'
+        : (isValidateRunning || isMergeRunning)
+          ? `确认"删除任务"？任务正在${phaseLabel}中：将尝试停止当前阶段，完成停止后删除该任务的中间产物与状态记录（不可恢复；不会删除 output/ 下已生成的最终输出文件）。`
+          : '确认"删除任务"？该任务将被删除：中间产物与状态记录将被清理且不可恢复（不会删除 output/ 下已生成的最终输出文件）。';
       if (!(await showConfirm(confirmMsg))) return;
 
-      show((st === 'done') ? '正在清理任务记录…' : '正在取消并清理…');
+      show((st === 'done') ? '正在删除任务记录…' : '正在删除任务…');
       const r = await requestReset(jobId);
       if (!r.ok) {
         show(r.error);
         return;
       }
       detachUi({ clearFile: true });
-      show('已提交清理请求。');
+      show((isValidateRunning || isMergeRunning) ? '已提交删除请求：后台停止/清理中。' : '已提交删除请求。');
     });
 
     btnLoad?.addEventListener('click', async () => {
@@ -1738,7 +1926,7 @@
         show('分片大小（字符数）必须在 200-4000 之间。');
         return;
       }
-      show('已提交，准备校验…');
+      show('已提交，准备预处理…');
 
       const file = fd.get('file');
       if (!(file instanceof File)) {

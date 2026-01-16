@@ -483,14 +483,13 @@ create()
   ↓ run_job() starts                                      │
 [running] ◄───────────────────────────────────────────┐   │
   ├─ pause() → [paused]                               │   │
-  │             ├─ resume() → [queued] → [running] ───┘   │
-  │             └─ cancel() → [cancelled]                 │
-  ├─ cancel() → [cancelled]                               │
+  │             └─ resume() → [queued] → [running] ───┘   │
+  ├─ reset() → [cancelled] → delete()                      │
   └─ LLM 处理完成                                          │
       ├─ 无错误 → [done] ✓                                │
       ├─ 有错误 → [error]                                 │
       │           └─ retry_failed_chunks() ───────────────┘
-      └─ 被取消 → [cancelled]
+      └─ reset requested → [cancelled]
 
 终态: done, error, cancelled
 ```
@@ -501,7 +500,7 @@ create()
 init_chunks()
   ↓
 [pending] ◄─────────────────────────────────────────┐
-  ├─ cancel/pause 时重置                             │
+  ├─ reset/pause 时重置                              │
   └─ retry 时重置                                    │
   ↓                                                  │
 [processing] ──────────────────────────────────────┐│
@@ -537,7 +536,7 @@ class JobStore:
 
     def update(self, job_id, **kwargs):
         with self._lock:
-            # 已取消的 job 不接受更新
+            # 已标记为 cancelled（删除任务/reset）的 job 不接受更新
             if st.state == "cancelled":
                 return
             # started_at 只接受首次写入
@@ -604,13 +603,13 @@ def _run_llm_for_indices(job_id, indices, work_dir, llm):
         in_flight: dict[Future, int] = {}
 
         while pending_indices or in_flight:
-            # 检查取消/暂停
+            # 检查终止/暂停
             if GLOBAL_JOBS.is_cancelled(job_id):
                 break
             if GLOBAL_JOBS.is_paused(job_id) and not in_flight:
                 break
 
-            # 逐步提交任务（避免一次性提交导致无法取消）
+            # 逐步提交任务（避免一次性提交导致无法及时停止）
             while pending_indices and len(in_flight) < max_workers:
                 i = pending_indices.pop(0)
                 fut = ex.submit(_llm_worker, job_id, i, work_dir, llm)
@@ -671,7 +670,7 @@ def _merge_chunk_outputs(work_dir, total_chunks, out_path):
 | **首分片允许更短输出** | 删除广告/水印后输出变短是正常的 |
 | **引号转换默认关闭** | 风险高（奇数引号、代码中的引号） |
 | **本地规则应用两次** | 确保最终输出格式一致，即使 LLM 破坏了格式 |
-| **逐步提交并发任务** | 支持取消/暂停，避免资源浪费 |
+| **逐步提交并发任务** | 支持终止/暂停，避免资源浪费 |
 | **Think 标签过滤容错** | 过度过滤时回退为保留内容 |
 | **合并时补空行** | 恢复分片边界处丢失的段落分隔 |
 | **后台任务使用受控线程池** | 避免阻塞 FastAPI 事件循环，且避免 job 级并发无限制增长 |

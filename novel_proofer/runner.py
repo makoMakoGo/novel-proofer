@@ -12,7 +12,7 @@ from pathlib import Path
 from novel_proofer.formatting.chunking import iter_chunks_by_lines_with_first_chunk_max_from_file
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.formatting.merge import merge_text_chunks_to_path
-from novel_proofer.formatting.rules import apply_rules
+from novel_proofer.formatting.rules import _is_chapter_title, apply_rules, is_separator_line
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
 from novel_proofer.llm.config import FIRST_CHUNK_SYSTEM_PROMPT_PREFIX, LLMConfig
@@ -148,6 +148,65 @@ def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> N
             yield (p.read_text(encoding="utf-8"), i == total_chunks - 1)
 
     merge_text_chunks_to_path(_iter_chunks(), out_path)
+
+
+def _post_merge_paragraph_indent_pass(out_path: Path, fmt: FormatConfig) -> None:
+    if not fmt.paragraph_indent:
+        return
+
+    indent = ("\u3000" * 2) if fmt.indent_with_fullwidth_space else "  "
+    tmp = out_path.with_suffix(out_path.suffix + f".{uuid.uuid4().hex}.tmp")
+
+    prev_blank = True
+    try:
+        with (
+            out_path.open("r", encoding="utf-8", newline="") as src,
+            tmp.open("w", encoding="utf-8", newline="") as dst,
+        ):
+            for raw in src:
+                has_nl = raw.endswith("\n")
+                line = raw[:-1] if has_nl else raw
+                if line.endswith("\r"):
+                    line = line[:-1]
+
+                if line.strip() == "":
+                    if has_nl:
+                        dst.write("\n")
+                    prev_blank = True
+                    continue
+
+                if _is_chapter_title(line):
+                    dst.write(line.lstrip())
+                    if has_nl:
+                        dst.write("\n")
+                    prev_blank = False
+                    continue
+
+                if is_separator_line(line):
+                    dst.write(line)
+                    if has_nl:
+                        dst.write("\n")
+                    prev_blank = False
+                    continue
+
+                if prev_blank:
+                    if line.startswith(indent):
+                        out_line = line
+                    else:
+                        core = line.lstrip()
+                        out_line = (indent + core) if (core and len(core) >= 2) else core
+                else:
+                    out_line = line.lstrip()
+
+                dst.write(out_line)
+                if has_nl:
+                    dst.write("\n")
+                prev_blank = False
+        tmp.replace(out_path)
+    finally:
+        with suppress(Exception):
+            if tmp.exists():
+                tmp.unlink()
 
 
 def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
@@ -604,6 +663,7 @@ def merge_outputs(job_id: str, *, cleanup_debug_dir: bool | None = None) -> None
     GLOBAL_JOBS.update(job_id, state="running", phase="merge", finished_at=None, error=None)
     try:
         _merge_chunk_outputs(work_dir, total, out_path)
+        _post_merge_paragraph_indent_pass(out_path, getattr(st, "format", FormatConfig()))
         GLOBAL_JOBS.update(job_id, state="done", phase="done", finished_at=time.time(), done_chunks=total)
         do_cleanup = bool(st.cleanup_debug_dir) if cleanup_debug_dir is None else bool(cleanup_debug_dir)
         if do_cleanup:

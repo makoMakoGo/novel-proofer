@@ -93,8 +93,11 @@ Rules in `formatting/rules.py` (order matters):
 - `POST /api/v1/jobs` - Create job (multipart: file + options JSON)
 - `GET /api/v1/jobs/{id}` - Get job status and chunks
 - `POST /api/v1/jobs/{id}/retry-failed` - Retry failed chunks with new LLM config
-- `POST /api/v1/jobs/{id}/pause` / `resume` / `cancel` - Job lifecycle
-- `POST /api/v1/jobs/{id}/cleanup-debug` - Delete intermediate files
+- `POST /api/v1/jobs/{id}/pause` / `resume` - Pause/resume (process phase)
+- `POST /api/v1/jobs/{id}/merge` - Merge outputs into final file
+- `POST /api/v1/jobs/{id}/reset` - Delete job (keeps final output in `output/`)
+- `POST /api/v1/jobs/{id}/cleanup-debug` - Delete intermediate files (debug)
+- `GET /api/v1/jobs/{id}/input-stats` - Cached input stats for UI (non-whitespace char count)
 
 <!-- OPENSPEC:START -->
 # OpenSpec Instructions

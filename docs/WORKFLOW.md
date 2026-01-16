@@ -1,6 +1,6 @@
-# Workflow v2：三阶段流程与可恢复取消（Mermaid）
+# Workflow：三阶段流程与任务恢复（Mermaid）
 
-本文面向“用户心智模型 + 排障”，描述 v2 工作流的状态转移与 UI attach 行为。
+本文面向“用户心智模型 + 排障”，描述三阶段工作流的状态转移与 UI attach（重新关联任务）行为。
 
 ## 1) 三阶段（Validate → Process → Merge）
 
@@ -60,13 +60,14 @@ UI 维护“是否已连接某个 job”的概念（例如 localStorage 保存�
 stateDiagram-v2
   [*] --> Idle
   Idle --> Attached : create job / load job
-  Attached --> Idle : cancel(recoverable)\n(detach UI, keep job)
-  Attached --> Idle : reset(hard)\n(delete job)
+  Attached --> Idle : new-task\n(detach UI, keep job)
+  Attached --> Idle : delete-task(reset)\n(delete job)
   Attached --> Attached : refresh page\n(auto reattach)
 ```
 
-## 5) 两类取消（按钮语义）
+## 5) 暂停 / 新任务 / 删除任务（按钮语义）
 
-- **取消（可恢复）**：停止当前执行并把 job 留在可恢复状态（通常为 `paused`），但 UI 彻底重置并断开连接；之后可通过“加载任务”继续。
-- **取消并清理（reset）**：停止并删除该 job 的中间产物与持久化记录（不可恢复），UI 同样重置。
-
+- **暂停**：停止当前执行并把 job 留在可恢复状态（通常为 `paused`）。主要用于 LLM 校对阶段，避免后台继续消耗时间/费用。
+- **新任务**：仅 UI 解除关联，不删除、不停止 job；之后可通过“加载任务”继续/查看。
+- **删除任务（reset）**：停止并删除该 job 的中间产物与持久化记录（不可恢复），UI 同样重置；不会删除 `output/` 下已生成的最终输出文件（如果存在）。
+- **刷新/关闭页面**：若任务处于 LLM 校对阶段且仍在运行，UI 会 best-effort 触发一次“暂停”（浏览器/网络限制下不保证 100% 成功）。

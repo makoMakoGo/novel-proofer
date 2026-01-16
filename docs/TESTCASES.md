@@ -15,9 +15,12 @@
 | `tests/api/test_endpoints.py::test_get_job_chunk_filter_and_paging` | 创建多分片任务后，用 `chunks=1&chunk_state=done&limit=1&offset=0` 拉取分片列表；验证分页 `has_more`、返回数量与 `chunk_counts.done` 统计。 |
 | `tests/api/test_endpoints.py::test_job_not_found_error_envelope` | 查询不存在的任务时返回 `404`，并使用统一错误信封（`error.code == "not_found"`）。 |
 | `tests/api/test_endpoints.py::test_create_job_llm_enabled_requires_base_url_and_model` | LLM 配置缺失（`base_url/model` 为空）时，创建任务仍返回 `201`，但任务最终进入 `error` 状态。 |
-| `tests/api/test_endpoints.py::test_job_actions_cancel_pause_resume_retry_cleanup` | 覆盖任务动作接口：`cancel/pause/resume/retry-failed/cleanup-debug` 的返回值、状态流转；并验证 `cleanup-debug` 会同时删除输入缓存，且清理后无法 `rerun-all`。 |
+| `tests/api/test_endpoints.py::test_job_actions_pause_resume` | 覆盖任务动作接口：`pause/resume` 的返回值与状态流转（通过 monkeypatch 避免真实 runner 副作用）。 |
+| `tests/api/test_endpoints.py::test_pause_only_allowed_in_process_phase` | `pause` 仅允许在 `phase=process` 时执行；其他阶段返回 `409`。 |
+| `tests/api/test_endpoints.py::test_reset_job_deletes_job` | 覆盖 `reset`：任务会从任务列表中被删除（但不会删除 `output/` 下已生成的最终输出）。 |
 | `tests/api/test_endpoints.py::test_llm_settings_get_put_preserves_unknown_lines` | 覆盖 LLM 默认配置接口：`GET/PUT /api/v1/settings/llm`；验证写入 `.env` 时保留未知键/注释，并能读回保存的 LLM 字段。 |
 | `tests/api/test_endpoints.py::test_rerun_all_creates_new_job_without_reupload` | 覆盖 `POST /api/v1/jobs/{job_id}/rerun-all`：基于输入缓存创建新任务并从头跑完整流程，且不需要重新上传文件。 |
+| `tests/api/test_endpoints.py::test_job_input_stats_endpoint` | 覆盖 `GET /api/v1/jobs/{job_id}/input-stats`：基于输入缓存统计“非空白字符数”（UI 字数口径）。 |
 
 ## tests/formatting/test_chunking.py
 
@@ -54,9 +57,9 @@
 | `tests/jobs/test_store.py::test_job_store_update_respects_started_at_and_pause_rules` | `started_at` 只接受首次写入；暂停状态不应被 `update(state="running")` 覆盖；进入终态（`done`）后清除 paused 标记。 |
 | `tests/jobs/test_store.py::test_job_store_update_chunk_tracks_done_chunks` | `done_chunks` 随分片状态在 `done/pending` 间切换而增减；越界 index 更新应被忽略。 |
 | `tests/jobs/test_store.py::test_job_store_add_retry_updates_job_and_chunk` | `add_retry()` 同时更新 job 级与 chunk 级重试/错误信息；无效 index 仍应累加 job 级计数。 |
-| `tests/jobs/test_store.py::test_job_store_cancel_resets_processing_chunks` | 取消任务后：任务变为 `cancelled` 且写入 `finished_at`，正在处理/重试的 chunk 重置为 `pending` 并清空时间戳。 |
+| `tests/jobs/test_store.py::test_job_store_cancel_resets_processing_chunks` | 触发“删除任务（reset）”的终止信号后：任务变为 `cancelled` 且写入 `finished_at`，正在处理/重试的 chunk 重置为 `pending` 并清空时间戳。 |
 | `tests/jobs/test_store.py::test_job_store_pause_resume_and_delete` | `pause/resume/delete` 的幂等性与返回值（重复操作返回 `False`）以及 paused 状态开关。 |
-| `tests/jobs/test_store.py::test_job_store_ignores_unknown_jobs_and_cancelled_updates` | 对未知 job 的操作应无副作用；对已取消 job 的 `update()/update_chunk()` 应 no-op，避免状态被“复活”。 |
+| `tests/jobs/test_store.py::test_job_store_ignores_unknown_jobs_and_cancelled_updates` | 对未知 job 的操作应无副作用；对已标记为 `cancelled` 的 job 的 `update()/update_chunk()` 应 no-op，避免状态被“复活”。 |
 
 ## tests/llm/test_client.py
 
@@ -75,7 +78,7 @@
 | `tests/llm/test_client.py::test_urlopen_uses_no_proxy_for_loopback` | loopback 请求应绕过系统代理：通过 `ProxyHandler({})` 的 opener 执行，而不是直接 `urllib.request.urlopen`。 |
 | `tests/llm/test_client.py::test_stream_request_parses_openai_sse` | SSE 流式响应中 `choices[].delta.content` 需按顺序拼接，直到 `[DONE]`。 |
 | `tests/llm/test_client.py::test_stream_request_stops_reading_after_done` | 读到 `[DONE]` 后必须停止继续 `read()`（防止额外 IO/异常）。 |
-| `tests/llm/test_client.py::test_stream_request_should_stop_short_circuits` | `should_stop()` 为真时应短路并抛出取消错误（`LLMError("cancelled")`）。 |
+| `tests/llm/test_client.py::test_stream_request_should_stop_short_circuits` | `should_stop()` 为真时应短路并抛出终止错误（`LLMError("cancelled")`）。 |
 | `tests/llm/test_client.py::test_stream_request_wraps_url_error` | 网络层 `URLError` 需被包装为 `LLMError("LLM request failed: ...")`。 |
 | `tests/llm/test_client.py::test_http_post_json_success` | `_http_post_json()` 能成功解析 JSON 响应体为 Python dict。 |
 | `tests/llm/test_client.py::test_http_post_json_wraps_url_error` | `_http_post_json()` 遇到 `URLError` 需转换为 `LLMError`。 |
@@ -120,10 +123,10 @@
 | Test case | 说明 |
 | --- | --- |
 | `tests/runner/test_extra_coverage.py::test_llm_worker_records_retries_and_aligns_newlines` | LLM 路径下：记录重试次数与错误码、保存 raw 响应到 `resp/`，并对齐输出尾部换行（如补空行）。 |
-| `tests/runner/test_extra_coverage.py::test_llm_worker_cancel_behaviors` | 覆盖多种取消时机：开始前/LLM 返回后/异常处理中取消时，worker 应提前退出且避免落盘副作用。 |
+| `tests/runner/test_extra_coverage.py::test_llm_worker_cancel_behaviors` | 覆盖多种终止时机：开始前/LLM 返回后/异常处理中触发终止时，worker 应提前退出且避免落盘副作用。 |
 | `tests/runner/test_extra_coverage.py::test_llm_worker_ratio_validation_errors` | 输出长度校验：除首 chunk 外，过短/过长输出应标记 chunk 为 error 并写入错误信息。 |
 | `tests/runner/test_extra_coverage.py::test_run_llm_for_indices_paused_cancelled_and_worker_exception` | `_run_llm_for_indices()` 在 job paused/cancelled 时直接返回；worker 抛异常时不应导致整体失败（最终返回 done）。 |
-| `tests/runner/test_extra_coverage.py::test_run_job_cancellation_llm_outcomes_and_exception` | `run_job()` 对取消的多阶段分支（预处理/输出）与 LLM outcome（paused/cancelled）处理正确；异常应把 job 置为 error 并记录信息。 |
+| `tests/runner/test_extra_coverage.py::test_run_job_cancellation_llm_outcomes_and_exception` | `run_job()` 对终止的多阶段分支（预处理/输出）与 LLM outcome（paused/cancelled）处理正确；异常应把 job 置为 error 并记录信息。 |
 | `tests/runner/test_extra_coverage.py::test_retry_failed_and_resume_paused_branches` | 覆盖 `retry_failed_chunks()/resume_paused_job()` 的缺失配置分支、无失败分支、以及 paused/cancelled outcome 分支与收尾 done 分支。 |
 
 ## tests/runner/test_jobs_logs.py

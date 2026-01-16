@@ -77,7 +77,7 @@ python -m novel_proofer.server
 | -------- | ------------------------------------------- | ----------------------------------------- |
 | 上传文件 | 选择 .txt 文件上传，自动识别 UTF-8/GBK 编码 | <!-- ![](./images/usage-upload.gif) -->   |
 | LLM 配置 | 填写 API 地址、Key、模型名，可保存为默认    | ![LLM-config](./images/UI-01.png)         |
-| 处理进度 | 实时显示分片处理状态，支持暂停/继续/取消    | <!-- ![](./images/usage-progress.gif) --> |
+| 处理进度 | 实时显示分片处理状态，支持暂停/继续/删除任务 | <!-- ![](./images/usage-progress.gif) --> |
 | 失败重试 | 修改配置后重试失败分片，无需重新上传        | <!-- ![](./images/usage-retry.gif) -->    |
 
 ## Workflow
@@ -99,6 +99,8 @@ flowchart TD
 ## Documentation
 
 - 📖 [Complete Usage Guide](docs/USAGE.md) - 安装配置、规则说明、异常处理、调试方法
+- 🧭 [Workflow & Recovery](docs/WORKFLOW.md) - 三阶段流程、任务恢复/重新关联、按钮语义
+- 🧠 [State Machine](docs/STATE_MACHINE.md) - `state/phase/chunk` 的语义与状态转移
 - 🔧 [Detailed Architecture Doc](docs/ARCHITECTURE.md) - 系统设计原理（Why + How）
 - ⚔️ [Full Testcase Instructions](docs/TESTCASES.md) 
 - 🧑‍💻 [Development Guide](docs/DEVELOP.md) - 协作开发约定（分支/提交/测试/Hook）

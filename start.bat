@@ -53,7 +53,7 @@ if exist "requirements.txt" (
 
   if "!HAS_REQ!"=="1" (
     rem Check if all requirements are already satisfied (silent)
-    "%PYTHON_EXE%" -c "import sys,re;from pathlib import Path;from importlib.metadata import version;from pip._vendor.packaging.requirements import Requirement;sys.exit(0 if all(True if not (line:=re.split(r'\s+#',raw.lstrip('\ufeff').strip(),1)[0].strip()) or line.startswith('#') else (False if line.startswith('-') else ((req:=Requirement(line)) and ((req.marker is not None and not req.marker.evaluate()) or (not getattr(req,'url',None) and (not req.specifier or req.specifier.contains(version(req.name),prereleases=True)))))) for raw in Path('requirements.txt').read_text(encoding='utf-8',errors='replace').splitlines()) else 1)" >nul 2>&1
+    "%PYTHON_EXE%" -c "import sys,re;from pathlib import Path;from importlib.metadata import version;from packaging.requirements import Requirement;sys.exit(0 if all(True if not (line:=re.split(r'\s+#',raw.lstrip('\ufeff').strip(),1)[0].strip()) or line.startswith('#') else (False if line.startswith('-') else ((req:=Requirement(line)) and ((req.marker is not None and not req.marker.evaluate()) or (not getattr(req,'url',None) and (not req.specifier or req.specifier.contains(version(req.name),prereleases=True)))))) for raw in Path('requirements.txt').read_text(encoding='utf-8',errors='replace').splitlines()) else 1)" >nul 2>&1
     if errorlevel 1 (
       echo [novel-proofer] Installing dependencies from requirements.txt...
       "%PYTHON_EXE%" -m pip --disable-pip-version-check install -r requirements.txt
@@ -75,11 +75,16 @@ if exist "requirements.txt" (
 if /i "%MODE%"=="smoke" (
   echo [novel-proofer] Running tests...
   if exist "requirements-dev.txt" (
-    echo [novel-proofer] Installing dev dependencies from requirements-dev.txt...
-    "%PYTHON_EXE%" -m pip --disable-pip-version-check install -r requirements-dev.txt
+    "%PYTHON_EXE%" -c "import sys,re;from pathlib import Path;from importlib.metadata import version;from packaging.requirements import Requirement;sys.exit(0 if all(True if not (line:=re.split(r'\s+#',raw.lstrip('\ufeff').strip(),1)[0].strip()) or line.startswith('#') else (False if line.startswith('-') else ((req:=Requirement(line)) and ((req.marker is not None and not req.marker.evaluate()) or (not getattr(req,'url',None) and (not req.specifier or req.specifier.contains(version(req.name),prereleases=True)))))) for raw in Path('requirements-dev.txt').read_text(encoding='utf-8',errors='replace').splitlines()) else 1)" >nul 2>&1
     if errorlevel 1 (
-      echo [novel-proofer] Dev dependency install failed.
-      exit /b 1
+      echo [novel-proofer] Installing dev dependencies...
+      "%PYTHON_EXE%" -m pip --disable-pip-version-check install -r requirements-dev.txt
+      if errorlevel 1 (
+        echo [novel-proofer] Dev dependency install failed.
+        exit /b 1
+      )
+    ) else (
+      echo [novel-proofer] Dev dependencies already installed.
     )
   )
   "%PYTHON_EXE%" -m pytest -q
