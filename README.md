@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/Python-3.12+-blue?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows" alt="Windows">
   <img src="https://img.shields.io/badge/Server-FastAPI-009688" alt="FastAPI">
   <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
@@ -57,8 +57,8 @@ Windows（推荐）：
 .\start.bat
 ```
 > [!NOTE]
-> `start.bat` 会自动创建并激活 `.venv` 虚拟环境，无需手动配置。其等价于下边手动启动过程👇
->
+> `start.bat` / `start.sh` 会优先使用 `uv`（如果已安装，会读取 `pyproject.toml` + `uv.lock`）；否则回退到创建 `.venv` 并从 `requirements.lock.txt` 安装依赖。
+
 
 WSL2 / Linux / macOS：
 
@@ -71,12 +71,21 @@ bash start.sh
 
 Try manual installation and start alternatively:
 
-Windows：
+uv（推荐，跨平台）：
 
 ```bash
+uv sync --frozen --no-install-project --no-dev
+uv run --frozen --no-sync -m novel_proofer.server
+```
+
+pip（fallback）：
+
+Windows：
+
+```bat
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 python -m novel_proofer.server
 ```
 
@@ -85,7 +94,7 @@ WSL2 / Linux / macOS：
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 python -m novel_proofer.server
 ```
 

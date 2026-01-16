@@ -8,25 +8,27 @@ Novel Proofer is a Chinese novel formatting/proofreading tool with a FastAPI bac
 
 ## Commands
 
-**所有命令均在虚拟环境 `.venv` 中执行。** `start.bat` 会自动创建并激活虚拟环境。
+**推荐使用 `uv`（`pyproject.toml` + `uv.lock`）管理依赖。** `start.bat` / `start.sh` 会优先用 uv，同步 `.venv` 并启动服务；未安装 uv 时会回退到 venv + pip + `requirements.lock.txt`。
 
 ```bash
-# 一键启动（自动创建 .venv、安装依赖、启动服务）
+# 一键启动（优先 uv；fallback: venv + pip）
 start.bat
 
-# 手动启动
-python -m venv .venv                    # 创建虚拟环境（仅首次）
-.venv\Scripts\activate                  # 激活虚拟环境（每次新开终端都要执行）
-pip install -r requirements.txt
-python -m novel_proofer.server          # http://127.0.0.1:18080
+# uv（推荐）
+uv sync --frozen --no-install-project --group dev
+uv run --frozen --no-sync -m novel_proofer.server          # http://127.0.0.1:18080
 
-# 运行测试（需先激活虚拟环境）
-pip install -r requirements-dev.txt
-pytest -q                               # 全部测试
-pytest tests/formatting/test_rules.py   # 单个文件
-pytest -k "test_ellipsis"               # 按名称匹配
+# pip（fallback）
+python -m venv .venv                                    # create venv (first time)
+.venv\Scripts\activate                                # activate venv
+pip install -r requirements.lock.txt
+python -m novel_proofer.server                            # http://127.0.0.1:18080
 
-# Windows 自检（自动安装 dev 依赖并跑测试）
+# tests
+uv run --frozen --no-sync pytest -q
+pytest -q                                                 # if already in venv
+
+# Windows 自检（自动 sync 并跑测试）
 start.bat --smoke
 ```
 

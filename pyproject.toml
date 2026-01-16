@@ -1,5 +1,28 @@
+[project]
+name = "novel-proofer"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.111,<1.0",
+  "pydantic>=2.7,<3.0",
+  "python-multipart>=0.0.9,<1.0",
+  "uvicorn>=0.30,<1.0",
+]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.27,<1.0",
+  "mypy>=1.19",
+  "pytest>=9",
+  "pytest-cov>=7",
+  "ruff>=0.14",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
 [tool.ruff]
-target-version = "py310"
+target-version = "py312"
 line-length = 120
 extend-exclude = [
   "output",
@@ -30,7 +53,7 @@ known-first-party = ["novel_proofer", "tests"]
 quote-style = "double"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 ignore_missing_imports = true
 warn_unused_ignores = true
 show_error_codes = true

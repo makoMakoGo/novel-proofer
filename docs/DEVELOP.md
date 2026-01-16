@@ -17,7 +17,7 @@
 
 ### 1.1 环境要求
 
-- Python 3.10+
+- Python 3.12+
 - Windows / WSL2 / Linux / macOS（仓库提供 `start.bat` 与 `start.sh` 一键启动）
 
 ### 1.2 启动服务
@@ -35,12 +35,19 @@ bash start.sh
 # or: ./start.sh
 ```
 
+uv（推荐，跨平台）：
+
+```bash
+uv sync --frozen --no-install-project --no-dev
+uv run --frozen --no-sync -m novel_proofer.server
+```
+
 等价的手动方式（Windows）：
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 python -m novel_proofer.server
 ```
 
@@ -49,7 +56,7 @@ python -m novel_proofer.server
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements.lock.txt
 python -m novel_proofer.server
 ```
 
@@ -63,7 +70,7 @@ python -m novel_proofer.server
 2. 新功能/修复从 `main` 开分支（示例）：`feat/ui-drop-upload`、`fix/llm-timeout`
 3. 保持分支小步提交，提交信息遵循 Conventional Commits（见下）
 4. 提交 PR 前自测（至少跑一次 `pytest -q`）
-5. 合并前尽量保持线性历史（按团队偏好：rebase 或 squash）
+5. 合并前尽量保持线性历史（按团队偏好：rebase 或 merge commit；禁止 squash merge）
 
 注：如果需要重写已推送历史（如 reword/rebase），请优先使用 `--force-with-lease`，并确保相关分支无人依赖。
 
