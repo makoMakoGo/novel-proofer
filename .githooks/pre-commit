@@ -18,7 +18,8 @@ pre-commit: missing .venv python.
 
 Create it first:
   Windows: start.bat
-  Unix:    python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+  Unix:    bash start.sh
+  (or: python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt)
 EOF
   exit 1
 fi

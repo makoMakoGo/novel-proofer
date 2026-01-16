@@ -105,7 +105,7 @@ type(scope): subject
 .\tools\setup-git.ps1
 ```
 
-### 4.2 macOS / Linux
+### 4.2 WSL2 / macOS / Linux
 
 ```bash
 bash tools/setup-git.sh
@@ -119,8 +119,12 @@ bash tools/setup-git.sh
 如果你的提交被拒绝，请按提示修改为 `type(scope): subject` 格式后重试。
 
 > [!NOTE]
-> `pre-commit` hook 依赖仓库内的 `.venv`。首次运行请先执行一次 `.\start.bat` 创建虚拟环境并安装依赖。
+> `pre-commit` hook 依赖仓库内的 `.venv`。首次运行请先创建虚拟环境并安装依赖：Windows 运行 `.\start.bat`；WSL2 / Linux / macOS 运行 `bash start.sh`（或按上文手动方式创建 venv）。
 > 若 hook 提示它自动修复了格式/导入顺序，请 `git add` 后重新提交即可。
+>
+> WSL2 场景下如果你是从 Windows 直接复制仓库（包含 `.git/`）过来，可能会保留 `core.filemode=false`，导致 hook 被 Git 忽略并出现类似提示：
+> `hint: The '.githooks/pre-commit' hook was ignored because it's not set as executable.`
+> 重新运行 `bash tools/setup-git.sh` 会自动修复（设置 `core.filemode=true` 并为 `.githooks/*` 设置可执行位）。如果仓库位于 `/mnt/c/...` 且仍无法设置可执行位，建议把仓库移动到 WSL 的 Linux 文件系统（例如 `/home/...`）。
 
 ---
 
