@@ -1,0 +1,35 @@
+name: Suggestion
+description: 改进建议/讨论
+title: "[Suggestion] "
+labels:
+  - "type:suggestion"
+  - "P3"
+body:
+  - type: textarea
+    attributes:
+      label: 建议内容
+      description: 一句话说明你建议改进什么
+      placeholder: "例如：统一全角冒号/破折号归一化规则以减少二次校验差异"
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: 组件 (可选)
+      options:
+        - unknown
+        - ui
+        - server
+        - llm
+        - rules
+        - docs
+        - ci
+        - infra
+        - test
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: 补充信息 (可选)
+    validations:
+      required: false
+

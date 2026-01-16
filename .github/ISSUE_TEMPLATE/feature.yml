@@ -1,0 +1,43 @@
+name: Feature Request
+description: 提出一个新能力/需求
+title: "[Feature] "
+labels:
+  - "type:feature"
+  - "P3"
+body:
+  - type: textarea
+    attributes:
+      label: 需求描述
+      description: 用一句话说明你想要什么能力
+      placeholder: "例如：支持任务列表按状态筛选（running/failed/done）"
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: 组件 (可选)
+      options:
+        - unknown
+        - ui
+        - server
+        - llm
+        - rules
+        - docs
+        - ci
+        - infra
+        - test
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: 使用场景/动机 (可选)
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: 验收标准 (可选)
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: false
+

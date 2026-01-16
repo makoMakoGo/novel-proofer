@@ -1,0 +1,49 @@
+name: Bug Report
+description: 报告可复现的问题
+title: "[Bug] "
+labels:
+  - "type:bug"
+  - "P2"
+body:
+  - type: textarea
+    attributes:
+      label: 现象
+      description: 一句话描述你遇到的问题
+      placeholder: "例如：上传大文件时进度条卡在 0%"
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: 组件 (可选)
+      options:
+        - unknown
+        - ui
+        - server
+        - llm
+        - rules
+        - docs
+        - ci
+        - infra
+        - test
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: 复现步骤 (可选)
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: 期望结果 (可选)
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: 实际结果 (可选)
+    validations:
+      required: false
+

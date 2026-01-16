@@ -125,6 +125,17 @@ flowchart TD
 - ⚔️ [Full Testcase Instructions](docs/TESTCASES.md) 
 - 🧑‍💻 [Development Guide](docs/DEVELOP.md) - 协作开发约定（分支/提交/测试/Hook）
 
+## Issues
+
+为了便于自动化处理（含 `gh`/AI 读取），本项目对 Issue 标题做了硬性约定：
+
+- `[Bug] ...`
+- `[Feature] ...`
+- `[Suggestion] ...`
+- `[General] ...`（不确定选哪个就用这个）
+
+不符合该格式的 Issue 会被机器人自动关闭；请改好标题后重新打开即可。优先级用 labels（`P0/P1/P2/P3`）表达。
+
 
 ## Known Issues
 

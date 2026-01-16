@@ -1,0 +1,14 @@
+name: General
+description: 其他/不确定选哪个
+title: "[General] "
+labels:
+  - "type:general"
+  - "P3"
+body:
+  - type: textarea
+    attributes:
+      label: 说明
+      description: 随便写，但请至少说清楚你要我们做什么
+    validations:
+      required: true
+

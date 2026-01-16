@@ -1,0 +1,121 @@
+name: issue-title-guard
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  issues: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate issue title prefix
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue = context.payload.issue;
+            const issue_number = issue.number;
+            const title = (issue.title || "").trim();
+
+            const TYPES = {
+              Bug: { typeLabel: "type:bug", defaultPriority: "P2" },
+              Feature: { typeLabel: "type:feature", defaultPriority: "P3" },
+              Suggestion: { typeLabel: "type:suggestion", defaultPriority: "P3" },
+              General: { typeLabel: "type:general", defaultPriority: "P3" },
+            };
+
+            const PRIORITIES = ["P0", "P1", "P2", "P3"];
+            const TYPE_LABELS = Object.values(TYPES).map((t) => t.typeLabel);
+            const INVALID_TITLE_LABEL = "invalid:title";
+
+            const TITLE_RE = /^\[(Bug|Feature|Suggestion|General)\]\s+\S.*$/;
+            const match = title.match(TITLE_RE);
+
+            async function ensureLabel(name, color, description) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+                await github.rest.issues.createLabel({ owner, repo, name, color, description });
+              }
+            }
+
+            async function addLabels(names) {
+              if (names.length === 0) return;
+              await github.rest.issues.addLabels({ owner, repo, issue_number, labels: names });
+            }
+
+            async function removeLabel(name) {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name });
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+            }
+
+            async function comment(body) {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+            async function closeIssue() {
+              await github.rest.issues.update({ owner, repo, issue_number, state: "closed" });
+            }
+
+            async function reopenIssue() {
+              await github.rest.issues.update({ owner, repo, issue_number, state: "open" });
+            }
+
+            await ensureLabel(INVALID_TITLE_LABEL, "b60205", "Issue 标题不符合约定");
+            await ensureLabel("type:bug", "d73a4a", "Bug");
+            await ensureLabel("type:feature", "a2eeef", "Feature");
+            await ensureLabel("type:suggestion", "cfd3d7", "Suggestion");
+            await ensureLabel("type:general", "5319e7", "General");
+            await ensureLabel("P0", "b60205", "Priority P0 (highest)");
+            await ensureLabel("P1", "d93f0b", "Priority P1");
+            await ensureLabel("P2", "fbca04", "Priority P2");
+            await ensureLabel("P3", "0e8a16", "Priority P3 (lowest)");
+
+            const labelNames = (issue.labels || []).map((l) => (typeof l === "string" ? l : l.name)).filter(Boolean);
+            const hasInvalidTitle = labelNames.includes(INVALID_TITLE_LABEL);
+            const hasPriority = labelNames.some((n) => PRIORITIES.includes(n));
+
+            if (!match) {
+              const body = [
+                "你的 Issue 标题不符合项目约定，已自动关闭。",
+                "",
+                "请把标题改成以下格式之一；改好后机器人会自动重新打开（或你手动 reopen 也行）：",
+                "- `[Bug] 一句话描述`",
+                "- `[Feature] 一句话描述`",
+                "- `[Suggestion] 一句话描述`",
+                "- `[General] 一句话描述`",
+                "",
+                "示例：",
+                "- `[Bug] 上传大文件时进度条卡在 0%`",
+                "- `[Feature] 支持任务列表按状态筛选`",
+              ].join("\n");
+
+              if (!hasInvalidTitle) await addLabels([INVALID_TITLE_LABEL]);
+              await comment(body);
+              await closeIssue();
+              return;
+            }
+
+            const typeKey = match[1];
+            const desired = TYPES[typeKey];
+            if (!desired) throw new Error(`Unexpected type: ${typeKey}`);
+
+            if (hasInvalidTitle) {
+              await removeLabel(INVALID_TITLE_LABEL);
+              if (issue.state === "closed") await reopenIssue();
+            }
+
+            for (const l of TYPE_LABELS) {
+              if (l !== desired.typeLabel && labelNames.includes(l)) await removeLabel(l);
+            }
+            if (!labelNames.includes(desired.typeLabel)) await addLabels([desired.typeLabel]);
+
+            if (!hasPriority) await addLabels([desired.defaultPriority]);
