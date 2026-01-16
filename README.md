@@ -67,7 +67,7 @@ bash start.sh
 # or: ./start.sh
 ```
 > [!NOTE]
-> 你这笨蛋小狗如果是从 Windows 直接把整个项目文件夹复制到 WSL2，并把 `.venv/` 也一起复制过来：那个 `.venv` 是 Windows 专用的，WSL2 下不能用。`start.sh` 会自动把它移到 `.venv.win*` 并重新创建 Linux venv。
+> 如果你是从 Windows 直接把整个项目文件夹复制到 WSL2，并把 `.venv/` 也一起复制过来：那个 `.venv` 是 Windows 专用的，WSL2 下不能用。`start.sh` 会自动把它移到 `.venv.win*` 并重新创建 Linux venv。
 
 Try manual installation and start alternatively:
 
