@@ -497,6 +497,7 @@
     let chunkCounts = null;
     let totalChunksFromServer = 0;
     let chunksFetchInFlight = false;
+    let createJobInFlight = false;
 
     const UI_STATE_KEY = 'novel_proofer.ui_state.v1';
     const UI_STATE_FIELDS = [
@@ -639,6 +640,7 @@
         if (fileWordCount) fileWordCount.textContent = '-';
       }
       refreshOutputPreview();
+      if (!currentJobId) refreshActionButtons(null);
     }
 
     function refreshSourcePanelFromJob(job) {
@@ -1245,8 +1247,11 @@
 
       // Validate: start new job OR resume validate if paused in validate phase.
       const canResumeValidate = hasJob && state === 'paused' && phase === 'validate';
-      const canValidate = (!hasJob) || canResumeValidate;
-      if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续预处理' : '开始预处理';
+      const hasLocalFile = !!fileInput?.files?.[0];
+      const canStartValidate = (!hasJob) && hasLocalFile && !createJobInFlight;
+      const canValidate = canResumeValidate || canStartValidate;
+      const isSubmitting = (!hasJob) && createJobInFlight;
+      if (btnValidate) btnValidate.textContent = canResumeValidate ? '继续预处理' : (isSubmitting ? '提交中...' : '开始预处理');
 
       const canProcess = hasJob && state === 'paused' && phase === 'process';
       if (btnProcess) {
@@ -1913,6 +1918,7 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (currentJobId) return;
+      if (createJobInFlight) return;
       detachUi({ clearFile: false });
 
       const fd = new FormData(form);
@@ -1933,20 +1939,35 @@
         show('请选择 TXT 文件。');
         return;
       }
-      const opts = buildJobOptions(fd, extra.value);
-      const requestFd = new FormData();
-      requestFd.append('file', file);
-      requestFd.append('options', JSON.stringify(opts));
 
-      const res = await fetch('api/v1/jobs', { method: 'POST', body: requestFd });
-      const data = await res.json();
-      if (!res.ok) {
-        show(data);
-        return;
+      createJobInFlight = true;
+      refreshActionButtons(null);
+
+      try {
+        const opts = buildJobOptions(fd, extra.value);
+        const requestFd = new FormData();
+        requestFd.append('file', file);
+        requestFd.append('options', JSON.stringify(opts));
+
+        const res = await fetch('api/v1/jobs', { method: 'POST', body: requestFd });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          show(data || '创建任务失败。');
+          return;
+        }
+
+        const jobId = String(data?.job?.id || '').trim();
+        if (!jobId) {
+          show('创建任务失败：返回缺少 job_id。');
+          return;
+        }
+        await attachJob(jobId);
+      } catch (e) {
+        show('创建任务失败：网络或服务异常。');
+      } finally {
+        createJobInFlight = false;
+        if (!currentJobId) refreshActionButtons(null);
       }
-
-      const jobId = data?.job?.id;
-      await attachJob(jobId);
     });
 
     // Auto reattach on page reload.

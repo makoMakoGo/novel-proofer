@@ -54,16 +54,111 @@ source "$VENV_DIR/bin/activate"
 PY="$PY_LINUX"
 echo "[novel-proofer] Using: $("$PY" --version 2>&1)"
 
-if [[ -f "requirements.txt" ]]; then
+requirements_satisfied() {
+  local req_file="$1"
+  "$PY" - "$req_file" <<'PY'
+import re
+import sys
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+
+try:
+    from packaging.requirements import InvalidRequirement, Requirement
+except Exception:
+    from pip._vendor.packaging.requirements import InvalidRequirement, Requirement
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+def normalize(raw: str) -> str:
+    raw = raw.lstrip("\ufeff").strip()
+    raw = re.split(r"\s+#", raw, 1)[0].strip()
+    return raw
+
+def is_satisfied(line: str) -> bool:
+    if not line or line.startswith("#"):
+        return True
+    if line.startswith("-"):
+        return False
+    try:
+        req = Requirement(line)
+    except InvalidRequirement:
+        return False
+    if req.marker is not None and not req.marker.evaluate():
+        return True
+    if getattr(req, "url", None):
+        return False
+    try:
+        v = version(req.name)
+    except PackageNotFoundError:
+        return False
+    if not req.specifier:
+        return True
+    return req.specifier.contains(v, prereleases=True)
+
+for raw in lines:
+    if not is_satisfied(normalize(raw)):
+        sys.exit(1)
+sys.exit(0)
+PY
+}
+
+requirements_has_entries() {
+  local req_file="$1"
+  "$PY" - "$req_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+
+for raw in lines:
+    line = raw.lstrip("\ufeff").strip()
+    line = re.split(r"\s+#", line, 1)[0].strip()
+    if not line:
+        continue
+    if line.startswith("#"):
+        continue
+    sys.exit(0)
+sys.exit(1)
+PY
+}
+
+install_main_requirements() {
+  if [[ ! -f "requirements.txt" ]]; then
+    echo "[novel-proofer] No requirements.txt, skipping dependency install."
+    return 0
+  fi
+  if ! requirements_has_entries "requirements.txt"; then
+    echo "[novel-proofer] requirements.txt has no dependencies, skipping install."
+    return 0
+  fi
+  if requirements_satisfied "requirements.txt"; then
+    echo "[novel-proofer] Dependencies already installed."
+    return 0
+  fi
   echo "[novel-proofer] Installing dependencies from requirements.txt..."
   "$PY" -m pip --disable-pip-version-check install -r requirements.txt
-fi
+}
+
+install_dev_requirements() {
+  if [[ ! -f "requirements-dev.txt" ]]; then
+    return 0
+  fi
+  if requirements_satisfied "requirements-dev.txt"; then
+    echo "[novel-proofer] Dev dependencies already installed."
+    return 0
+  fi
+  echo "[novel-proofer] Installing dev dependencies..."
+  "$PY" -m pip --disable-pip-version-check install -r requirements-dev.txt
+}
+
+install_main_requirements
 
 if [[ "$MODE" == "smoke" ]]; then
   echo "[novel-proofer] Running tests..."
-  if [[ -f "requirements-dev.txt" ]]; then
-    "$PY" -m pip --disable-pip-version-check install -r requirements-dev.txt
-  fi
+  install_dev_requirements
   "$PY" -m pytest -q
   echo "[novel-proofer] Tests OK."
   exit 0
