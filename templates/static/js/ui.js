@@ -65,7 +65,8 @@ export function initElements() {
     elements.tabBtns = document.querySelectorAll('.tab-btn');
     elements.tabContents = document.querySelectorAll('.tab-content');
     elements.filterBtns = document.querySelectorAll('.filter-btn');
-    elements.wfSteps = document.querySelectorAll('[data-wf-step]');
+    elements.wfNodes = document.querySelectorAll('.wf-node[data-wf-step]');
+    elements.wfLines = document.querySelectorAll('.wf-line[data-wf-line]');
 }
 
 // Helpers
@@ -402,34 +403,54 @@ export function refreshWorkflowStepper(job) {
 
     const order = ['validate', 'process', 'merge', 'done'];
     const labels = { validate: '预处理', process: 'LLM校对', merge: '合并', done: '完成' };
+    const checkSvg = '<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>';
+
     let cur = hasJob ? phase : 'validate';
     if (!order.includes(cur)) cur = 'validate';
     if (st === 'done') cur = 'done';
     const curIdx = order.indexOf(cur);
 
-    elements.wfSteps.forEach((el) => {
-        const step = String(el.getAttribute('data-wf-step') || '').toLowerCase();
+    elements.wfNodes.forEach((node) => {
+        const step = String(node.getAttribute('data-wf-step') || '').toLowerCase();
         const idx = order.indexOf(step);
         const isDone = idx >= 0 && idx < curIdx;
         const isActive = idx === curIdx;
         const isError = isActive && hasJob && st === 'error';
 
-        el.className = 'wf-step relative pb-0.5 cursor-help transition-colors';
+        const dot = node.querySelector('.wf-dot');
+        const label = node.querySelector('.wf-label');
+        if (!dot || !label) return;
+
+        // Reset dot classes
+        dot.classList.remove('wf-dot-pending', 'wf-dot-active', 'wf-dot-done', 'wf-dot-error');
+        label.classList.remove('wf-label-pending', 'wf-label-active', 'wf-label-done', 'wf-label-error');
+
         if (isDone) {
-            el.classList.add('text-slate-400');
-            el.innerHTML = labels[step] + ' <span class="text-emerald-500">✓</span>';
-            el.style.removeProperty('--wf-underline');
+            dot.classList.add('wf-dot-done');
+            dot.innerHTML = checkSvg;
+            label.classList.add('wf-label-done');
+            label.textContent = labels[step];
         } else if (isActive) {
-            el.classList.add(isError ? 'text-red-600' : 'text-ink', 'font-medium');
-            el.innerHTML = labels[step];
-            el.style.setProperty('--wf-underline', '1');
+            dot.classList.add(isError ? 'wf-dot-error' : 'wf-dot-active');
+            dot.innerHTML = `<span class="text-xs font-bold">${idx + 1}</span>`;
+            label.classList.add(isError ? 'wf-label-error' : 'wf-label-active');
+            label.textContent = labels[step];
         } else {
-            el.classList.add('text-slate-400');
-            el.innerHTML = labels[step];
-            el.style.removeProperty('--wf-underline');
+            dot.classList.add('wf-dot-pending');
+            dot.innerHTML = `<span class="text-xs font-bold">${idx + 1}</span>`;
+            label.classList.add('wf-label-pending');
+            label.textContent = labels[step];
         }
     });
 
+    // Update connecting lines
+    elements.wfLines.forEach((line) => {
+        const lineIdx = parseInt(line.getAttribute('data-wf-line') || '0', 10);
+        const isDone = lineIdx < curIdx;
+        line.classList.toggle('wf-line-done', isDone);
+    });
+
+    // Update state badge
     if (elements.wfStateBadge) {
         let badgeText = '未开始';
         let badgeCls = 'text-xs text-slate-400';

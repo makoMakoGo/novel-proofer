@@ -41,7 +41,20 @@
     .tab-btn.active { color: #18181b; }
     .tab-btn.active::after { content: ''; position: absolute; bottom: -1px; left: 0; right: 0; height: 2px; background: #18181b; }
 
-    .wf-step[style*="--wf-underline"]::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: currentColor; border-radius: 1px; }
+    /* Workflow Stepper */
+    .wf-node { display: flex; flex-direction: column; align-items: center; gap: 0.375rem; position: relative; z-index: 10; }
+    .wf-dot { width: 2rem; height: 2rem; border-radius: 9999px; border-width: 2px; display: flex; align-items: center; justify-content: center; transition: all 0.3s; }
+    .wf-dot-pending { background-color: #f1f5f9; border-color: #e2e8f0; color: #94a3b8; }
+    .wf-dot-active { background-color: #18181b; border-color: #18181b; color: white; transform: scale(1.1); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+    .wf-dot-done { background-color: #22c55e; border-color: #22c55e; color: white; }
+    .wf-dot-error { background-color: #ef4444; border-color: #ef4444; color: white; transform: scale(1.1); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+    .wf-line { flex: 1; height: 2px; background-color: #e2e8f0; transition: background-color 0.3s; }
+    .wf-line-done { background-color: #4ade80; }
+    .wf-label { font-size: 0.75rem; font-weight: 500; transition: color 0.2s; }
+    .wf-label-pending { color: #94a3b8; }
+    .wf-label-active { color: #18181b; font-weight: 600; }
+    .wf-label-done { color: #16a34a; }
+    .wf-label-error { color: #dc2626; font-weight: 600; }
 
     .filter-btn.active { background-color: #18181b; color: white; border-color: #18181b; }
     
@@ -118,15 +131,46 @@
           </div>
 
           <!-- Workflow Stepper -->
-          <div class="mb-4 flex items-center gap-3 text-xs">
-            <div class="flex items-center gap-3" id="workflowStepper" aria-label="Workflow">
-              <span class="wf-step relative pb-0.5 cursor-help text-ink font-medium" data-wf-step="validate" title="预处理：解码、切片、本地规则粗处理（不调用 LLM）">预处理</span>
-              <span class="wf-step relative pb-0.5 cursor-help text-slate-400" data-wf-step="process" title="LLM 校对：逐分片调用 LLM + 输出校验 + 自动重试">LLM校对</span>
-              <span class="wf-step relative pb-0.5 cursor-help text-slate-400" data-wf-step="merge" title="合并：将各分片输出合并为最终文件（可选清理中间产物）">合并</span>
-              <span class="wf-step relative pb-0.5 cursor-help text-slate-400" data-wf-step="done" title="完成：输出文件已生成，可下载/新任务">完成</span>
+          <div class="mb-6 px-2" id="workflowStepperWrap">
+            <div class="flex items-center" id="workflowStepper" aria-label="Workflow">
+              <!-- Node 1: 预处理 -->
+              <div class="wf-node" data-wf-step="validate">
+                <div class="wf-dot wf-dot-active" title="预处理：解码、切片、本地规则粗处理（不调用 LLM）">
+                  <span class="text-xs font-bold">1</span>
+                </div>
+                <span class="wf-label wf-label-active">预处理</span>
+              </div>
+              <!-- Line 1-2 -->
+              <div class="wf-line" data-wf-line="1"></div>
+              <!-- Node 2: LLM校对 -->
+              <div class="wf-node" data-wf-step="process">
+                <div class="wf-dot wf-dot-pending" title="LLM 校对：逐分片调用 LLM + 输出校验 + 自动重试">
+                  <span class="text-xs font-bold">2</span>
+                </div>
+                <span class="wf-label wf-label-pending">LLM校对</span>
+              </div>
+              <!-- Line 2-3 -->
+              <div class="wf-line" data-wf-line="2"></div>
+              <!-- Node 3: 合并 -->
+              <div class="wf-node" data-wf-step="merge">
+                <div class="wf-dot wf-dot-pending" title="合并：将各分片输出合并为最终文件（可选清理中间产物）">
+                  <span class="text-xs font-bold">3</span>
+                </div>
+                <span class="wf-label wf-label-pending">合并</span>
+              </div>
+              <!-- Line 3-4 -->
+              <div class="wf-line" data-wf-line="3"></div>
+              <!-- Node 4: 完成 -->
+              <div class="wf-node" data-wf-step="done">
+                <div class="wf-dot wf-dot-pending" title="完成：输出文件已生成，可下载/新任务">
+                  <span class="text-xs font-bold">4</span>
+                </div>
+                <span class="wf-label wf-label-pending">完成</span>
+              </div>
             </div>
-            <span class="text-slate-300">·</span>
-            <span id="wfStateBadge" class="text-slate-400">未开始</span>
+            <div class="mt-2 text-center">
+              <span id="wfStateBadge" class="text-xs text-slate-400">未开始</span>
+            </div>
           </div>
 
           <!-- Action Buttons -->
