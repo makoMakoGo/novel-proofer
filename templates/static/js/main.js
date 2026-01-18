@@ -333,6 +333,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // 1. Load State
     loadUiState(ui.elements.form);
     ui.refreshFileName();
+    ui.refreshActionButtons(null);
     
     // 2. Setup Events
     UI_STATE_FIELDS.forEach((name) => {
@@ -353,7 +354,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-    ui.elements.fileInput?.addEventListener('change', () => ui.refreshFileName());
+    ui.elements.fileInput?.addEventListener('change', () => {
+        ui.refreshFileName();
+        if (!state.currentJobId) ui.refreshActionButtons(null);
+    });
     
     // Drag & Drop
     if (ui.elements.fileInput && ui.elements.fileDrop) {
@@ -367,7 +371,10 @@ document.addEventListener('DOMContentLoaded', () => {
         ui.elements.fileInput.addEventListener('dragleave', rmDrag);
         ui.elements.fileInput.addEventListener('drop', () => {
             rmDrag();
-            setTimeout(() => ui.refreshFileName(), 0);
+            setTimeout(() => {
+                ui.refreshFileName();
+                if (!state.currentJobId) ui.refreshActionButtons(null);
+            }, 0);
         });
     }
 
