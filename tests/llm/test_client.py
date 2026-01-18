@@ -2,13 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-import urllib.error
-import urllib.request
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-
+import httpx
 import pytest
 
 from novel_proofer.llm import client as llm_client
@@ -16,41 +10,83 @@ from novel_proofer.llm.client import LLMError
 from novel_proofer.llm.config import LLMConfig
 
 
-class _FakeResponse:
-    def __init__(self, chunks: list[bytes]) -> None:
+class _FakeStreamResponse:
+    def __init__(self, chunks: list[bytes], *, status_code: int = 200) -> None:
         self._chunks = chunks
-        self._i = 0
+        self.status_code = status_code
 
-    def read(self, _n: int = -1) -> bytes:
-        if self._i >= len(self._chunks):
-            return b""
-        chunk = self._chunks[self._i]
-        self._i += 1
-        return chunk
+    def raise_for_status(self) -> None:
+        if self.status_code < 400:
+            return
+        req = httpx.Request("POST", "http://x")
+        resp = httpx.Response(self.status_code, request=req, text="boom")
+        raise httpx.HTTPStatusError("error", request=req, response=resp)
 
-    def __enter__(self):
-        return self
+    def iter_bytes(self, *, chunk_size: int = 4096):
+        _ = chunk_size
+        yield from self._chunks
+
+
+class _FakeStreamCM:
+    def __init__(self, resp: _FakeStreamResponse) -> None:
+        self._resp = resp
+
+    def __enter__(self) -> _FakeStreamResponse:
+        return self._resp
 
     def __exit__(self, exc_type, exc, tb) -> bool:
         return False
 
 
-class _DoneThenBoomResponse:
+class _IterOnceThenBoom:
     def __init__(self, first: bytes) -> None:
         self._first = first
         self._read_once = False
 
-    def read(self, _n: int) -> bytes:
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> bytes:
         if self._read_once:
-            raise AssertionError("response.read() should not be called after SSE [DONE]")
+            raise AssertionError("iter_bytes should not be consumed after SSE [DONE]")
         self._read_once = True
         return self._first
 
-    def __enter__(self):
+    def iter_bytes(self, *, chunk_size: int = 4096):
+        _ = chunk_size
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
-        return False
+
+class _BoomOnNext:
+    def iter_bytes(self, *, chunk_size: int = 4096):
+        _ = chunk_size
+        return self
+
+    def __iter__(self):
+        return self
+
+    def __next__(self) -> bytes:
+        raise AssertionError("iter_bytes should not be consumed when should_stop() is true")
+
+
+class _FakeClient:
+    def __init__(self, *, stream_cm=None, stream_exc: Exception | None = None, post_resp=None, post_exc=None) -> None:
+        self._stream_cm = stream_cm
+        self._stream_exc = stream_exc
+        self._post_resp = post_resp
+        self._post_exc = post_exc
+
+    def stream(self, _method: str, _url: str, *, json: dict, headers: dict, timeout):
+        _ = (json, headers, timeout)
+        if self._stream_exc is not None:
+            raise self._stream_exc
+        return self._stream_cm
+
+    def post(self, _url: str, *, json: dict, headers: dict, timeout):
+        _ = (json, headers, timeout)
+        if self._post_exc is not None:
+            raise self._post_exc
+        return self._post_resp
 
 
 def test_llm_config_removed_retry_fields():
@@ -76,13 +112,20 @@ def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch
     captured: dict = {}
 
     def fake_stream_request_with_debug(
-        url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None
+        url: str,
+        payload: dict,
+        headers: dict[str, str],
+        timeout: float,
+        *,
+        should_stop=None,
+        max_connections: int,
     ) -> tuple[str, str]:
         captured["url"] = url
         captured["payload"] = payload
         captured["headers"] = headers
         captured["timeout"] = timeout
         captured["should_stop"] = should_stop
+        captured["max_connections"] = max_connections
         return "RAW", "DBG"
 
     monkeypatch.setattr(llm_client, "_stream_request_with_debug", fake_stream_request_with_debug)
@@ -104,14 +147,22 @@ def test_call_openai_compatible_payload_has_no_max_tokens_by_default(monkeypatch
     assert captured["payload"]["messages"][1]["role"] == "user"
     assert captured["headers"]["Authorization"] == "Bearer k"
     assert callable(captured["should_stop"])
+    assert captured["max_connections"] == 20
 
 
 def test_call_openai_compatible_merges_extra_params(monkeypatch: pytest.MonkeyPatch):
     captured: dict = {}
 
     def fake_stream_request_with_debug(
-        url: str, payload: dict, headers: dict[str, str], timeout: float, *, should_stop=None
+        url: str,
+        payload: dict,
+        headers: dict[str, str],
+        timeout: float,
+        *,
+        should_stop=None,
+        max_connections: int,
     ) -> tuple[str, str]:
+        _ = (url, headers, timeout, should_stop, max_connections)
         captured["payload"] = payload
         return "RAW", "DBG"
 
@@ -151,35 +202,26 @@ def test_is_loopback_host():
     assert llm_client._is_loopback_host("8.8.8.8") is False
 
 
-def test_urlopen_uses_no_proxy_for_loopback(monkeypatch: pytest.MonkeyPatch):
-    req = urllib.request.Request("http://localhost:123", method="GET")
-    used = {"build_opener": 0, "urlopen": 0, "proxy_dict": None}
+def test_httpx_client_for_url_bypasses_env_proxy_for_loopback(monkeypatch: pytest.MonkeyPatch):
+    llm_client._HTTP_CLIENTS.clear()
+    created: list[dict] = []
 
-    class _FakeOpener:
-        def open(self, _req, *, timeout: float):
-            return ("opened", timeout)
+    class _CtorSpyClient:
+        def __init__(self, *, limits, trust_env: bool) -> None:
+            created.append({"limits": limits, "trust_env": trust_env})
 
-    def fake_proxy_handler(d: dict):
-        used["proxy_dict"] = d
-        return object()
+        def close(self) -> None:
+            return None
 
-    def fake_build_opener(_handler):
-        used["build_opener"] += 1
-        return _FakeOpener()
+    monkeypatch.setattr(llm_client.httpx, "Client", _CtorSpyClient)
 
-    def fake_urlopen(_req, *, timeout: float):
-        used["urlopen"] += 1
-        raise AssertionError("should not call urllib.request.urlopen for loopback")
+    _ = llm_client._httpx_client_for_url("http://localhost:123", max_connections=7)
+    assert created[0]["trust_env"] is False
+    assert created[0]["limits"].max_connections == 7
 
-    monkeypatch.setattr(urllib.request, "ProxyHandler", fake_proxy_handler)
-    monkeypatch.setattr(urllib.request, "build_opener", fake_build_opener)
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
-
-    out = llm_client._urlopen(req, timeout=1.25)
-    assert out == ("opened", 1.25)
-    assert used["build_opener"] == 1
-    assert used["urlopen"] == 0
-    assert used["proxy_dict"] == {}
+    _ = llm_client._httpx_client_for_url("http://example.com", max_connections=7)
+    assert created[1]["trust_env"] is True
+    assert created[1]["limits"].max_connections == 7
 
 
 def test_stream_request_parses_openai_sse(monkeypatch: pytest.MonkeyPatch):
@@ -189,41 +231,63 @@ def test_stream_request_parses_openai_sse(monkeypatch: pytest.MonkeyPatch):
         b"data: [DONE]\n"
     )
 
-    monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _FakeResponse([sse]))
-    out = llm_client._stream_request("http://x", {"stream": True}, headers={}, timeout=1.0)
+    fake_resp = _FakeStreamResponse([sse])
+    fake_client = _FakeClient(stream_cm=_FakeStreamCM(fake_resp))
+
+    monkeypatch.setattr(llm_client, "_httpx_client_for_url", lambda url, *, max_connections: fake_client)
+    out = llm_client._stream_request("http://x", {"stream": True}, headers={}, timeout=1.0, max_connections=1)
     assert out == "Hello world"
 
 
 def test_stream_request_stops_reading_after_done(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _DoneThenBoomResponse(b"data: [DONE]\n"))
-    assert llm_client._stream_request("http://x", {"stream": True}, headers={}, timeout=1.0) == ""
+    fake_resp = _FakeStreamResponse([b"data: [DONE]\n"])
+    fake_resp.iter_bytes = _IterOnceThenBoom(b"data: [DONE]\n").iter_bytes  # type: ignore[method-assign]
+    fake_client = _FakeClient(stream_cm=_FakeStreamCM(fake_resp))
+
+    monkeypatch.setattr(llm_client, "_httpx_client_for_url", lambda url, *, max_connections: fake_client)
+    assert llm_client._stream_request("http://x", {"stream": True}, headers={}, timeout=1.0, max_connections=1) == ""
 
 
 def test_stream_request_should_stop_short_circuits(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _FakeResponse([b'data: {"x":1}\n']))
+    fake_resp = _FakeStreamResponse([])
+    fake_resp.iter_bytes = _BoomOnNext().iter_bytes  # type: ignore[method-assign]
+    fake_client = _FakeClient(stream_cm=_FakeStreamCM(fake_resp))
+
+    monkeypatch.setattr(llm_client, "_httpx_client_for_url", lambda url, *, max_connections: fake_client)
     with pytest.raises(LLMError, match=r"cancelled"):
-        llm_client._stream_request("http://x", {"stream": True}, headers={}, timeout=1.0, should_stop=lambda: True)
+        llm_client._stream_request(
+            "http://x",
+            {"stream": True},
+            headers={},
+            timeout=1.0,
+            should_stop=lambda: True,
+            max_connections=1,
+        )
 
 
 def test_stream_request_wraps_url_error(monkeypatch: pytest.MonkeyPatch):
-    def boom(req, timeout):
-        raise urllib.error.URLError("boom")
-
-    monkeypatch.setattr(llm_client, "_urlopen", boom)
+    fake_client = _FakeClient(stream_exc=httpx.RequestError("boom"))
+    monkeypatch.setattr(llm_client, "_httpx_client_for_url", lambda url, *, max_connections: fake_client)
     with pytest.raises(LLMError, match=r"LLM request failed: .*boom"):
-        llm_client._stream_request("http://x", {}, headers={}, timeout=1.0)
+        llm_client._stream_request("http://x", {}, headers={}, timeout=1.0, max_connections=1)
 
 
 def test_http_post_json_success(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(llm_client, "_urlopen", lambda req, timeout: _FakeResponse([b'{"ok":true}']))
+    class _FakeJsonResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"ok": True}
+
+    fake_client = _FakeClient(post_resp=_FakeJsonResponse())
+    monkeypatch.setattr(llm_client, "_httpx_client_for_url", lambda url, *, max_connections: fake_client)
     assert llm_client._http_post_json("http://x", {"a": 1}, headers={}, timeout=1.0) == {"ok": True}
 
 
 def test_http_post_json_wraps_url_error(monkeypatch: pytest.MonkeyPatch):
-    def boom(req, timeout):
-        raise urllib.error.URLError("boom")
-
-    monkeypatch.setattr(llm_client, "_urlopen", boom)
+    fake_client = _FakeClient(post_exc=httpx.RequestError("boom"))
+    monkeypatch.setattr(llm_client, "_httpx_client_for_url", lambda url, *, max_connections: fake_client)
     with pytest.raises(LLMError, match=r"LLM request failed: .*boom"):
         llm_client._http_post_json("http://x", {}, headers={}, timeout=1.0)
 

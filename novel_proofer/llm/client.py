@@ -1,16 +1,19 @@
 from __future__ import annotations
 
+import atexit
 import codecs
 import ipaddress
 import json
 import logging
 import re
+import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
+
+import httpx
 
 from novel_proofer.llm.config import LLMConfig
 from novel_proofer.llm.think_filter import ThinkTagFilter
@@ -54,12 +57,38 @@ def _is_loopback_host(host: str | None) -> bool:
         return False
 
 
-def _urlopen(req: urllib.request.Request, timeout: float):
-    host = urllib.parse.urlparse(req.full_url).hostname
-    if _is_loopback_host(host):
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        return opener.open(req, timeout=timeout)
-    return urllib.request.urlopen(req, timeout=timeout)
+_HTTP_CLIENTS_LOCK = threading.Lock()
+_HTTP_CLIENTS: dict[tuple[bool, int], httpx.Client] = {}
+
+
+def _close_http_clients() -> None:
+    with _HTTP_CLIENTS_LOCK:
+        clients = list(_HTTP_CLIENTS.values())
+        _HTTP_CLIENTS.clear()
+    for c in clients:
+        with suppress(Exception):
+            c.close()
+
+
+atexit.register(_close_http_clients)
+
+
+def _httpx_client_for_url(url: str, *, max_connections: int) -> httpx.Client:
+    host = urllib.parse.urlparse(url).hostname
+    trust_env = not _is_loopback_host(host)
+
+    max_conn = max(1, int(max_connections))
+    key = (trust_env, max_conn)
+
+    with _HTTP_CLIENTS_LOCK:
+        existing = _HTTP_CLIENTS.get(key)
+        if existing is not None:
+            return existing
+
+        limits = httpx.Limits(max_connections=max_conn, max_keepalive_connections=max_conn)
+        client = httpx.Client(limits=limits, trust_env=trust_env)
+        _HTTP_CLIENTS[key] = client
+        return client
 
 
 def _parse_sse_line(line: str) -> tuple[str, str] | None:
@@ -103,6 +132,7 @@ def _stream_request_impl(
     *,
     should_stop: Callable[[], bool] | None = None,
     collect_debug: bool,
+    max_connections: int,
 ) -> tuple[str, str]:
     """Streaming HTTP POST request, returning (content, stream_debug).
 
@@ -123,28 +153,35 @@ def _stream_request_impl(
             debug_head += s[: head_limit - len(debug_head)]
         debug_tail = (debug_tail + s)[-tail_limit:]
 
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json", "Accept": "text/event-stream", **headers},
-        method="POST",
-    )
-
     try:
-        with _urlopen(req, timeout=timeout) as resp:
+        client = _httpx_client_for_url(url, max_connections=max_connections)
+        request_headers = {"Accept": "text/event-stream", **headers}
+
+        with client.stream(
+            "POST",
+            url,
+            json=payload,
+            headers=request_headers,
+            timeout=httpx.Timeout(float(timeout)),
+        ) as resp:
+            resp.raise_for_status()
             content_parts: list[str] = []
             buffer = ""
             done = False
             decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
 
+            it = resp.iter_bytes(chunk_size=4096)
             while True:
                 if should_stop is not None and should_stop():
                     raise _cancelled_error()
 
-                chunk = resp.read(4096)
-                if not chunk:
+                try:
+                    chunk = next(it)
+                except StopIteration:
                     break
+
+                if not chunk:
+                    continue
 
                 decoded = decoder.decode(chunk)
                 add_debug(decoded)
@@ -166,7 +203,7 @@ def _stream_request_impl(
                 if done:
                     break
 
-            # Flush any remaining decoder state (handles UTF-8 split across read() boundaries).
+            # Flush any remaining decoder state (handles UTF-8 split across chunk boundaries).
             tail = decoder.decode(b"", final=True)
             if tail:
                 add_debug(tail)
@@ -192,10 +229,14 @@ def _stream_request_impl(
                 return content, debug_head + "\n...[truncated]...\n" + debug_tail
             return content, debug_tail
 
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
-        raise LLMError(f"HTTP {e.code} from LLM: {body}", status_code=int(e.code)) from e
-    except urllib.error.URLError as e:
+    except httpx.HTTPStatusError as e:
+        body = ""
+        with suppress(Exception):
+            body = (e.response.text or "").strip()
+        raise LLMError(
+            f"HTTP {e.response.status_code} from LLM: {body}", status_code=int(e.response.status_code)
+        ) from e
+    except httpx.RequestError as e:
         raise LLMError(f"LLM request failed: {e}") from e
 
 
@@ -206,6 +247,7 @@ def _stream_request(
     timeout: float,
     *,
     should_stop: Callable[[], bool] | None = None,
+    max_connections: int,
 ) -> str:
     """Make a streaming HTTP POST request and collect all content.
 
@@ -229,6 +271,7 @@ def _stream_request(
         timeout,
         should_stop=should_stop,
         collect_debug=False,
+        max_connections=max_connections,
     )
     return content
 
@@ -240,6 +283,7 @@ def _stream_request_with_debug(
     timeout: float,
     *,
     should_stop: Callable[[], bool] | None = None,
+    max_connections: int,
 ) -> tuple[str, str]:
     return _stream_request_impl(
         url,
@@ -248,25 +292,24 @@ def _stream_request_with_debug(
         timeout,
         should_stop=should_stop,
         collect_debug=True,
+        max_connections=max_connections,
     )
 
 
 def _http_post_json(url: str, payload: dict, headers: dict[str, str], timeout: float) -> dict:
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json", **headers},
-        method="POST",
-    )
     try:
-        with _urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-            return json.loads(raw)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
-        raise LLMError(f"HTTP {e.code} from LLM: {body}", status_code=int(e.code)) from e
-    except urllib.error.URLError as e:
+        client = _httpx_client_for_url(url, max_connections=1)
+        resp = client.post(url, json=payload, headers=headers, timeout=httpx.Timeout(float(timeout)))
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as e:
+        body = ""
+        with suppress(Exception):
+            body = (e.response.text or "").strip()
+        raise LLMError(
+            f"HTTP {e.response.status_code} from LLM: {body}", status_code=int(e.response.status_code)
+        ) from e
+    except (httpx.RequestError, ValueError) as e:
         raise LLMError(f"LLM request failed: {e}") from e
 
 
@@ -474,7 +517,12 @@ def _call_openai_compatible_with_raw(
         payload.update(cfg.extra_params)
 
     raw_content, stream_debug = _stream_request_with_debug(
-        url, payload, headers=_headers(cfg), timeout=cfg.timeout_seconds, should_stop=should_stop
+        url,
+        payload,
+        headers=_headers(cfg),
+        timeout=cfg.timeout_seconds,
+        should_stop=should_stop,
+        max_connections=max(1, int(cfg.max_concurrency)),
     )
 
     return LLMTextResult(

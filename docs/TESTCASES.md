@@ -75,13 +75,13 @@
 | `tests/llm/test_client.py::test_parse_sse_line[event: ping-None]` | SSE 的 `event:` 行不作为数据帧处理，应返回 `None`。 |
 | `tests/llm/test_client.py::test_parse_sse_line[-None]` | 空行应返回 `None`。 |
 | `tests/llm/test_client.py::test_is_loopback_host` | `_is_loopback_host()` 对 `localhost/127.0.0.1` 返回 `True`，其他地址返回 `False`。 |
-| `tests/llm/test_client.py::test_urlopen_uses_no_proxy_for_loopback` | loopback 请求应绕过系统代理：通过 `ProxyHandler({})` 的 opener 执行，而不是直接 `urllib.request.urlopen`。 |
+| `tests/llm/test_client.py::test_httpx_client_for_url_bypasses_env_proxy_for_loopback` | loopback 请求应绕过环境代理：使用 `httpx.Client(trust_env=False)`。 |
 | `tests/llm/test_client.py::test_stream_request_parses_openai_sse` | SSE 流式响应中 `choices[].delta.content` 需按顺序拼接，直到 `[DONE]`。 |
 | `tests/llm/test_client.py::test_stream_request_stops_reading_after_done` | 读到 `[DONE]` 后必须停止继续 `read()`（防止额外 IO/异常）。 |
 | `tests/llm/test_client.py::test_stream_request_should_stop_short_circuits` | `should_stop()` 为真时应短路并抛出终止错误（`LLMError("cancelled")`）。 |
-| `tests/llm/test_client.py::test_stream_request_wraps_url_error` | 网络层 `URLError` 需被包装为 `LLMError("LLM request failed: ...")`。 |
+| `tests/llm/test_client.py::test_stream_request_wraps_url_error` | 网络层 `httpx.RequestError` 需被包装为 `LLMError("LLM request failed: ...")`。 |
 | `tests/llm/test_client.py::test_http_post_json_success` | `_http_post_json()` 能成功解析 JSON 响应体为 Python dict。 |
-| `tests/llm/test_client.py::test_http_post_json_wraps_url_error` | `_http_post_json()` 遇到 `URLError` 需转换为 `LLMError`。 |
+| `tests/llm/test_client.py::test_http_post_json_wraps_url_error` | `_http_post_json()` 遇到 `httpx.RequestError` 需转换为 `LLMError`。 |
 | `tests/llm/test_client.py::test_call_llm_text_resilient_retries_and_succeeds` | `call_llm_text_resilient()` 对可重试错误（如 `HTTP 500`）进行多次尝试并最终成功；同时会调用 `sleep()` 退避。 |
 | `tests/llm/test_client.py::test_call_llm_text_resilient_non_retryable_raises` | 对不可重试错误（如 `HTTP 400`）不应退避重试，直接抛出异常。 |
 | `tests/llm/test_client.py::test_call_llm_text_resilient_with_meta_calls_on_retry` | 带 meta 的重试接口会返回 `retries/last_code/last_msg`，并在重试时触发 `on_retry(idx, code, msg)` 回调。 |
