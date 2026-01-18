@@ -567,6 +567,7 @@ app = FastAPI(lifespan=_lifespan)
 
 # Mount static files for images
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
+app.mount("/static", StaticFiles(directory=str(TEMPLATES_DIR / "static")), name="static")
 
 
 @app.exception_handler(HTTPException)
