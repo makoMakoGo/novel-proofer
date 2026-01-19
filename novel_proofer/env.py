@@ -33,7 +33,10 @@ def env_json_object(name: str) -> dict | None:
     raw = str(os.getenv(name, "")).strip()
     if not raw:
         return None
-    obj = json.loads(raw)
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
     if not isinstance(obj, dict):
         raise ValueError(f"{name} must be a JSON object")
     return obj
