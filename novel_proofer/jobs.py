@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import threading
 import time
@@ -11,6 +10,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from novel_proofer.env import env_float
 from novel_proofer.formatting.config import FormatConfig
 
 logger = logging.getLogger(__name__)
@@ -19,16 +19,6 @@ _JOB_STATE_VERSION = 2
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
 _JOB_PHASES = {"validate", "process", "merge", "done"}
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = str(os.getenv(name, "")).strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except Exception:
-        return default
 
 
 @dataclass
@@ -241,7 +231,7 @@ class JobStore:
         self._paused: set[str] = set()
         self._persist_dir: Path | None = None
         interval = (
-            _env_float("NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S", 5.0)
+            env_float("NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S", 5.0)
             if persist_interval_s is None
             else float(persist_interval_s)
         )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -46,38 +45,27 @@ _load_dotenv(REPO_ROOT / ".env.test")
 
 
 def _env_truthy(name: str) -> bool:
-    v = str(os.getenv(name, "")).strip().lower()
-    return v in {"1", "true", "yes", "y", "on"}
+    from novel_proofer.env import env_truthy
+
+    return env_truthy(name)
 
 
 def _env_int(name: str, default: int) -> int:
-    raw = str(os.getenv(name, "")).strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except Exception:
-        return default
+    from novel_proofer.env import env_int
+
+    return env_int(name, default)
 
 
 def _env_float(name: str, default: float) -> float:
-    raw = str(os.getenv(name, "")).strip()
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except Exception:
-        return default
+    from novel_proofer.env import env_float
+
+    return env_float(name, default)
 
 
 def _env_json_object(name: str) -> dict | None:
-    raw = str(os.getenv(name, "")).strip()
-    if not raw:
-        return None
-    obj = json.loads(raw)
-    if not isinstance(obj, dict):
-        raise ValueError(f"{name} must be a JSON object")
-    return obj
+    from novel_proofer.env import env_json_object
+
+    return env_json_object(name)
 
 
 def pytest_addoption(parser):
