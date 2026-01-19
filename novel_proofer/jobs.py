@@ -698,22 +698,24 @@ class JobStore:
     def delete(self, job_id: str) -> bool:
         path: Path | None = None
         existed: bool
-        with self._lock:
-            existed = job_id in self._jobs
-            if existed:
-                path = self._persist_path_for_job_id(job_id)
-            self._jobs.pop(job_id, None)
-            self._cancelled.discard(job_id)
-            self._paused.discard(job_id)
-            self._persist_dirty_since.pop(job_id, None)
-            self._persist_seq.pop(job_id, None)
-        if path is not None:
+        with self._persist_lock:
+            with self._lock:
+                existed = job_id in self._jobs
+                if existed:
+                    path = self._persist_path_for_job_id(job_id)
+                self._jobs.pop(job_id, None)
+                self._cancelled.discard(job_id)
+                self._paused.discard(job_id)
+                self._persist_dirty_since.pop(job_id, None)
+                self._persist_seq.pop(job_id, None)
+            if path is None:
+                return existed
             try:
                 if path.exists():
                     path.unlink()
             except Exception:
                 logger.exception("failed to delete persisted job state: job_id=%s", job_id)
-        return existed
+            return existed
 
     def is_cancelled(self, job_id: str) -> bool:
         with self._lock:
