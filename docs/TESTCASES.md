@@ -14,6 +14,8 @@
 | `tests/api/test_endpoints.py::test_create_job_local_mode_writes_output_and_is_queryable` | 提供 LLM 配置创建任务，轮询等待完成；验证输出文件在 `OUTPUT_DIR` 下生成且内容非空，同时清理 `GLOBAL_JOBS` 记录避免串扰。 |
 | `tests/api/test_endpoints.py::test_get_job_chunk_filter_and_paging` | 创建多分片任务后，用 `chunks=1&chunk_state=done&limit=1&offset=0` 拉取分片列表；验证分页 `has_more`、返回数量与 `chunk_counts.done` 统计。 |
 | `tests/api/test_endpoints.py::test_job_not_found_error_envelope` | 查询不存在的任务时返回 `404`，并使用统一错误信封（`error.code == "not_found"`）。 |
+| `tests/api/test_endpoints.py::test_invalid_job_id_returns_400_bad_request` | 非法 `job_id`（非 32 位 hex）应返回 `400`，并使用统一错误信封（`error.code == "bad_request"`）。 |
+| `tests/api/test_endpoints.py::test_job_id_is_normalized_to_lowercase_for_lookup` | `job_id` 大小写不敏感：服务端应在路由层将 path 参数标准化为小写后再查询任务。 |
 | `tests/api/test_endpoints.py::test_create_job_llm_enabled_requires_base_url_and_model` | LLM 配置缺失（`base_url/model` 为空）时，创建任务仍返回 `201`，但任务最终进入 `error` 状态。 |
 | `tests/api/test_endpoints.py::test_job_actions_pause_resume` | 覆盖任务动作接口：`pause/resume` 的返回值与状态流转（通过 monkeypatch 避免真实 runner 副作用）。 |
 | `tests/api/test_endpoints.py::test_pause_only_allowed_in_process_phase` | `pause` 仅允许在 `phase=process` 时执行；其他阶段返回 `409`。 |

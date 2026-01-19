@@ -190,6 +190,25 @@ def test_job_not_found_error_envelope():
     assert body.get("error", {}).get("code") == "not_found"
 
 
+def test_invalid_job_id_returns_400_bad_request():
+    client = TestClient(api.app)
+    r = client.get("/api/v1/jobs/" + ("x" * 32))
+    assert r.status_code == 400
+    body = r.json()
+    assert body.get("error", {}).get("code") == "bad_request"
+
+
+def test_job_id_is_normalized_to_lowercase_for_lookup():
+    client = TestClient(api.app)
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    try:
+        r = client.get(f"/api/v1/jobs/{job.job_id.upper()}?chunks=0")
+        assert r.status_code == 200, r.text
+        assert (r.json().get("job") or {}).get("id") == job.job_id
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
+
+
 def test_create_job_llm_enabled_requires_base_url_and_model(monkeypatch: pytest.MonkeyPatch):
     with tempfile.TemporaryDirectory() as td:
         base = Path(td)

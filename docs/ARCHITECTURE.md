@@ -52,10 +52,10 @@ novel_proofer/
 │   ├── rules.py       # 确定性文本转换（标点、缩进）
 │   ├── chunking.py    # 按行边界分片（支持文件流式）
 │   └── merge.py       # 分片合并（runner/fixer 复用）
-	└── llm/
-	    ├── config.py      # LLMConfig、系统提示词
-	    ├── client.py      # OpenAI 兼容流式客户端（httpx 连接池）+ 重试逻辑
-	    └── think_filter.py # 状态机过滤 <think> 标签
+└── llm/
+    ├── config.py      # LLMConfig、系统提示词
+    ├── client.py      # OpenAI 兼容流式客户端（httpx 连接池）+ 重试逻辑
+    └── think_filter.py # 状态机过滤 <think> 标签
 ```
 
 | 模块 | 职责 | 关键方法 |

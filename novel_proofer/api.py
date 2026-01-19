@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,7 +46,22 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 JOBS_DIR = OUTPUT_DIR / ".jobs"
 JOBS_DIR.mkdir(exist_ok=True)
 
-_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _validate_job_id(job_id: str) -> str:
+    job_id = str(job_id or "").strip().lower()
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("invalid job_id")
+    return job_id
+
+
+def _job_id_dep(job_id: str) -> str:
+    try:
+        return _validate_job_id(job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
 
 _filename_strip_re = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uFF00-\uFFEF._ -]+")
 
@@ -99,9 +114,7 @@ def _input_cache_root() -> Path:
 
 
 def _input_cache_path(job_id: str) -> Path:
-    job_id = (job_id or "").strip()
-    if not _JOB_ID_RE.fullmatch(job_id):
-        raise ValueError("invalid job_id")
+    job_id = _validate_job_id(job_id)
     return _input_cache_root() / f"{job_id}.txt"
 
 
@@ -112,9 +125,7 @@ def _write_input_cache(job_id: str, text: str) -> None:
 
 
 def _input_upload_tmp_path(job_id: str) -> Path:
-    job_id = (job_id or "").strip()
-    if not _JOB_ID_RE.fullmatch(job_id):
-        raise ValueError("invalid job_id")
+    job_id = _validate_job_id(job_id)
     return _input_cache_root() / f"{job_id}.upload.tmp"
 
 
@@ -191,12 +202,10 @@ def _copy_input_cache(src_job_id: str, dst_job_id: str) -> None:
 def _cleanup_input_cache(job_id: str) -> bool:
     """Delete output/.inputs/<job_id>.txt (best-effort, safe-guarded)."""
 
-    job_id = (job_id or "").strip()
-    if not _JOB_ID_RE.fullmatch(job_id):
-        raise ValueError("invalid job_id")
+    job_id = _validate_job_id(job_id)
 
     root = _input_cache_root().resolve()
-    target = _input_cache_path(job_id).resolve()
+    target = (_input_cache_root() / f"{job_id}.txt").resolve()
     if target == root or root not in target.parents:
         raise ValueError("invalid job_id")
 
@@ -214,9 +223,7 @@ def _jobs_state_root() -> Path:
 def _cleanup_job_state(job_id: str) -> bool:
     """Delete output/.state/jobs/<job_id>.json (best-effort, safe-guarded)."""
 
-    job_id = (job_id or "").strip()
-    if not _JOB_ID_RE.fullmatch(job_id):
-        raise ValueError("invalid job_id")
+    job_id = _validate_job_id(job_id)
 
     root = _jobs_state_root().resolve()
     target = (root / f"{job_id}.json").resolve()
@@ -233,9 +240,7 @@ def _cleanup_job_state(job_id: str) -> bool:
 def _cleanup_job_dir(job_id: str) -> bool:
     """Delete output/.jobs/<job_id>/ directory (best-effort, safe-guarded)."""
 
-    job_id = (job_id or "").strip()
-    if not _JOB_ID_RE.fullmatch(job_id):
-        raise ValueError("invalid job_id")
+    job_id = _validate_job_id(job_id)
 
     root = JOBS_DIR.resolve()
     target = (JOBS_DIR / job_id).resolve()
@@ -669,7 +674,7 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
 
 
 @app.post("/api/v1/jobs/{job_id}/rerun-all", response_model=JobCreateResponse, status_code=201)
-async def rerun_all(job_id: str, options: JobOptions = Body(...)):
+async def rerun_all(job_id: str = Depends(_job_id_dep), options: JobOptions = Body(...)):
     st0 = GLOBAL_JOBS.get(job_id)
     if st0 is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -719,7 +724,7 @@ async def rerun_all(job_id: str, options: JobOptions = Body(...)):
 
 @app.get("/api/v1/jobs/{job_id}", response_model=JobGetResponse)
 async def get_job(
-    job_id: str,
+    job_id: str = Depends(_job_id_dep),
     *,
     chunks: int = Query(1, ge=0, le=1),
     chunk_state: str = Query("all"),
@@ -771,7 +776,7 @@ async def get_job(
 
 
 @app.get("/api/v1/jobs/{job_id}/input-stats", response_model=InputStatsOut)
-async def get_job_input_stats(job_id: str):
+async def get_job_input_stats(job_id: str = Depends(_job_id_dep)):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -819,7 +824,7 @@ async def get_job_input_stats(job_id: str):
 
 
 @app.get("/api/v1/jobs/{job_id}/download")
-async def download_job_output(job_id: str):
+async def download_job_output(job_id: str = Depends(_job_id_dep)):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -893,7 +898,7 @@ async def list_jobs(
 
 
 @app.post("/api/v1/jobs/{job_id}/pause", response_model=JobActionResponse)
-async def pause_job(job_id: str):
+async def pause_job(job_id: str = Depends(_job_id_dep)):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -907,7 +912,9 @@ async def pause_job(job_id: str):
 
 
 @app.post("/api/v1/jobs/{job_id}/resume", response_model=JobActionResponse)
-async def resume_job(job_id: str, body: RetryFailedRequest = Body(default_factory=RetryFailedRequest)):
+async def resume_job(
+    job_id: str = Depends(_job_id_dep), body: RetryFailedRequest = Body(default_factory=RetryFailedRequest)
+):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -946,7 +953,9 @@ async def resume_job(job_id: str, body: RetryFailedRequest = Body(default_factor
 
 
 @app.post("/api/v1/jobs/{job_id}/retry-failed", response_model=JobActionResponse)
-async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_factory=RetryFailedRequest)):
+async def retry_failed(
+    job_id: str = Depends(_job_id_dep), body: RetryFailedRequest = Body(default_factory=RetryFailedRequest)
+):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -999,7 +1008,7 @@ async def retry_failed(job_id: str, body: RetryFailedRequest = Body(default_fact
 
 
 @app.post("/api/v1/jobs/{job_id}/merge", response_model=JobActionResponse)
-async def merge_job(job_id: str, body: MergeRequest = Body(default_factory=MergeRequest)):
+async def merge_job(job_id: str = Depends(_job_id_dep), body: MergeRequest = Body(default_factory=MergeRequest)):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -1030,7 +1039,7 @@ async def merge_job(job_id: str, body: MergeRequest = Body(default_factory=Merge
 
 
 @app.post("/api/v1/jobs/{job_id}/reset", response_model=JobActionResponse)
-async def reset_job(job_id: str):
+async def reset_job(job_id: str = Depends(_job_id_dep)):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -1061,7 +1070,7 @@ async def reset_job(job_id: str):
 
 
 @app.post("/api/v1/jobs/{job_id}/cleanup-debug", response_model=JobActionResponse)
-async def cleanup_debug(job_id: str):
+async def cleanup_debug(job_id: str = Depends(_job_id_dep)):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
