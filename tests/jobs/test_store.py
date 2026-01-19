@@ -137,24 +137,26 @@ def test_job_store_ignores_unknown_jobs_and_cancelled_updates() -> None:
 def test_job_store_persistence_is_throttled_and_flushable(tmp_path: Path) -> None:
     js = JobStore(persist_interval_s=60.0)
     js.configure_persistence(persist_dir=tmp_path)
+    try:
+        st = js.create("in.txt", "out.txt", total_chunks=1)
+        job_id = st.job_id
+        js.init_chunks(job_id, total_chunks=1)
 
-    st = js.create("in.txt", "out.txt", total_chunks=1)
-    job_id = st.job_id
-    js.init_chunks(job_id, total_chunks=1)
+        calls = 0
+        orig = js._atomic_write_json
 
-    calls = 0
-    orig = js._atomic_write_json
+        def wrapped(path: Path, payload: dict) -> None:
+            nonlocal calls
+            calls += 1
+            orig(path, payload)
 
-    def wrapped(path: Path, payload: dict) -> None:
-        nonlocal calls
-        calls += 1
-        orig(path, payload)
+        js._atomic_write_json = wrapped  # type: ignore[method-assign]
 
-    js._atomic_write_json = wrapped  # type: ignore[method-assign]
+        js.update_chunk(job_id, 0, state="processing")
+        js.update_chunk(job_id, 0, state="done")
+        assert calls == 0
 
-    js.update_chunk(job_id, 0, state="processing")
-    js.update_chunk(job_id, 0, state="done")
-    assert calls == 0
-
-    js.flush_persistence(job_id)
-    assert calls == 1
+        js.flush_persistence(job_id)
+        assert calls == 1
+    finally:
+        js.shutdown_persistence(wait=True)
