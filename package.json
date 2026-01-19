@@ -1,0 +1,11 @@
+{
+  "name": "novel-proofer",
+  "private": true,
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  },
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i templates/static/css/tailwind.input.css -o templates/static/css/tailwind.css --minify",
+    "watch:css": "tailwindcss -c tailwind.config.js -i templates/static/css/tailwind.input.css -o templates/static/css/tailwind.css --watch"
+  }
+}

@@ -37,6 +37,12 @@ Thumbs.db
 desktop.ini
 *:Zone.Identifier
 
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
 ## AI config not wanted
 .claude/specs/
 .claude/settings.local.json

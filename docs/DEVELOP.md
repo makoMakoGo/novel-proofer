@@ -62,6 +62,23 @@ python -m novel_proofer.server
 
 ---
 
+### 1.3 前端样式（Tailwind CSS）
+
+本项目前端使用 Tailwind CSS，但运行时不依赖 CDN：构建出的 `templates/static/css/tailwind.css` 会提交到仓库中，服务端通过 `/static` 提供静态文件。
+
+当你修改了 `templates/index.html` 或 `templates/static/js/**` 里的 Tailwind class（或 `tailwind.config.js`）后，需要重新生成 CSS：
+
+```bash
+npm ci
+npm run build:css
+```
+
+本地开发时可使用 watch：
+
+```bash
+npm run watch:css
+```
+
 ## 2. Git 协作流程
 
 建议流程（更稳、更少互相打断）：

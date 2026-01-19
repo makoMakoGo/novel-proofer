@@ -43,3 +43,19 @@ jobs:
         shell: bash
         run: |
           uv run --frozen --no-sync pytest -q
+
+  frontend_css:
+    name: frontend css (tailwind build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Build tailwind.css
+        run: |
+          npm ci
+          npm run build:css
+      - name: Ensure tailwind.css is up-to-date
+        run: |
+          git diff --exit-code -- templates/static/css/tailwind.css
