@@ -565,6 +565,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     yield
 
+    GLOBAL_JOBS.shutdown_persistence(wait=False)
     shutdown_background(wait=False)
 
 

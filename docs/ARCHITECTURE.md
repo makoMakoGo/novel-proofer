@@ -524,6 +524,8 @@ class JobStore:
         self._cancelled: set[str] = set()
         self._paused: set[str] = set()
         self._persist_dir: Path | None = None  # 可选持久化目录（output/.state/jobs）
+        self._persist_interval_s = 5.0  # 默认 5s（可用环境变量覆盖）
+        self._persist_dirty = set()  # dirty job_id 集合（合并写 / 节流）
 
     def configure_persistence(self, *, persist_dir: Path) -> None:
         self._persist_dir = persist_dir
@@ -535,6 +537,7 @@ class JobStore:
         ...
 
     def update(self, job_id, **kwargs):
+        flush_now = False
         with self._lock:
             # 已标记为 cancelled（删除任务/reset）的 job 不接受更新
             if st.state == "cancelled":
@@ -546,17 +549,22 @@ class JobStore:
             if k == "state" and st.state == "paused" and v in {"queued", "running"}:
                 continue
 
-            snap = self._snapshot_job(st)
+            # 标记 dirty：让后台线程批量落盘（避免每个 chunk 更新都做一次全量 snapshot + 写盘）
+            self._persist_dirty.add(job_id)
+            flush_now = st.state in {"done", "error", "cancelled"}
 
-        # 每次更新后持久化快照（best-effort）
-        self._persist_snapshot(snap)
+        # 终态立即落盘，降低重启后状态回退的概率
+        if flush_now:
+            self._flush_job(job_id)
 ```
 
 **设计要点**：
 - 所有状态更新通过 `update()` / `update_chunk()` 方法（受锁保护）
 - 使用 snapshot 模式返回数据（避免外部修改内部状态）
 - `is_cancelled()` / `is_paused()` 用于 worker 检查是否应该停止
-- 可选持久化：Job 快照写入 `output/.state/jobs/{job_id}.json`，用于重启恢复
+- 可选持久化：Job 快照写入 `output/.state/jobs/{job_id}.json`，用于重启恢复（best-effort）
+- 持久化节流：后台线程合并写入（默认 5s 一次，可用 `NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S` 覆盖），避免高并发 chunk 更新导致频繁磁盘 IO
+- 关键状态：`done/error/cancelled` 终态会触发立即落盘（降低状态回退）
 - 重启自愈：将无意义的“运行中”状态收敛为可继续的 `paused/pending`
 
 ---

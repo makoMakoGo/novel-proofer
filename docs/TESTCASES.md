@@ -62,6 +62,7 @@
 | `tests/jobs/test_store.py::test_job_store_cancel_resets_processing_chunks` | 触发“删除任务（reset）”的终止信号后：任务变为 `cancelled` 且写入 `finished_at`，正在处理/重试的 chunk 重置为 `pending` 并清空时间戳。 |
 | `tests/jobs/test_store.py::test_job_store_pause_resume_and_delete` | `pause/resume/delete` 的幂等性与返回值（重复操作返回 `False`）以及 paused 状态开关。 |
 | `tests/jobs/test_store.py::test_job_store_ignores_unknown_jobs_and_cancelled_updates` | 对未知 job 的操作应无副作用；对已标记为 `cancelled` 的 job 的 `update()/update_chunk()` 应 no-op，避免状态被“复活”。 |
+| `tests/jobs/test_store.py::test_job_store_persistence_is_throttled_and_flushable` | 持久化写盘不应发生在每次 `update_chunk()` 的热路径；dirty 更新应被节流并可通过 `flush_persistence()` 主动触发落盘。 |
 
 ## tests/llm/test_client.py
 

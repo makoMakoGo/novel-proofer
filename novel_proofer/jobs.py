@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -18,6 +19,16 @@ _JOB_STATE_VERSION = 2
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
 _JOB_PHASES = {"validate", "process", "merge", "done"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = str(os.getenv(name, "")).strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        return default
 
 
 @dataclass
@@ -221,18 +232,48 @@ def _job_from_dict(d: dict) -> JobStatus:
 
 
 class JobStore:
-    def __init__(self) -> None:
+    def __init__(self, *, persist_interval_s: float | None = None) -> None:
         self._lock = threading.Lock()
+        self._persist_cv = threading.Condition(self._lock)
         self._persist_lock = threading.Lock()
         self._jobs: dict[str, JobStatus] = {}
         self._cancelled: set[str] = set()
         self._paused: set[str] = set()
         self._persist_dir: Path | None = None
+        interval = (
+            _env_float("NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S", 5.0)
+            if persist_interval_s is None
+            else float(persist_interval_s)
+        )
+        self._persist_interval_s = max(0.1, interval)
+        self._persist_dirty_since: dict[str, float] = {}
+        self._persist_seq: dict[str, int] = {}
+        self._persist_thread: threading.Thread | None = None
+        self._persist_stop = False
 
     def configure_persistence(self, *, persist_dir: Path) -> None:
         persist_dir.mkdir(parents=True, exist_ok=True)
         with self._lock:
             self._persist_dir = persist_dir
+            self._start_persist_thread_locked()
+
+    def shutdown_persistence(self, *, wait: bool = False) -> None:
+        t: threading.Thread | None
+        with self._lock:
+            self._persist_stop = True
+            self._persist_cv.notify_all()
+            t = self._persist_thread
+        if wait and t is not None:
+            with suppress(Exception):
+                t.join(timeout=1.0)
+
+    def _start_persist_thread_locked(self) -> None:
+        if self._persist_thread is not None and self._persist_thread.is_alive():
+            return
+        self._persist_stop = False
+        t = threading.Thread(target=self._persist_loop, name="novel-proofer-job-persist", daemon=True)
+        self._persist_thread = t
+        t.start()
 
     def _persist_path_for_job_id(self, job_id: str) -> Path | None:
         if not self._persist_dir:
@@ -260,15 +301,107 @@ class JobStore:
             with suppress(Exception):
                 tmp.unlink(missing_ok=True)
 
-    def _persist_snapshot(self, snapshot: JobStatus) -> None:
+    def _persist_snapshot_unlocked(self, snapshot: JobStatus) -> None:
         path = self._persist_path_for_job_id(snapshot.job_id)
         if path is None:
             return
         try:
-            with self._persist_lock:
-                self._atomic_write_json(path, _job_to_dict(snapshot))
+            self._atomic_write_json(path, _job_to_dict(snapshot))
         except Exception:
             logger.exception("failed to persist job state: job_id=%s", snapshot.job_id)
+
+    def _persist_snapshot_direct(self, snapshot: JobStatus) -> None:
+        with self._persist_lock:
+            self._persist_snapshot_unlocked(snapshot)
+
+    def _bump_persist_seq_locked(self, job_id: str, *, mark_dirty: bool) -> int:
+        seq = int(self._persist_seq.get(job_id, 0) or 0) + 1
+        self._persist_seq[job_id] = seq
+        if mark_dirty and self._persist_dir is not None:
+            self._persist_dirty_since.setdefault(job_id, time.monotonic())
+            self._persist_cv.notify_all()
+        return seq
+
+    def _mark_dirty_locked(self, job_id: str) -> None:
+        if self._persist_dir is None:
+            return
+        self._bump_persist_seq_locked(job_id, mark_dirty=True)
+
+    def flush_persistence(self, job_id: str | None = None) -> None:
+        if self._persist_dir is None:
+            return
+        if job_id is not None:
+            self._flush_job(job_id, require_dirty=False)
+            return
+        with self._lock:
+            job_ids = list(self._persist_dirty_since.keys())
+        for jid in job_ids:
+            self._flush_job(jid, require_dirty=True)
+
+    def _persist_loop(self) -> None:
+        while True:
+            with self._lock:
+                while not self._persist_stop and not self._persist_dirty_since:
+                    self._persist_cv.wait()
+                if self._persist_stop:
+                    return
+
+                now = time.monotonic()
+                due: list[str] = []
+                next_deadline: float | None = None
+                for job_id, since in self._persist_dirty_since.items():
+                    deadline = since + self._persist_interval_s
+                    if deadline <= now:
+                        due.append(job_id)
+                        continue
+                    if next_deadline is None or deadline < next_deadline:
+                        next_deadline = deadline
+
+                if not due:
+                    timeout = 0.5
+                    if next_deadline is not None:
+                        timeout = max(0.0, next_deadline - now)
+                    self._persist_cv.wait(timeout=timeout)
+                    continue
+
+            for jid in due:
+                with suppress(Exception):
+                    self._flush_job(jid, require_dirty=True)
+
+    def _flush_job(self, job_id: str, *, require_dirty: bool) -> None:
+        if self._persist_dir is None:
+            return
+
+        with self._persist_lock:
+            snap: JobStatus | None = None
+            seq: int = 0
+            with self._lock:
+                if self._persist_dir is None:
+                    self._persist_dirty_since.pop(job_id, None)
+                    return
+                if require_dirty and job_id not in self._persist_dirty_since:
+                    return
+                st = self._jobs.get(job_id)
+                if st is None:
+                    self._persist_dirty_since.pop(job_id, None)
+                    self._persist_seq.pop(job_id, None)
+                    return
+                seq = int(self._persist_seq.get(job_id, 0) or 0)
+                snap = self._snapshot_job(st)
+
+            if snap is not None:
+                self._persist_snapshot_unlocked(snap)
+
+            with self._lock:
+                if job_id not in self._jobs:
+                    self._persist_dirty_since.pop(job_id, None)
+                    self._persist_seq.pop(job_id, None)
+                    return
+                if int(self._persist_seq.get(job_id, 0) or 0) == seq:
+                    self._persist_dirty_since.pop(job_id, None)
+                    return
+                self._persist_dirty_since[job_id] = time.monotonic()
+                self._persist_cv.notify_all()
 
     def _heal_loaded_job(self, st: JobStatus) -> JobStatus:
         # After a server restart, there is no in-flight work. Make state explicit and resumable.
@@ -349,7 +482,7 @@ class JobStore:
         # Rewrite snapshots in latest schema (best-effort) to complete migration.
         for st, needs_rewrite in loaded:
             if needs_rewrite:
-                self._persist_snapshot(self._snapshot_job(st))
+                self._persist_snapshot_direct(self._snapshot_job(st))
 
         return len(loaded)
 
@@ -408,7 +541,7 @@ class JobStore:
         with self._lock:
             self._jobs[job_id] = status
             snap = self._snapshot_job(status)
-        self._persist_snapshot(snap)
+        self._persist_snapshot_direct(snap)
         return snap
 
     def get(self, job_id: str) -> JobStatus | None:
@@ -425,7 +558,7 @@ class JobStore:
         return [self._snapshot_job(s) for s in items]
 
     def update(self, job_id: str, **kwargs) -> None:
-        snap: JobStatus | None = None
+        flush_now = False
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
@@ -440,12 +573,12 @@ class JobStore:
                 if k == "state" and v in {"done", "error", "cancelled"}:
                     self._paused.discard(job_id)
                 setattr(st, k, v)
-            snap = self._snapshot_job(st)
-        if snap is not None:
-            self._persist_snapshot(snap)
+            self._mark_dirty_locked(job_id)
+            flush_now = st.state in {"done", "error", "cancelled"}
+        if flush_now:
+            self._flush_job(job_id, require_dirty=False)
 
     def init_chunks(self, job_id: str, total_chunks: int, *, llm_model: str | None = None) -> None:
-        snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
@@ -455,12 +588,10 @@ class JobStore:
             st.chunk_statuses = [
                 ChunkStatus(index=i, state="pending", llm_model=llm_model) for i in range(total_chunks)
             ]
-            snap = self._snapshot_job(st)
-        if snap is not None:
-            self._persist_snapshot(snap)
+            self._mark_dirty_locked(job_id)
+        self._flush_job(job_id, require_dirty=False)
 
     def update_chunk(self, job_id: str, index: int, **kwargs) -> None:
-        snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
@@ -483,14 +614,11 @@ class JobStore:
             if any(k in kwargs for k in ("retries", "last_error_code", "last_error_message")):
                 should_persist = True
             if should_persist:
-                snap = self._snapshot_job(st)
-        if snap is not None:
-            self._persist_snapshot(snap)
+                self._mark_dirty_locked(job_id)
 
     def add_retry(
         self, job_id: str, index: int, inc: int, last_error_code: int | None, last_error_message: str | None
     ) -> None:
-        snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
@@ -503,9 +631,7 @@ class JobStore:
                 cs.retries += inc
                 cs.last_error_code = last_error_code
                 cs.last_error_message = last_error_message
-            snap = self._snapshot_job(st)
-        if snap is not None:
-            self._persist_snapshot(snap)
+            self._mark_dirty_locked(job_id)
 
     def add_stat(self, job_id: str, key: str, inc: int = 1) -> None:
         with self._lock:
@@ -516,7 +642,6 @@ class JobStore:
         # Stats are best-effort diagnostics; avoid persisting on every increment for performance.
 
     def cancel(self, job_id: str) -> bool:
-        snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
@@ -537,14 +662,11 @@ class JobStore:
                     cs.started_at = None
                     cs.finished_at = None
                     cs.last_error_message = cs.last_error_message or "cancelled"
-
-            snap = self._snapshot_job(st)
-        if snap is not None:
-            self._persist_snapshot(snap)
+            self._mark_dirty_locked(job_id)
+        self._flush_job(job_id, require_dirty=False)
         return True
 
     def pause(self, job_id: str) -> bool:
-        snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
@@ -555,13 +677,10 @@ class JobStore:
             self._paused.add(job_id)
             st.state = "paused"
             st.finished_at = None
-            snap = self._snapshot_job(st)
-        if snap is not None:
-            self._persist_snapshot(snap)
+            self._mark_dirty_locked(job_id)
         return True
 
     def resume(self, job_id: str) -> bool:
-        snap: JobStatus | None = None
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
@@ -573,9 +692,7 @@ class JobStore:
             if st.state == "paused":
                 st.state = "queued"
                 st.finished_at = None
-            snap = self._snapshot_job(st)
-        if snap is not None:
-            self._persist_snapshot(snap)
+            self._mark_dirty_locked(job_id)
         return True
 
     def delete(self, job_id: str) -> bool:
@@ -588,6 +705,8 @@ class JobStore:
             self._jobs.pop(job_id, None)
             self._cancelled.discard(job_id)
             self._paused.discard(job_id)
+            self._persist_dirty_since.pop(job_id, None)
+            self._persist_seq.pop(job_id, None)
         if path is not None:
             try:
                 if path.exists():
