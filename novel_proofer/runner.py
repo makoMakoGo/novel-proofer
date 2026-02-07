@@ -487,23 +487,8 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
         max_chars = int(fmt.max_chunk_chars)
         max_chars = max(200, min(4_000, max_chars))
         first_chunk_max_chars = min(4_000, max(max_chars, 2_000))
-        total = 0
-        for _c in iter_chunks_by_lines_with_first_chunk_max_from_file(
-            input_path,
-            max_chars=max_chars,
-            first_chunk_max_chars=first_chunk_max_chars,
-        ):
-            if GLOBAL_JOBS.is_cancelled(job_id):
-                GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
-                return
-            if GLOBAL_JOBS.is_paused(job_id):
-                GLOBAL_JOBS.update(job_id, state="paused", phase="validate", finished_at=None)
-                return
-            total += 1
-
-        GLOBAL_JOBS.init_chunks(job_id, total_chunks=total, llm_model=llm.model)
-
         local_stats: dict[str, int] = {}
+        total = 0
         for i, c in enumerate(
             iter_chunks_by_lines_with_first_chunk_max_from_file(
                 input_path,
@@ -521,6 +506,9 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
             fixed, s = apply_rules(c, fmt)
             _atomic_write_text(_chunk_path(work_dir, "pre", i), fixed)
             _merge_stats(local_stats, s)
+            total = i + 1
+
+        GLOBAL_JOBS.init_chunks(job_id, total_chunks=total, llm_model=llm.model)
 
         for k, v in local_stats.items():
             GLOBAL_JOBS.add_stat(job_id, k, v)
