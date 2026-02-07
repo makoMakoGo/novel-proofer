@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
@@ -566,6 +566,83 @@ def _llm_settings_from_defaults(d: LLMDefaults) -> LLMSettings:
     )
 
 
+class _JobCommandService:
+    @staticmethod
+    def prepare_new_job(
+        *,
+        input_filename: str,
+        suffix: str,
+        cleanup_debug_dir: bool,
+    ) -> str:
+        source_name = input_filename or "input.txt"
+        out_name = _derive_output_filename(source_name, suffix)
+        job = GLOBAL_JOBS.create(source_name, out_name, total_chunks=0)
+        output_abs = OUTPUT_DIR / f"{job.job_id}_{out_name}"
+        work_dir = JOBS_DIR / job.job_id
+        GLOBAL_JOBS.update(
+            job.job_id,
+            output_filename=output_abs.name,
+            output_path=str(output_abs),
+            work_dir=str(work_dir),
+            cleanup_debug_dir=bool(cleanup_debug_dir),
+        )
+        return job.job_id
+
+    @staticmethod
+    def get_job_or_500(job_id: str) -> JobStatus:
+        st = GLOBAL_JOBS.get(job_id)
+        if st is None:
+            raise HTTPException(status_code=500, detail="job store error")
+        return st
+
+    @staticmethod
+    def cleanup_failed_new_job(job_id: str) -> None:
+        with suppress(Exception):
+            _cleanup_job_dir(job_id)
+        with suppress(Exception):
+            _cleanup_input_cache(job_id)
+        with suppress(Exception):
+            _cleanup_job_state(job_id)
+        with suppress(Exception):
+            GLOBAL_JOBS.delete(job_id)
+
+    @staticmethod
+    def submit_background(
+        *,
+        job_id: str,
+        fn: Callable[..., Any],
+        args: tuple[Any, ...] = (),
+        kwargs: dict[str, Any] | None = None,
+        on_submit_failure: Callable[[], None] | None = None,
+    ) -> None:
+        try:
+            submit_background_job(job_id, fn, *args, **(kwargs or {}))
+        except ValueError as e:
+            if on_submit_failure is not None:
+                on_submit_failure()
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except Exception as e:
+            if on_submit_failure is not None:
+                on_submit_failure()
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @staticmethod
+    def queue_validate_run(
+        *,
+        job_id: str,
+        fmt: FormatConfig,
+        llm: LLMConfig,
+        on_submit_failure: Callable[[], None] | None = None,
+    ) -> None:
+        GLOBAL_JOBS.update(job_id, phase="validate", format=fmt, last_llm_model=llm.model)
+        _JobCommandService.submit_background(
+            job_id=job_id,
+            fn=run_job,
+            args=(job_id, _input_cache_path(job_id), fmt, llm),
+            on_submit_failure=on_submit_failure,
+        )
+
+
 @asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # These globals are monkeypatched in tests; use the current values at startup time.
@@ -679,35 +756,29 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
     if file is None:
         raise HTTPException(status_code=400, detail="file is required")
     opts = _parse_options_json(options)
-
-    out_name = _derive_output_filename(file.filename or "input.txt", opts.output.suffix)
-
-    job = GLOBAL_JOBS.create(file.filename or "input.txt", out_name, total_chunks=0)
-    output_abs = OUTPUT_DIR / f"{job.job_id}_{out_name}"
-    work_dir = JOBS_DIR / job.job_id
-    GLOBAL_JOBS.update(
-        job.job_id,
-        output_filename=output_abs.name,
-        output_path=str(output_abs),
-        work_dir=str(work_dir),
+    job_id = _JobCommandService.prepare_new_job(
+        input_filename=file.filename or "input.txt",
+        suffix=opts.output.suffix,
         cleanup_debug_dir=bool(opts.output.cleanup_debug_dir),
     )
 
     try:
-        await _write_input_cache_from_upload(job.job_id, file, limit=MAX_UPLOAD_BYTES)
+        await _write_input_cache_from_upload(job_id, file, limit=MAX_UPLOAD_BYTES)
     except Exception as e:
-        GLOBAL_JOBS.delete(job.job_id)
+        _JobCommandService.cleanup_failed_new_job(job_id)
         raise HTTPException(status_code=500, detail=f"failed to cache input: {e}") from e
 
     fmt = _format_from_options(opts.format)
     llm = _llm_from_options(opts.llm)
 
-    GLOBAL_JOBS.update(job.job_id, phase="validate", format=fmt, last_llm_model=llm.model)
-    submit_background_job(job.job_id, run_job, job.job_id, _input_cache_path(job.job_id), fmt, llm)
+    _JobCommandService.queue_validate_run(
+        job_id=job_id,
+        fmt=fmt,
+        llm=llm,
+        on_submit_failure=lambda: _JobCommandService.cleanup_failed_new_job(job_id),
+    )
 
-    st = GLOBAL_JOBS.get(job.job_id)
-    if st is None:
-        raise HTTPException(status_code=500, detail="job store error")
+    st = _JobCommandService.get_job_or_500(job_id)
     return JobCreateResponse(job=_job_to_out(st))
 
 
@@ -729,34 +800,29 @@ async def rerun_all(job_id: str = Depends(_job_id_dep), options: JobOptions = Bo
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    out_name = _derive_output_filename(st0.input_filename or "input.txt", options.output.suffix)
-
-    job = GLOBAL_JOBS.create(st0.input_filename or "input.txt", out_name, total_chunks=0)
-    output_abs = OUTPUT_DIR / f"{job.job_id}_{out_name}"
-    work_dir = JOBS_DIR / job.job_id
-    GLOBAL_JOBS.update(
-        job.job_id,
-        output_filename=output_abs.name,
-        output_path=str(output_abs),
-        work_dir=str(work_dir),
+    new_job_id = _JobCommandService.prepare_new_job(
+        input_filename=st0.input_filename or "input.txt",
+        suffix=options.output.suffix,
         cleanup_debug_dir=bool(options.output.cleanup_debug_dir),
     )
 
     try:
-        _copy_input_cache(job_id, job.job_id)
+        _copy_input_cache(job_id, new_job_id)
     except Exception as e:
-        GLOBAL_JOBS.delete(job.job_id)
+        _JobCommandService.cleanup_failed_new_job(new_job_id)
         raise HTTPException(status_code=500, detail=f"failed to cache input: {e}") from e
 
     fmt = _format_from_options(options.format)
     llm = _llm_from_options(options.llm)
 
-    GLOBAL_JOBS.update(job.job_id, phase="validate", format=fmt, last_llm_model=llm.model)
-    submit_background_job(job.job_id, run_job, job.job_id, _input_cache_path(job.job_id), fmt, llm)
+    _JobCommandService.queue_validate_run(
+        job_id=new_job_id,
+        fmt=fmt,
+        llm=llm,
+        on_submit_failure=lambda: _JobCommandService.cleanup_failed_new_job(new_job_id),
+    )
 
-    st = GLOBAL_JOBS.get(job.job_id)
-    if st is None:
-        raise HTTPException(status_code=500, detail="job store error")
+    st = _JobCommandService.get_job_or_500(new_job_id)
     return JobCreateResponse(job=_job_to_out(st))
 
 
@@ -972,21 +1038,28 @@ async def resume_job(
     llm = _llm_from_options(body.llm or LLMOptions())
     prev_llm_model = getattr(st, "last_llm_model", None)
     GLOBAL_JOBS.update(job_id, last_llm_model=llm.model)
-    try:
-        if getattr(st, "phase", "") == "validate":
-            fmt = getattr(st, "format", FormatConfig())
-            submit_background_job(job_id, run_job, job_id, _input_cache_path(job_id), fmt, llm)
-        else:
-            submit_background_job(job_id, resume_paused_job, job_id, llm)
-    except ValueError as e:
-        # If the previous runner is still exiting, revert to paused and ask the client to retry later.
+    phase = str(getattr(st, "phase", "") or "")
+    fn: Callable[..., Any]
+    args: tuple[Any, ...]
+    if phase == "validate":
+        fmt = getattr(st, "format", FormatConfig())
+        fn = run_job
+        args = (job_id, _input_cache_path(job_id), fmt, llm)
+    else:
+        fn = resume_paused_job
+        args = (job_id, llm)
+
+    def _rollback_resume_state() -> None:
         GLOBAL_JOBS.pause(job_id)
         GLOBAL_JOBS.update(job_id, last_llm_model=prev_llm_model)
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    except Exception as e:
-        GLOBAL_JOBS.pause(job_id)
-        GLOBAL_JOBS.update(job_id, last_llm_model=prev_llm_model)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    _JobCommandService.submit_background(
+        job_id=job_id,
+        fn=fn,
+        args=args,
+        on_submit_failure=_rollback_resume_state,
+    )
+
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
 
@@ -1025,23 +1098,20 @@ async def retry_failed(
             finished_at=None,
         )
 
-    try:
-        submit_background_job(job_id, retry_failed_chunks, job_id, llm)
-    except ValueError as e:
-        # If the previous runner is still exiting, revert to the error state and ask the client to retry later.
+    def _rollback_retry_state() -> None:
         GLOBAL_JOBS.update(
             job_id, state="error", finished_at=st.finished_at, error=st.error, last_llm_model=prev_llm_model
         )
         for i in failed:
             GLOBAL_JOBS.update_chunk(job_id, i, state="error")
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    except Exception as e:
-        GLOBAL_JOBS.update(
-            job_id, state="error", finished_at=st.finished_at, error=st.error, last_llm_model=prev_llm_model
-        )
-        for i in failed:
-            GLOBAL_JOBS.update_chunk(job_id, i, state="error")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    _JobCommandService.submit_background(
+        job_id=job_id,
+        fn=retry_failed_chunks,
+        args=(job_id, llm),
+        on_submit_failure=_rollback_retry_state,
+    )
+
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
 
@@ -1064,14 +1134,16 @@ async def merge_job(job_id: str = Depends(_job_id_dep), body: MergeRequest = Bod
     if not GLOBAL_JOBS.resume(job_id):
         raise HTTPException(status_code=409, detail="failed to start merge")
 
-    try:
-        submit_background_job(job_id, merge_outputs, job_id, cleanup_debug_dir=body.cleanup_debug_dir)
-    except ValueError as e:
+    def _rollback_merge_state() -> None:
         GLOBAL_JOBS.pause(job_id)
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    except Exception as e:
-        GLOBAL_JOBS.pause(job_id)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    _JobCommandService.submit_background(
+        job_id=job_id,
+        fn=merge_outputs,
+        args=(job_id,),
+        kwargs={"cleanup_debug_dir": body.cleanup_debug_dir},
+        on_submit_failure=_rollback_merge_state,
+    )
 
     return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
 
