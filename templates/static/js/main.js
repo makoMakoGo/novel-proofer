@@ -409,32 +409,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // LLM Save
     ui.elements.btnSaveLlmDefaults.addEventListener('click', async () => {
-        ui.elements.btnSaveLlmDefaults.disabled = true;
+        const saveBtn = ui.elements.btnSaveLlmDefaults;
+        if (!saveBtn) return;
+        saveBtn.disabled = true;
+        saveBtn.classList.add('opacity-50', 'cursor-not-allowed');
         const fd = new FormData(ui.elements.form);
-        const extra = parseExtraParamsFromFormData(fd);
-        if (!extra.ok) return { ok: false, error: extra.error };
-        
-        const payload = {
-            llm: {
-                base_url: String(fd.get('llm_base_url') || ''),
-                api_key: String(fd.get('llm_api_key') || ''),
-                model: String(fd.get('llm_model') || ''),
-                temperature: Number(fd.get('llm_temperature') || 0),
-                timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
-                max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
-                extra_params: extra.value,
+        try {
+            const extra = parseExtraParamsFromFormData(fd);
+            if (!extra.ok) {
+                ui.show(extra.error);
+                return;
             }
-        };
 
-        const r = await api.saveLlmSettings(payload);
-        if (!r.ok) {
-            ui.show(r.error);
+            const payload = {
+                llm: {
+                    base_url: String(fd.get('llm_base_url') || ''),
+                    api_key: String(fd.get('llm_api_key') || ''),
+                    model: String(fd.get('llm_model') || ''),
+                    temperature: Number(fd.get('llm_temperature') || 0),
+                    timeout_seconds: Number(fd.get('llm_timeout_seconds') || 180),
+                    max_concurrency: Number(fd.get('llm_max_concurrency') || 20),
+                    extra_params: extra.value,
+                }
+            };
+
+            const r = await api.saveLlmSettings(payload);
+            if (!r.ok) {
+                ui.show(r.error);
+                return;
+            }
+            ui.show('默认 LLM 配置已保存。');
+            state.llmSavedSnapshot = _llmSnapshot();
+            ui.setLlmDirty(false);
+        } finally {
             _refreshLlmDirty();
-            return;
+            if (state.llmSavedSnapshot == null) {
+                saveBtn.disabled = false;
+                saveBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
         }
-        ui.show('默认 LLM 配置已保存。');
-        state.llmSavedSnapshot = _llmSnapshot();
-        ui.setLlmDirty(false);
     });
 
     // LLM Dirty Check
