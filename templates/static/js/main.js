@@ -324,24 +324,13 @@ function buildJobOptions(fd, extraParamsValue) {
     };
 }
 
-// --- Initialization ---
-
-document.addEventListener('DOMContentLoaded', () => {
-    ui.initElements();
-    modal.initModal();
-
-    // 1. Load State
-    loadUiState(ui.elements.form);
-    ui.refreshFileName();
-    ui.refreshActionButtons(null);
-    
-    // 2. Setup Events
+function bindUiStateInputs() {
     UI_STATE_FIELDS.forEach((name) => {
         let el;
         if (name === 'cleanup_debug_dir') {
-             el = ui.elements.form.querySelector('input[type="checkbox"][name="cleanup_debug_dir"]');
+            el = ui.elements.form.querySelector('input[type="checkbox"][name="cleanup_debug_dir"]');
         } else {
-             el = ui.elements.form.querySelector(`[name="${name}"]`);
+            el = ui.elements.form.querySelector(`[name="${name}"]`);
         }
         if (!el) return;
         el.addEventListener('input', () => {
@@ -353,13 +342,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (name === 'suffix') ui.refreshOutputPreview();
         });
     });
+}
 
+function bindFileInputEvents() {
     ui.elements.fileInput?.addEventListener('change', () => {
         ui.refreshFileName();
         if (!state.currentJobId) ui.refreshActionButtons(null);
     });
-    
-    // Drag & Drop
+
     if (ui.elements.fileInput && ui.elements.fileDrop) {
         const addDrag = () => {
             ui.elements.fileDrop.classList.add('border-ink', 'bg-slate-50');
@@ -377,8 +367,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }, 0);
         });
     }
+}
 
-    // Tabs
+function bindTabAndFilterEvents() {
     ui.elements.tabBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             ui.switchTab(btn.dataset.tab, () => {
@@ -390,10 +381,9 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     });
-    
+
     ui.switchTab(getSavedActiveTab());
 
-    // Filter Buttons
     ui.elements.filterBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             state.currentFilter = btn.dataset.filter;
@@ -406,8 +396,9 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     });
+}
 
-    // LLM Save
+function bindLlmSettingsEvents() {
     ui.elements.btnSaveLlmDefaults.addEventListener('click', async () => {
         const saveBtn = ui.elements.btnSaveLlmDefaults;
         if (!saveBtn) return;
@@ -450,7 +441,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // LLM Dirty Check
     ['llm_base_url', 'llm_model', 'llm_api_key', 'llm_temperature', 'llm_timeout_seconds', 'llm_max_concurrency', 'llm_extra_params'].forEach((name) => {
         const el = ui.elements.form.querySelector(`[name="${name}"]`);
         if (!el) return;
@@ -459,8 +449,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     ui.elements.btnToggleApiKey.addEventListener('click', ui.toggleApiKeyVisibility);
+}
 
-    // Job Actions
+function bindJobActionEvents() {
     ui.elements.btnPause?.addEventListener('click', async () => {
         const jobId = state.currentJobId;
         if (!jobId) return;
@@ -481,7 +472,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const jobId = state.currentJobId;
         if (!jobId) return;
         ui.show('准备重试失败分片…');
-        
+
         const fd = new FormData(ui.elements.form);
         const extra = parseExtraParamsFromFormData(fd);
         if (!extra.ok) { ui.show(extra.error); return; }
@@ -511,7 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const jobId = state.currentJobId;
         if (!jobId) return;
         ui.show('开始合并输出…');
-        
+
         const cleanupDebugDir = !!document.querySelector('input[type="checkbox"][name="cleanup_debug_dir"]')?.checked;
         const payload = { cleanup_debug_dir: cleanupDebugDir };
 
@@ -532,7 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (state.currentJobState === 'paused' && state.currentJobPhase === 'validate') {
             const jobId = state.currentJobId;
             ui.show('继续预处理…');
-            
+
             const fd = new FormData(ui.elements.form);
             const extra = parseExtraParamsFromFormData(fd);
             if (!extra.ok) { ui.show(extra.error); return; }
@@ -564,18 +555,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!jobId) return;
         const st = String(state.currentJobState || '').toLowerCase();
         const phase = String(state.currentJobPhase || '').toLowerCase();
-        
+
         if ((st === 'queued' || st === 'running') && phase === 'process') {
             ui.show('校对进行中：请先“暂停”再删除任务。');
             return;
         }
-        
+
         const isRunning = st === 'queued' || st === 'running';
         const isDone = st === 'done';
         const isValidateRunning = isRunning && phase === 'validate';
         const isMergeRunning = isRunning && phase === 'merge';
         const phaseLabel = isValidateRunning ? '预处理' : (isMergeRunning ? '合并' : '');
-        
+
         const confirmMsg = isDone
             ? '确认"删除任务记录"？该任务的中间态/状态记录将被删除且不可恢复（不会删除最终输出文件 output/）。'
             : (isValidateRunning || isMergeRunning)
@@ -587,7 +578,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ui.show((st === 'done') ? '正在删除任务记录…' : '正在删除任务…');
         const r = await api.resetJob(jobId);
         if (!r.ok) { ui.show(r.error); return; }
-        
+
         detachUi({ clearFile: true });
         ui.show((isValidateRunning || isMergeRunning) ? '已提交删除请求：后台停止/清理中。' : '已提交删除请求。');
     });
@@ -603,7 +594,6 @@ document.addEventListener('DOMContentLoaded', () => {
         await attachJob(chosenId);
     });
 
-    // Form Submit (New Job)
     ui.elements.form.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (state.currentJobId) return;
@@ -613,7 +603,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const fd = new FormData(ui.elements.form);
         const extra = parseExtraParamsFromFormData(fd);
         if (!extra.ok) { ui.show(extra.error); return; }
-        
+
         const maxChunkChars = Number(fd.get('max_chunk_chars') || 0);
         if (!Number.isFinite(maxChunkChars) || maxChunkChars < 200 || maxChunkChars > 4000) {
             ui.show('分片大小（字符数）必须在 200-4000 之间。');
@@ -655,14 +645,34 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!state.currentJobId) ui.refreshActionButtons(null);
         }
     });
+}
 
-    // Page Lifecycle
+function bindLifecycleEvents() {
     window.addEventListener('pagehide', () => api.bestEffortPauseJob(state.currentJobId));
     window.addEventListener('beforeunload', () => api.bestEffortPauseJob(state.currentJobId));
-    
-    // Auto Reattach
+}
+
+function restoreLastAttachedJob() {
     const last = getAttachedJobId();
     if (last) attachJob(last);
+}
+
+// --- Initialization ---
+
+document.addEventListener('DOMContentLoaded', () => {
+    ui.initElements();
+    modal.initModal();
+
+    loadUiState(ui.elements.form);
+    ui.refreshFileName();
+    ui.refreshActionButtons(null);
+    bindUiStateInputs();
+    bindFileInputEvents();
+    bindTabAndFilterEvents();
+    bindLlmSettingsEvents();
+    bindJobActionEvents();
+    bindLifecycleEvents();
+    restoreLastAttachedJob();
 
     loadLlmDefaults();
 });
