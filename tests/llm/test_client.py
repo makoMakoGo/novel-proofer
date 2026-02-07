@@ -349,3 +349,44 @@ def test_call_llm_text_resilient_with_meta_calls_on_retry(monkeypatch: pytest.Mo
     assert last_code == 500
     assert isinstance(last_msg, str) and "HTTP 500" in last_msg
     assert on_retry_calls == [(1, 500, last_msg)]
+
+
+def test_call_llm_text_resilient_with_meta_and_raw_calls_on_retry(monkeypatch: pytest.MonkeyPatch):
+    calls: list[int] = []
+    on_retry_calls: list[tuple[int, int | None, str | None]] = []
+
+    def fake_call_llm_text_with_raw(cfg: LLMConfig, input_text: str, *, should_stop=None):
+        calls.append(1)
+        if len(calls) == 1:
+            raise LLMError("HTTP 503", status_code=503)
+        return llm_client.LLMTextResult(text="OK", raw_text="RAW")
+
+    monkeypatch.setattr(llm_client, "call_llm_text_with_raw", fake_call_llm_text_with_raw)
+    monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+
+    cfg = LLMConfig()
+    out, retries, last_code, last_msg = llm_client.call_llm_text_resilient_with_meta_and_raw(
+        cfg, "x", on_retry=lambda idx, code, msg: on_retry_calls.append((idx, code, msg))
+    )
+
+    assert out.text == "OK"
+    assert out.raw_text == "RAW"
+    assert retries == 1
+    assert last_code == 503
+    assert isinstance(last_msg, str) and "HTTP 503" in last_msg
+    assert on_retry_calls == [(1, 503, last_msg)]
+
+
+def test_call_llm_text_resilient_with_meta_and_raw_non_retryable_raises(monkeypatch: pytest.MonkeyPatch):
+    sleeps: list[float] = []
+
+    def fake_call_llm_text_with_raw(cfg: LLMConfig, input_text: str, *, should_stop=None):
+        raise LLMError("HTTP 401", status_code=401)
+
+    monkeypatch.setattr(llm_client, "call_llm_text_with_raw", fake_call_llm_text_with_raw)
+    monkeypatch.setattr(llm_client.time, "sleep", lambda s: sleeps.append(float(s)))
+
+    cfg = LLMConfig()
+    with pytest.raises(LLMError, match=r"HTTP 401"):
+        llm_client.call_llm_text_resilient_with_meta_and_raw(cfg, "x")
+    assert sleeps == []

@@ -40,6 +40,15 @@ _DEFAULT_RETRY_BACKOFF_SECONDS = 1.0
 _CANCELLED_STATUS_CODE = 499
 
 
+@dataclass(frozen=True)
+class _RetryOutcome[T]:
+    value: T | None
+    retries: int
+    last_error: Exception | None
+    last_code: int | None
+    last_msg: str | None
+
+
 def _cancelled_error() -> LLMError:
     # 499 is commonly used as "Client Closed Request" (non-standard but practical).
     return LLMError("cancelled", status_code=_CANCELLED_STATUS_CODE)
@@ -329,35 +338,73 @@ def call_llm_text_with_raw(
     return _call_openai_compatible_with_raw(cfg, input_text, should_stop=should_stop)
 
 
-def call_llm_text_resilient(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None) -> str:
-    """Call LLM with retry/backoff on transient failures."""
+def _raise_if_cancelled(should_stop: Callable[[], bool] | None) -> None:
+    if should_stop is not None and should_stop():
+        raise _cancelled_error()
 
+
+def _run_with_retries[T](
+    execute: Callable[[], T],
+    *,
+    should_stop: Callable[[], bool] | None,
+    on_retry: Callable[[int, int | None, str | None], None] | None = None,
+) -> _RetryOutcome[T]:
     attempts = max(0, int(_DEFAULT_MAX_RETRIES)) + 1
     last_error: Exception | None = None
+    last_code: int | None = None
+    last_msg: str | None = None
 
     for i in range(attempts):
-        if should_stop is not None and should_stop():
-            raise _cancelled_error()
-
+        _raise_if_cancelled(should_stop)
         try:
-            return call_llm_text(cfg, input_text, should_stop=should_stop)
+            value = execute()
+            return _RetryOutcome(
+                value=value,
+                retries=i,
+                last_error=last_error,
+                last_code=last_code,
+                last_msg=last_msg,
+            )
         except LLMError as e:
             last_error = e
+            last_code = e.status_code
+            last_msg = str(e)
             if e.status_code is not None and e.status_code not in _RETRYABLE_STATUS:
                 raise
         except Exception as e:
             last_error = e
+            last_msg = str(e)
 
         if i < attempts - 1:
-            if should_stop is not None and should_stop():
-                raise _cancelled_error()
+            _raise_if_cancelled(should_stop)
+            if on_retry is not None:
+                on_retry(i + 1, last_code, last_msg)
             time.sleep(max(0.0, float(_DEFAULT_RETRY_BACKOFF_SECONDS)) * (2**i))
 
-    if last_error is None:
+    return _RetryOutcome(
+        value=None,
+        retries=max(0, attempts - 1),
+        last_error=last_error,
+        last_code=last_code,
+        last_msg=last_msg,
+    )
+
+
+def call_llm_text_resilient(cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None) -> str:
+    """Call LLM with retry/backoff on transient failures."""
+
+    outcome = _run_with_retries(
+        lambda: call_llm_text(cfg, input_text, should_stop=should_stop),
+        should_stop=should_stop,
+    )
+
+    if outcome.value is not None:
+        return outcome.value
+    if outcome.last_error is None:
         raise LLMError("LLM failed with unknown error")
-    if isinstance(last_error, LLMError):
-        raise last_error
-    raise LLMError(str(last_error))
+    if isinstance(outcome.last_error, LLMError):
+        raise outcome.last_error
+    raise LLMError(str(outcome.last_error))
 
 
 def call_llm_text_resilient_with_meta(
@@ -369,31 +416,14 @@ def call_llm_text_resilient_with_meta(
 ) -> tuple[str, int, int | None, str | None]:
     """Like call_llm_text_resilient, but returns (text, retries, last_code, last_message)."""
 
-    attempts = max(0, int(_DEFAULT_MAX_RETRIES)) + 1
-    last_code: int | None = None
-    last_msg: str | None = None
-
-    for i in range(attempts):
-        if should_stop is not None and should_stop():
-            raise _cancelled_error()
-        try:
-            return call_llm_text(cfg, input_text, should_stop=should_stop), i, last_code, last_msg
-        except LLMError as e:
-            last_code = e.status_code
-            last_msg = str(e)
-            if e.status_code is not None and e.status_code not in _RETRYABLE_STATUS:
-                raise
-        except Exception as e:
-            last_msg = str(e)
-
-        if i < attempts - 1:
-            if should_stop is not None and should_stop():
-                raise _cancelled_error()
-            if on_retry is not None:
-                on_retry(i + 1, last_code, last_msg)
-            time.sleep(max(0.0, float(_DEFAULT_RETRY_BACKOFF_SECONDS)) * (2**i))
-
-    raise LLMError(last_msg or "LLM failed", status_code=last_code)
+    outcome = _run_with_retries(
+        lambda: call_llm_text(cfg, input_text, should_stop=should_stop),
+        should_stop=should_stop,
+        on_retry=on_retry,
+    )
+    if outcome.value is None:
+        raise LLMError(outcome.last_msg or "LLM failed", status_code=outcome.last_code)
+    return outcome.value, outcome.retries, outcome.last_code, outcome.last_msg
 
 
 def call_llm_text_resilient_with_meta_and_raw(
@@ -405,31 +435,14 @@ def call_llm_text_resilient_with_meta_and_raw(
 ) -> tuple[LLMTextResult, int, int | None, str | None]:
     """Like call_llm_text_resilient_with_meta, but also returns raw output and stream debug."""
 
-    attempts = max(0, int(_DEFAULT_MAX_RETRIES)) + 1
-    last_code: int | None = None
-    last_msg: str | None = None
-
-    for i in range(attempts):
-        if should_stop is not None and should_stop():
-            raise _cancelled_error()
-        try:
-            return call_llm_text_with_raw(cfg, input_text, should_stop=should_stop), i, last_code, last_msg
-        except LLMError as e:
-            last_code = e.status_code
-            last_msg = str(e)
-            if e.status_code is not None and e.status_code not in _RETRYABLE_STATUS:
-                raise
-        except Exception as e:
-            last_msg = str(e)
-
-        if i < attempts - 1:
-            if should_stop is not None and should_stop():
-                raise _cancelled_error()
-            if on_retry is not None:
-                on_retry(i + 1, last_code, last_msg)
-            time.sleep(max(0.0, float(_DEFAULT_RETRY_BACKOFF_SECONDS)) * (2**i))
-
-    raise LLMError(last_msg or "LLM failed", status_code=last_code)
+    outcome = _run_with_retries(
+        lambda: call_llm_text_with_raw(cfg, input_text, should_stop=should_stop),
+        should_stop=should_stop,
+        on_retry=on_retry,
+    )
+    if outcome.value is None:
+        raise LLMError(outcome.last_msg or "LLM failed", status_code=outcome.last_code)
+    return outcome.value, outcome.retries, outcome.last_code, outcome.last_msg
 
 
 _THINK_OPEN_RE = re.compile(r"<\s*think\b[^>]*>", re.IGNORECASE)
