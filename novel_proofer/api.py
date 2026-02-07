@@ -47,6 +47,8 @@ JOBS_DIR = OUTPUT_DIR / ".jobs"
 JOBS_DIR.mkdir(exist_ok=True)
 
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+_INTERNAL_ERROR_MESSAGE = "internal server error"
 
 
 def _validate_job_id(job_id: str) -> str:
@@ -257,6 +259,7 @@ def _cleanup_job_dir(job_id: str) -> bool:
 class ErrorEnvelope(BaseModel):
     code: str
     message: str
+    request_id: str | None = None
 
 
 def _error_code_for_status(status_code: int) -> str:
@@ -269,11 +272,27 @@ def _error_code_for_status(status_code: int) -> str:
     return "internal_error"
 
 
-def _error(status_code: int, message: str) -> JSONResponse:
+def _error(status_code: int, message: str, *, request_id: str | None = None) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
-        content={"error": ErrorEnvelope(code=_error_code_for_status(status_code), message=message).model_dump()},
+        content={
+            "error": ErrorEnvelope(
+                code=_error_code_for_status(status_code), message=message, request_id=request_id
+            ).model_dump()
+        },
     )
+
+
+def _request_id_from_request(request: Request) -> str:
+    existing = getattr(getattr(request, "state", object()), "request_id", None)
+    if isinstance(existing, str) and existing:
+        return existing
+
+    incoming = str(request.headers.get("x-request-id", "") or "").strip()
+    request_id = incoming if incoming and _REQUEST_ID_RE.fullmatch(incoming) else uuid.uuid4().hex
+
+    request.state.request_id = request_id
+    return request_id
 
 
 class LLMOptions(BaseModel):
@@ -571,18 +590,34 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(lifespan=_lifespan)
 
+
+@app.middleware("http")
+async def _request_id_middleware(request: Request, call_next):
+    request_id = _request_id_from_request(request)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 # Mount static files for images
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 app.mount("/static", StaticFiles(directory=str(TEMPLATES_DIR / "static")), name="static")
 
 
 @app.exception_handler(HTTPException)
-async def _http_exception_handler(_request: Request, exc: HTTPException):
-    return _error(int(exc.status_code), str(exc.detail))
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    request_id = _request_id_from_request(request)
+    status_code = int(exc.status_code)
+    message = str(exc.detail)
+    if status_code >= 500:
+        logger.error("http error response: request_id=%s status=%s detail=%s", request_id, status_code, message)
+        message = _INTERNAL_ERROR_MESSAGE
+    return _error(status_code, message, request_id=request_id)
 
 
 @app.exception_handler(RequestValidationError)
-async def _validation_exception_handler(_request: Request, exc: RequestValidationError):
+async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+    request_id = _request_id_from_request(request)
     msg = "bad request"
     try:
         errors = exc.errors()
@@ -590,12 +625,14 @@ async def _validation_exception_handler(_request: Request, exc: RequestValidatio
             msg = errors[0].get("msg") or msg
     except Exception:
         pass
-    return _error(400, msg)
+    return _error(400, msg, request_id=request_id)
 
 
 @app.exception_handler(Exception)
-async def _unhandled_exception_handler(_request: Request, exc: Exception):
-    return _error(500, str(exc))
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = _request_id_from_request(request)
+    logger.exception("unhandled exception: request_id=%s", request_id)
+    return _error(500, _INTERNAL_ERROR_MESSAGE, request_id=request_id)
 
 
 @app.get("/", include_in_schema=False)

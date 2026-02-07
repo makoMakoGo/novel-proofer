@@ -198,6 +198,32 @@ def test_invalid_job_id_returns_400_bad_request():
     assert body.get("error", {}).get("code") == "bad_request"
 
 
+def test_error_response_contains_request_id_and_header_roundtrip():
+    client = TestClient(api.app)
+    custom_request_id = "np-test-req-001"
+    r = client.get("/api/v1/jobs/" + ("x" * 32), headers={"x-request-id": custom_request_id})
+    assert r.status_code == 400
+    body = r.json()
+    err = body.get("error") or {}
+    assert err.get("request_id") == custom_request_id
+    assert r.headers.get("x-request-id") == custom_request_id
+
+
+def test_http_500_message_is_sanitized_and_has_request_id(monkeypatch: pytest.MonkeyPatch):
+    with tempfile.TemporaryDirectory() as td:
+        monkeypatch.setattr(api, "TEMPLATES_DIR", Path(td))
+        client = TestClient(api.app)
+        r = client.get("/")
+        assert r.status_code == 500
+        body = r.json()
+        err = body.get("error") or {}
+        assert err.get("code") == "internal_error"
+        assert err.get("message") == "internal server error"
+        request_id = str(err.get("request_id") or "")
+        assert request_id
+        assert r.headers.get("x-request-id") == request_id
+
+
 def test_job_id_is_normalized_to_lowercase_for_lookup():
     client = TestClient(api.app)
     job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
