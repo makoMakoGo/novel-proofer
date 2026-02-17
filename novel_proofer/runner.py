@@ -11,7 +11,7 @@ from pathlib import Path
 from novel_proofer.formatting.chunking import iter_chunks_by_lines_with_first_chunk_max_from_file
 from novel_proofer.formatting.config import FormatConfig, clamp_chunk_params
 from novel_proofer.formatting.merge import merge_text_chunks_to_path
-from novel_proofer.formatting.rules import _is_chapter_title, apply_rules, is_separator_line
+from novel_proofer.formatting.rules import apply_rules, is_chapter_title, is_separator_line
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
 from novel_proofer.llm.config import LLMConfig, build_first_chunk_config
@@ -175,7 +175,7 @@ def _post_merge_paragraph_indent_pass(out_path: Path, fmt: FormatConfig) -> None
                     prev_blank = True
                     continue
 
-                if _is_chapter_title(line):
+                if is_chapter_title(line):
                     dst.write(line.lstrip())
                     if has_nl:
                         dst.write("\n")
@@ -271,6 +271,11 @@ def _post_llm_deterministic_pass(job_id: str, work_dir: Path) -> None:
         GLOBAL_JOBS.add_stat(job_id, f"post_{k}", v)
 
 
+_MIN_VALIDATE_LEN = 200
+_SHORTEST_RATIO = 0.85
+_LONGEST_RATIO = 1.15
+
+
 def _validate_llm_output(input_text: str, output_text: str, *, allow_shorter: bool = False) -> None:
     in_len = len(input_text)
     out_len = len(output_text)
@@ -280,16 +285,16 @@ def _validate_llm_output(input_text: str, output_text: str, *, allow_shorter: bo
             "LLM output empty",
             status_code=None,
         )
-    if in_len >= 200 and in_len > 0:
+    if in_len >= _MIN_VALIDATE_LEN and in_len > 0:
         ratio = out_len / in_len
-        if ratio < 0.85 and not allow_shorter:
+        if ratio < _SHORTEST_RATIO and not allow_shorter:
             raise LLMError(
-                f"LLM output too short (in={in_len}, out={out_len}, ratio={ratio:.2f} < 0.85)",
+                f"LLM output too short (in={in_len}, out={out_len}, ratio={ratio:.2f} < {_SHORTEST_RATIO})",
                 status_code=None,
             )
-        if ratio > 1.15:
+        if ratio > _LONGEST_RATIO:
             raise LLMError(
-                f"LLM output too long (in={in_len}, out={out_len}, ratio={ratio:.2f} > 1.15)",
+                f"LLM output too long (in={in_len}, out={out_len}, ratio={ratio:.2f} > {_LONGEST_RATIO})",
                 status_code=None,
             )
 

@@ -447,6 +447,8 @@ def call_llm_text_resilient_with_meta_and_raw(
 
 _THINK_OPEN_RE = re.compile(r"<\s*think\b[^>]*>", re.IGNORECASE)
 _THINK_CLOSE_RE = re.compile(r"</\s*think\s*>", re.IGNORECASE)
+_THINK_FILTER_MIN_LEN = 200
+_THINK_FILTER_MIN_RATIO = 0.2
 
 
 def _looks_like_think_unclosed(text: str) -> bool:
@@ -495,7 +497,9 @@ def _maybe_filter_think_tags(_cfg: LLMConfig, raw_content: str, *, input_text: s
 
     if input_text is not None:
         expected = len(input_text)
-        if expected >= 200 and len(filtered.strip()) < max(200, int(expected * 0.2)):
+        if expected >= _THINK_FILTER_MIN_LEN and len(filtered.strip()) < max(
+            _THINK_FILTER_MIN_LEN, int(expected * _THINK_FILTER_MIN_RATIO)
+        ):
             return _strip_think_tags_keep_content(raw_content)
 
     return filtered

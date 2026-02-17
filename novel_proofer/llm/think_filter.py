@@ -15,7 +15,6 @@ class _State(Enum):
 
     NORMAL = auto()  # Outside any think tag
     IN_THINK = auto()  # Inside <think>...</think>
-    MAYBE_TAG = auto()  # Potentially starting a tag (saw '<')
 
 
 class ThinkTagFilter:

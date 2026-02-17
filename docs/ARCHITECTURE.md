@@ -209,7 +209,7 @@ def _normalize_paragraph_indent(text: str, config: FormatConfig) -> tuple[str, b
 
     for i, line in enumerate(lines):
         # 1. 章节标题：移除缩进
-        if _is_chapter_title(line):
+        if is_chapter_title(line):
             new_line = re.sub(r"^\s+", "", line)
             continue
 
@@ -227,7 +227,7 @@ def _normalize_paragraph_indent(text: str, config: FormatConfig) -> tuple[str, b
             new_line = stripped_line
 ```
 
-**章节标题检测** (`_is_chapter_title`)：
+**章节标题检测** (`is_chapter_title`)：
 - 书名号格式：`《标题》`、`【标题】`
 - 章节模式：`第X章`、`序章`、`番外`、`后记`、`尾声`
 - 全大写英文标题（罕见；仅当该行不含 CJK 字符时生效，避免误判中文段落里的单个字母）
@@ -416,17 +416,20 @@ def call_llm_text_resilient(cfg, input_text):
 **输出验证**（`_validate_llm_output`）：
 
 ```python
+_MIN_VALIDATE_LEN = 200
+_SHORTEST_RATIO = 0.85
+_LONGEST_RATIO = 1.15
+
 def _validate_llm_output(input_text, output_text, *, allow_shorter=False):
-    # 输出不能为空
     if len(output_text.strip()) == 0:
         raise LLMError("LLM output empty")
 
-    # 长度比例检查（输入 >= 200 字符时）
-    ratio = len(output_text) / len(input_text)
-    if ratio < 0.85 and not allow_shorter:
-        raise LLMError(f"LLM output too short (ratio={ratio:.2f})")
-    if ratio > 1.15:
-        raise LLMError(f"LLM output too long (ratio={ratio:.2f})")
+    if len(input_text) >= _MIN_VALIDATE_LEN:
+        ratio = len(output_text) / len(input_text)
+        if ratio < _SHORTEST_RATIO and not allow_shorter:
+            raise LLMError(f"LLM output too short (ratio={ratio:.2f})")
+        if ratio > _LONGEST_RATIO:
+            raise LLMError(f"LLM output too long (ratio={ratio:.2f})")
 ```
 
 **Why 首分片允许更短**：首分片可能删除大量广告/水印，输出比输入短是正常的。
@@ -439,30 +442,42 @@ def _validate_llm_output(input_text, output_text, *, allow_shorter=False):
 - 某些推理模型（如 DeepSeek）会输出 `<think>...</think>` 标签用于内部推理
 - 这些标签不是最终输出的一部分，会污染小说文本
 
-**实现方式**：三态状态机
+**实现方式**：两态状态机
 
 ```python
 class _State(Enum):
-    NORMAL      # 标签外
-    IN_THINK    # 标签内（内容被丢弃）
-    MAYBE_TAG   # 可能的标签开始（缓冲）
+    NORMAL    # 标签外
+    IN_THINK  # 标签内（内容被丢弃）
 
 class ThinkTagFilter:
+    _state: _State       # 当前状态
+    _buffer: str         # 末尾可能的部分标签（处理跨 chunk 边界）
+    _depth: int          # 嵌套深度（支持 <think><think>...</think></think>）
+
     def feed(self, chunk: str) -> str:
-        # 状态机处理，支持跨分片边界
-        # 支持嵌套标签（_depth 追踪深度）
+        # NORMAL: 扫描 <think>，遇到则切换到 IN_THINK 并 _depth=1
+        #         末尾不足 7 字符的 '<' 缓冲到下次（可能是部分标签）
+        # IN_THINK: 扫描 </think>，遇到则 _depth-=1；归零回 NORMAL
+        #           遇到嵌套 <think> 则 _depth+=1
+        #           标签内全部内容丢弃
         # 大小写不敏感
 ```
 
 **容错机制**：
 
 ```python
+_THINK_FILTER_MIN_LEN = 200
+_THINK_FILTER_MIN_RATIO = 0.2
+
 def _maybe_filter_think_tags(cfg, raw_content, *, input_text=None):
     filtered = ThinkTagFilter().feed(raw_content)
 
-    # 如果过滤后输出过短（< 20% 原长度），说明可能过度过滤
-    # 改为只移除标签标记，保留内容
-    if len(filtered.strip()) < max(200, int(expected * 0.2)):
+    # 未闭合标签：回退为仅移除标签标记，保留内容
+    if _looks_like_think_unclosed(raw_content):
+        return _strip_think_tags_keep_content(raw_content)
+
+    # 如果过滤后输出过短，说明可能过度过滤
+    if len(filtered.strip()) < max(_THINK_FILTER_MIN_LEN, int(expected * _THINK_FILTER_MIN_RATIO)):
         return _strip_think_tags_keep_content(raw_content)
 
     return filtered

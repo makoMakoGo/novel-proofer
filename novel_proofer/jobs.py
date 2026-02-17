@@ -9,6 +9,7 @@ import uuid
 from contextlib import suppress
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
+from typing import Any
 
 from novel_proofer.env import env_float
 from novel_proofer.formatting.config import FormatConfig
@@ -109,7 +110,7 @@ def _format_config_from_dict(raw: object) -> FormatConfig:
     if not isinstance(raw, dict):
         return FormatConfig()
     try:
-        kwargs = {}
+        kwargs: dict[str, Any] = {}
         for f in fields(FormatConfig):
             default = getattr(_FORMAT_DEFAULTS, f.name)
             val = raw.get(f.name, default)

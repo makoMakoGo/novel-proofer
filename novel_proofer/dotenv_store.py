@@ -85,6 +85,11 @@ _LLM_ENV_KEYS = (
 
 
 def read_llm_defaults(path: Path) -> LLMDefaults:
+    with _LOCK:
+        return _read_llm_defaults_locked(path)
+
+
+def _read_llm_defaults_locked(path: Path) -> LLMDefaults:
     if not path.exists():
         return LLMDefaults()
 

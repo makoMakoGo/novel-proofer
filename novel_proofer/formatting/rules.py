@@ -19,7 +19,7 @@ def _has_cjk(s: str) -> bool:
     return _CJK_RE.search(s) is not None
 
 
-def _is_chapter_title(line: str) -> bool:
+def is_chapter_title(line: str) -> bool:
     s = line.strip()
     if not s:
         return False
@@ -246,7 +246,7 @@ def _normalize_paragraph_indent(text: str, config: FormatConfig) -> tuple[str, b
         if not line:
             continue
 
-        if _is_chapter_title(line):
+        if is_chapter_title(line):
             # Strip leading whitespace for titles.
             new_line = _leading_ws_re.sub("", line)
             if new_line != line:

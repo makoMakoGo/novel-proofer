@@ -13,13 +13,16 @@ def test_job_store_update_respects_started_at_and_pause_rules() -> None:
 
     js.update(job_id, started_at=123.0)
     js.update(job_id, started_at=456.0)
-    assert js.get(job_id) is not None
-    assert js.get(job_id).started_at == 123.0  # type: ignore[union-attr]
+    st = js.get(job_id)
+    assert st is not None
+    assert st.started_at == 123.0
 
     assert js.pause(job_id) is True
     # update() should not move paused -> running/queued.
     js.update(job_id, state="running")
-    assert js.get(job_id).state == "paused"  # type: ignore[union-attr]
+    st2 = js.get(job_id)
+    assert st2 is not None
+    assert st2.state == "paused"
 
     # Marking terminal state should clear paused flag.
     js.update(job_id, state="done", finished_at=time.time())
@@ -32,15 +35,25 @@ def test_job_store_update_chunk_tracks_done_chunks() -> None:
     job_id = st.job_id
     js.init_chunks(job_id, total_chunks=2)
 
-    assert js.get(job_id).done_chunks == 0  # type: ignore[union-attr]
+    st = js.get(job_id)
+    assert st is not None
+    assert st.done_chunks == 0
+
     js.update_chunk(job_id, 0, state="done")
-    assert js.get(job_id).done_chunks == 1  # type: ignore[union-attr]
+    st = js.get(job_id)
+    assert st is not None
+    assert st.done_chunks == 1
+
     js.update_chunk(job_id, 0, state="pending")
-    assert js.get(job_id).done_chunks == 0  # type: ignore[union-attr]
+    st = js.get(job_id)
+    assert st is not None
+    assert st.done_chunks == 0
 
     # Out of range should be ignored.
     js.update_chunk(job_id, 99, state="done")
-    assert js.get(job_id).done_chunks == 0  # type: ignore[union-attr]
+    st = js.get(job_id)
+    assert st is not None
+    assert st.done_chunks == 0
 
 
 def test_job_store_add_retry_updates_job_and_chunk() -> None:

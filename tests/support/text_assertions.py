@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from novel_proofer.formatting.config import FormatConfig
-from novel_proofer.formatting.rules import _is_chapter_title
+from novel_proofer.formatting.rules import is_chapter_title
 
 
 def assert_common_text_invariants(text: str) -> None:
@@ -34,7 +34,7 @@ def assert_paragraph_indent_rules(text: str, fmt: FormatConfig) -> None:
         if line.strip() == "":
             continue
 
-        if _is_chapter_title(line):
+        if is_chapter_title(line):
             if line != line.lstrip():
                 raise AssertionError(f"line {i} chapter title must not be indented: {line!r}")
             continue
