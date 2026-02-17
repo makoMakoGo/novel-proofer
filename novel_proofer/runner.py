@@ -15,6 +15,7 @@ from novel_proofer.formatting.rules import _is_chapter_title, apply_rules, is_se
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
 from novel_proofer.llm.config import LLMConfig, build_first_chunk_config
+from novel_proofer.states import ChunkState, JobPhase, JobState
 
 _JOB_DEBUG_README = """\
 本目录为 novel-proofer 的单次任务调试产物。
@@ -212,19 +213,19 @@ def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
     """Finalize job after PROCESS stage (no merge)."""
 
     if GLOBAL_JOBS.is_cancelled(job_id):
-        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+        GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
         return False
 
     cur = GLOBAL_JOBS.get(job_id)
     if cur is None:
         return False
 
-    has_error = any(c.state == "error" for c in cur.chunk_statuses)
+    has_error = any(c.state == ChunkState.ERROR for c in cur.chunk_statuses)
     if has_error:
         GLOBAL_JOBS.update(
             job_id,
-            state="error",
-            phase="process",
+            state=JobState.ERROR,
+            phase=JobPhase.PROCESS,
             finished_at=time.time(),
             error=error_msg,
             done_chunks=cur.done_chunks,
@@ -234,8 +235,8 @@ def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
     # All chunks processed; wait for explicit merge.
     GLOBAL_JOBS.update(
         job_id,
-        state="paused",
-        phase="merge",
+        state=JobState.PAUSED,
+        phase=JobPhase.MERGE,
         finished_at=None,
         error=None,
         done_chunks=total,
@@ -257,7 +258,7 @@ def _post_llm_deterministic_pass(job_id: str, work_dir: Path) -> None:
     for cs in st.chunk_statuses:
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
-        if cs.state != "done":
+        if cs.state != ChunkState.DONE:
             continue
         p = _chunk_path(work_dir, "out", cs.index)
         if not p.exists():
@@ -308,7 +309,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
-            state="processing",
+            state=ChunkState.PROCESSING,
             started_at=time.time(),
             finished_at=None,
             last_error_code=None,
@@ -321,7 +322,9 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         # avoid providers that emit no `content` for empty prompts.
         if _is_whitespace_only(pre):
             _atomic_write_text(_chunk_path(work_dir, "out", index), pre)
-            GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time(), output_chars=len(pre))
+            GLOBAL_JOBS.update_chunk(
+                job_id, index, state=ChunkState.DONE, finished_at=time.time(), output_chars=len(pre)
+            )
             GLOBAL_JOBS.add_stat(job_id, "llm_skipped_blank_chunks", 1)
             return
 
@@ -330,7 +333,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         def on_retry(_retry_index: int, last_code: int | None, last_msg: str | None) -> None:
             nonlocal retry_count
             retry_count += 1
-            GLOBAL_JOBS.update_chunk(job_id, index, state="retrying")
+            GLOBAL_JOBS.update_chunk(job_id, index, state=ChunkState.RETRYING)
             GLOBAL_JOBS.add_retry(job_id, index, 1, last_code, last_msg)
 
         def _should_stop() -> bool:
@@ -364,7 +367,9 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         final_text = _align_leading_blank_lines(pre, filtered_text)
         final_text = _align_trailing_newlines(pre, final_text)
         _atomic_write_text(_chunk_path(work_dir, "out", index), final_text)
-        GLOBAL_JOBS.update_chunk(job_id, index, state="done", finished_at=time.time(), output_chars=len(final_text))
+        GLOBAL_JOBS.update_chunk(
+            job_id, index, state=ChunkState.DONE, finished_at=time.time(), output_chars=len(final_text)
+        )
         GLOBAL_JOBS.add_stat(job_id, "llm_chunks", 1)
     except LLMError as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
@@ -372,7 +377,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
-            state="error",
+            state=ChunkState.ERROR,
             finished_at=time.time(),
             last_error_code=e.status_code,
             last_error_message=str(e),
@@ -383,7 +388,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
-            state="error",
+            state=ChunkState.ERROR,
             finished_at=time.time(),
             last_error_message=str(e),
         )
@@ -393,8 +398,8 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
     max_workers = max(1, int(llm.max_concurrency))
     GLOBAL_JOBS.update(
         job_id,
-        state="running",
-        phase="process",
+        state=JobState.RUNNING,
+        phase=JobPhase.PROCESS,
         started_at=time.time(),
         finished_at=None,
         error=None,
@@ -440,12 +445,12 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
         # If cancelled, do not keep queued chunks as 'processing'.
         if GLOBAL_JOBS.is_cancelled(job_id):
             for i in pending_indices:
-                GLOBAL_JOBS.update_chunk(job_id, i, state="pending")
+                GLOBAL_JOBS.update_chunk(job_id, i, state=ChunkState.PENDING)
             return "cancelled"
 
         if GLOBAL_JOBS.is_paused(job_id) and pending_indices:
             for i in pending_indices:
-                GLOBAL_JOBS.update_chunk(job_id, i, state="pending")
+                GLOBAL_JOBS.update_chunk(job_id, i, state=ChunkState.PENDING)
             return "paused"
 
     return "done"
@@ -455,10 +460,12 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         return
-    if st.state == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+    if st.state == JobState.CANCELLED or GLOBAL_JOBS.is_cancelled(job_id):
         return
     if not st.work_dir or not st.output_path:
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job missing work_dir/output_path")
+        GLOBAL_JOBS.update(
+            job_id, state=JobState.ERROR, finished_at=time.time(), error="job missing work_dir/output_path"
+        )
         return
 
     work_dir = Path(st.work_dir)
@@ -469,8 +476,8 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
 
     GLOBAL_JOBS.update(
         job_id,
-        state="running",
-        phase="validate",
+        state=JobState.RUNNING,
+        phase=JobPhase.VALIDATE,
         format=fmt,
         started_at=time.time(),
         finished_at=None,
@@ -480,7 +487,7 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
 
     try:
         if not input_path.exists():
-            GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job input cache missing")
+            GLOBAL_JOBS.update(job_id, state=JobState.ERROR, finished_at=time.time(), error="job input cache missing")
             return
 
         max_chars, first_chunk_max_chars = clamp_chunk_params(fmt.max_chunk_chars)
@@ -494,10 +501,10 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
             )
         ):
             if GLOBAL_JOBS.is_cancelled(job_id):
-                GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+                GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
                 return
             if GLOBAL_JOBS.is_paused(job_id):
-                GLOBAL_JOBS.update(job_id, state="paused", phase="validate", finished_at=None)
+                GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.VALIDATE, finished_at=None)
                 return
 
             fixed, s = apply_rules(c, fmt)
@@ -511,50 +518,55 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
             GLOBAL_JOBS.add_stat(job_id, k, v)
 
         if GLOBAL_JOBS.is_cancelled(job_id):
-            GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+            GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
             return
         if GLOBAL_JOBS.is_paused(job_id):
-            GLOBAL_JOBS.update(job_id, state="paused", phase="validate", finished_at=None)
+            GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.VALIDATE, finished_at=None)
             return
 
-        # Validation finished; wait for explicit processing.
-        GLOBAL_JOBS.update(job_id, state="paused", phase="process", finished_at=None, error=None)
+        GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.PROCESS, finished_at=None, error=None)
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
-            GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+            GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
             return
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error=str(e))
+        GLOBAL_JOBS.update(job_id, state=JobState.ERROR, finished_at=time.time(), error=str(e))
 
 
 def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         return
-    if st.state == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+    if st.state == JobState.CANCELLED or GLOBAL_JOBS.is_cancelled(job_id):
         return
     if not st.work_dir or not st.output_path:
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job missing work_dir/output_path")
+        GLOBAL_JOBS.update(
+            job_id, state=JobState.ERROR, finished_at=time.time(), error="job missing work_dir/output_path"
+        )
         return
 
     work_dir = Path(st.work_dir)
     _ensure_job_debug_readme(work_dir)
 
     if not st.chunk_statuses:
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job has no chunk statuses")
+        GLOBAL_JOBS.update(job_id, state=JobState.ERROR, finished_at=time.time(), error="job has no chunk statuses")
         return
 
     total = len(st.chunk_statuses)
-    targets = [c.index for c in st.chunk_statuses if c.state in {"error", "pending", "retrying"}]
+    targets = [
+        c.index for c in st.chunk_statuses if c.state in {ChunkState.ERROR, ChunkState.PENDING, ChunkState.RETRYING}
+    ]
     if not targets:
         _finalize_processing(job_id, total, "some chunks still failed; update LLM config and retry again")
         return
 
-    GLOBAL_JOBS.update(job_id, state="queued", phase="process", finished_at=None, error=None, last_llm_model=llm.model)
+    GLOBAL_JOBS.update(
+        job_id, state=JobState.QUEUED, phase=JobPhase.PROCESS, finished_at=None, error=None, last_llm_model=llm.model
+    )
     for i in targets:
         GLOBAL_JOBS.update_chunk(
             job_id,
             i,
-            state="pending",
+            state=ChunkState.PENDING,
             started_at=None,
             finished_at=None,
             llm_model=llm.model,
@@ -564,10 +576,10 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
 
     outcome = _run_llm_for_indices(job_id, targets, work_dir, llm)
     if outcome == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
-        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+        GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
         return
     if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
-        GLOBAL_JOBS.update(job_id, state="paused", phase="process", finished_at=None)
+        GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.PROCESS, finished_at=None)
         return
     _post_llm_deterministic_pass(job_id, work_dir)
     _finalize_processing(job_id, total, "some chunks still failed; update LLM config and retry again")
@@ -577,20 +589,22 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         return
-    if st.state == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+    if st.state == JobState.CANCELLED or GLOBAL_JOBS.is_cancelled(job_id):
         return
     if not st.work_dir or not st.output_path:
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job missing work_dir/output_path")
+        GLOBAL_JOBS.update(
+            job_id, state=JobState.ERROR, finished_at=time.time(), error="job missing work_dir/output_path"
+        )
         return
     if not st.chunk_statuses:
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job has no chunk statuses")
+        GLOBAL_JOBS.update(job_id, state=JobState.ERROR, finished_at=time.time(), error="job has no chunk statuses")
         return
 
     work_dir = Path(st.work_dir)
     _ensure_job_debug_readme(work_dir)
 
     total = len(st.chunk_statuses)
-    pending = [c.index for c in st.chunk_statuses if c.state not in {"done", "error"}]
+    pending = [c.index for c in st.chunk_statuses if c.state not in {ChunkState.DONE, ChunkState.ERROR}]
     if not pending:
         _finalize_processing(job_id, total, "some chunks failed; update LLM config and retry failed chunks")
         return
@@ -599,7 +613,7 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
         GLOBAL_JOBS.update_chunk(
             job_id,
             i,
-            state="pending",
+            state=ChunkState.PENDING,
             started_at=None,
             finished_at=None,
             llm_model=llm.model,
@@ -607,10 +621,10 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
 
     outcome = _run_llm_for_indices(job_id, pending, work_dir, llm)
     if outcome == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
-        GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+        GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
         return
     if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
-        GLOBAL_JOBS.update(job_id, state="paused", phase="process", finished_at=None)
+        GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.PROCESS, finished_at=None)
         return
 
     _post_llm_deterministic_pass(job_id, work_dir)
@@ -621,35 +635,45 @@ def merge_outputs(job_id: str, *, cleanup_debug_dir: bool | None = None) -> None
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         return
-    if st.state == "cancelled" or GLOBAL_JOBS.is_cancelled(job_id):
+    if st.state == JobState.CANCELLED or GLOBAL_JOBS.is_cancelled(job_id):
         return
     if not st.work_dir or not st.output_path:
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job missing work_dir/output_path")
+        GLOBAL_JOBS.update(
+            job_id, state=JobState.ERROR, finished_at=time.time(), error="job missing work_dir/output_path"
+        )
         return
     if not st.chunk_statuses:
-        GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job has no chunk statuses")
+        GLOBAL_JOBS.update(job_id, state=JobState.ERROR, finished_at=time.time(), error="job has no chunk statuses")
         return
 
     work_dir = Path(st.work_dir)
     out_path = Path(st.output_path)
     total = len(st.chunk_statuses)
 
-    if any(c.state == "error" for c in st.chunk_statuses):
+    if any(c.state == ChunkState.ERROR for c in st.chunk_statuses):
         GLOBAL_JOBS.update(
-            job_id, state="error", phase="process", finished_at=time.time(), error="cannot merge: chunks failed"
+            job_id,
+            state=JobState.ERROR,
+            phase=JobPhase.PROCESS,
+            finished_at=time.time(),
+            error="cannot merge: chunks failed",
         )
         return
-    if any(c.state != "done" for c in st.chunk_statuses):
+    if any(c.state != ChunkState.DONE for c in st.chunk_statuses):
         GLOBAL_JOBS.update(
-            job_id, state="error", phase="merge", finished_at=time.time(), error="cannot merge: chunks not complete"
+            job_id,
+            state=JobState.ERROR,
+            phase=JobPhase.MERGE,
+            finished_at=time.time(),
+            error="cannot merge: chunks not complete",
         )
         return
 
-    GLOBAL_JOBS.update(job_id, state="running", phase="merge", finished_at=None, error=None)
+    GLOBAL_JOBS.update(job_id, state=JobState.RUNNING, phase=JobPhase.MERGE, finished_at=None, error=None)
     try:
         _merge_chunk_outputs(work_dir, total, out_path)
         _post_merge_paragraph_indent_pass(out_path, getattr(st, "format", FormatConfig()))
-        GLOBAL_JOBS.update(job_id, state="done", phase="done", finished_at=time.time(), done_chunks=total)
+        GLOBAL_JOBS.update(job_id, state=JobState.DONE, phase=JobPhase.DONE, finished_at=time.time(), done_chunks=total)
         do_cleanup = bool(st.cleanup_debug_dir) if cleanup_debug_dir is None else bool(cleanup_debug_dir)
         if do_cleanup:
             _best_effort_cleanup_work_dir(job_id, work_dir)
@@ -657,6 +681,6 @@ def merge_outputs(job_id: str, *, cleanup_debug_dir: bool | None = None) -> None
             GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_skipped", 1)
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
-            GLOBAL_JOBS.update(job_id, state="cancelled", finished_at=time.time())
+            GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
             return
-        GLOBAL_JOBS.update(job_id, state="error", phase="merge", finished_at=time.time(), error=str(e))
+        GLOBAL_JOBS.update(job_id, state=JobState.ERROR, phase=JobPhase.MERGE, finished_at=time.time(), error=str(e))

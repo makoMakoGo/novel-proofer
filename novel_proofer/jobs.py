@@ -12,13 +12,14 @@ from pathlib import Path
 
 from novel_proofer.env import env_float
 from novel_proofer.formatting.config import FormatConfig
+from novel_proofer.states import ChunkState, JobPhase, JobState
 
 logger = logging.getLogger(__name__)
 
 _JOB_STATE_VERSION = 2
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
-_JOB_PHASES = {"validate", "process", "merge", "done"}
+_JOB_PHASES = set(JobPhase)
 
 
 @dataclass
@@ -92,7 +93,7 @@ def _chunk_from_dict(d: dict) -> ChunkStatus:
         llm_model = str(llm_model).strip() or None
     return ChunkStatus(
         index=int(d.get("index", 0)),
-        state=str(d.get("state", "pending")),
+        state=str(d.get("state", ChunkState.PENDING)),
         started_at=d.get("started_at"),
         finished_at=d.get("finished_at"),
         retries=int(d.get("retries", 0) or 0),
@@ -199,8 +200,8 @@ def _job_from_dict(d: dict) -> JobStatus:
 
     return JobStatus(
         job_id=str(job.get("job_id", "")),
-        state=str(job.get("state", "queued")),
-        phase=phase or "validate",
+        state=str(job.get("state", JobState.QUEUED)),
+        phase=phase or JobPhase.VALIDATE,
         created_at=float(job.get("created_at", time.time())),
         started_at=job.get("started_at"),
         finished_at=job.get("finished_at"),
@@ -395,48 +396,49 @@ class JobStore:
 
     def _heal_loaded_job(self, st: JobStatus) -> JobStatus:
         # After a server restart, there is no in-flight work. Make state explicit and resumable.
-        if st.state in {"queued", "running"}:
-            st.state = "paused"
+        if st.state in {JobState.QUEUED, JobState.RUNNING}:
+            st.state = JobState.PAUSED
             st.finished_at = None
 
         # Any in-flight chunks are no longer running; convert them back to pending.
         for cs in st.chunk_statuses:
-            if cs.state in {"processing", "retrying"}:
-                cs.state = "pending"
+            if cs.state in {ChunkState.PROCESSING, ChunkState.RETRYING}:
+                cs.state = ChunkState.PENDING
                 cs.started_at = None
                 cs.finished_at = None
 
         # Keep counters consistent even if older files were incomplete.
         st.total_chunks = max(int(st.total_chunks), len(st.chunk_statuses))
-        st.done_chunks = sum(1 for c in st.chunk_statuses if c.state == "done")
+        st.done_chunks = sum(1 for c in st.chunk_statuses if c.state == ChunkState.DONE)
 
         # Phase migration / normalization (v1 files don't have phase).
         if st.phase not in _JOB_PHASES:
-            st.phase = "validate"
+            st.phase = JobPhase.VALIDATE
 
         # Derive phase when missing or clearly stale.
         if not st.chunk_statuses:
-            # Not validated yet (or legacy file missing chunk info).
-            if st.state == "done":
-                st.phase = "done"
+            if st.state == JobState.DONE:
+                st.phase = JobPhase.DONE
             else:
-                st.phase = "validate"
+                st.phase = JobPhase.VALIDATE
         else:
-            if st.state == "done":
-                st.phase = "done"
+            if st.state == JobState.DONE:
+                st.phase = JobPhase.DONE
             else:
-                # If everything is done but final output might not exist, allow explicit merge.
-                all_done = all(c.state == "done" for c in st.chunk_statuses)
+                all_done = all(c.state == ChunkState.DONE for c in st.chunk_statuses)
                 if all_done:
-                    st.phase = "merge"
+                    st.phase = JobPhase.MERGE
                 else:
-                    st.phase = "process"
+                    st.phase = JobPhase.PROCESS
 
-        # Ensure phase/state compatibility.
-        if st.phase == "done" and st.state != "done":
-            st.phase = "merge" if st.chunk_statuses and all(c.state == "done" for c in st.chunk_statuses) else "process"
-        if st.state == "done":
-            st.phase = "done"
+        if st.phase == JobPhase.DONE and st.state != JobState.DONE:
+            st.phase = (
+                JobPhase.MERGE
+                if st.chunk_statuses and all(c.state == ChunkState.DONE for c in st.chunk_statuses)
+                else JobPhase.PROCESS
+            )
+        if st.state == JobState.DONE:
+            st.phase = JobPhase.DONE
         return st
 
     def load_persisted_jobs(self) -> int:
@@ -464,9 +466,9 @@ class JobStore:
         with self._lock:
             for st, _needs_rewrite in loaded:
                 self._jobs[st.job_id] = st
-                if st.state == "cancelled":
+                if st.state == JobState.CANCELLED:
                     self._cancelled.add(st.job_id)
-                if st.state == "paused":
+                if st.state == JobState.PAUSED:
                     self._paused.add(st.job_id)
 
         # Rewrite snapshots in latest schema (best-effort) to complete migration.
@@ -518,8 +520,8 @@ class JobStore:
         job_id = uuid.uuid4().hex
         status = JobStatus(
             job_id=job_id,
-            state="queued",
-            phase="validate",
+            state=JobState.QUEUED,
+            phase=JobPhase.VALIDATE,
             created_at=time.time(),
             started_at=None,
             finished_at=None,
@@ -553,18 +555,18 @@ class JobStore:
             st = self._jobs.get(job_id)
             if st is None:
                 return
-            if st.state == "cancelled":
+            if st.state == JobState.CANCELLED:
                 return
             for k, v in kwargs.items():
                 if k == "started_at" and st.started_at is not None and v is not None:
                     continue
-                if k == "state" and st.state == "paused" and v in {"queued", "running"}:
+                if k == "state" and st.state == JobState.PAUSED and v in {JobState.QUEUED, JobState.RUNNING}:
                     continue
-                if k == "state" and v in {"done", "error", "cancelled"}:
+                if k == "state" and v in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}:
                     self._paused.discard(job_id)
                 setattr(st, k, v)
             self._mark_dirty_locked(job_id)
-            flush_now = st.state in {"done", "error", "cancelled"}
+            flush_now = st.state in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}
         if flush_now:
             self._flush_job(job_id, require_dirty=False)
 
@@ -576,7 +578,7 @@ class JobStore:
             st.total_chunks = total_chunks
             st.done_chunks = 0
             st.chunk_statuses = [
-                ChunkStatus(index=i, state="pending", llm_model=llm_model) for i in range(total_chunks)
+                ChunkStatus(index=i, state=ChunkState.PENDING, llm_model=llm_model) for i in range(total_chunks)
             ]
             self._mark_dirty_locked(job_id)
         self._flush_job(job_id, require_dirty=False)
@@ -586,7 +588,7 @@ class JobStore:
             st = self._jobs.get(job_id)
             if st is None:
                 return
-            if st.state == "cancelled" or job_id in self._cancelled:
+            if st.state == JobState.CANCELLED or job_id in self._cancelled:
                 return
             if index < 0 or index >= len(st.chunk_statuses):
                 return
@@ -597,9 +599,9 @@ class JobStore:
                 setattr(cs, k, v)
             if "state" in kwargs and cs.state != prev_state:
                 should_persist = True
-                if prev_state == "done" and st.done_chunks > 0:
+                if prev_state == ChunkState.DONE and st.done_chunks > 0:
                     st.done_chunks -= 1
-                if cs.state == "done":
+                if cs.state == ChunkState.DONE:
                     st.done_chunks += 1
             if any(k in kwargs for k in ("retries", "last_error_code", "last_error_message")):
                 should_persist = True
@@ -642,13 +644,13 @@ class JobStore:
             self._paused.discard(job_id)
 
             # Update visible state immediately so clients can stop polling.
-            if st.state not in {"done", "error"}:
-                st.state = "cancelled"
+            if st.state not in {JobState.DONE, JobState.ERROR}:
+                st.state = JobState.CANCELLED
                 st.finished_at = now
 
             for cs in st.chunk_statuses:
-                if cs.state in {"processing", "retrying"}:
-                    cs.state = "pending"
+                if cs.state in {ChunkState.PROCESSING, ChunkState.RETRYING}:
+                    cs.state = ChunkState.PENDING
                     cs.started_at = None
                     cs.finished_at = None
                     cs.last_error_message = cs.last_error_message or "cancelled"
@@ -661,11 +663,11 @@ class JobStore:
             st = self._jobs.get(job_id)
             if st is None:
                 return False
-            if st.state not in {"queued", "running"}:
+            if st.state not in {JobState.QUEUED, JobState.RUNNING}:
                 return False
 
             self._paused.add(job_id)
-            st.state = "paused"
+            st.state = JobState.PAUSED
             st.finished_at = None
             self._mark_dirty_locked(job_id)
         return True
@@ -675,12 +677,12 @@ class JobStore:
             st = self._jobs.get(job_id)
             if st is None:
                 return False
-            if st.state != "paused" and job_id not in self._paused:
+            if st.state != JobState.PAUSED and job_id not in self._paused:
                 return False
 
             self._paused.discard(job_id)
-            if st.state == "paused":
-                st.state = "queued"
+            if st.state == JobState.PAUSED:
+                st.state = JobState.QUEUED
                 st.finished_at = None
             self._mark_dirty_locked(job_id)
         return True
