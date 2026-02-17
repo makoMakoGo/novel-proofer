@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from novel_proofer.formatting.chunking import chunk_by_lines_with_first_chunk_max
-from novel_proofer.formatting.config import FormatConfig
+from novel_proofer.formatting.config import FormatConfig, clamp_chunk_params
 from novel_proofer.formatting.merge import merge_text_parts
 from novel_proofer.formatting.rules import apply_rules
 from novel_proofer.llm.client import call_llm_text_resilient
-from novel_proofer.llm.config import FIRST_CHUNK_SYSTEM_PROMPT_PREFIX, LLMConfig
+from novel_proofer.llm.config import LLMConfig, build_first_chunk_config
 
 
 @dataclass
@@ -18,17 +18,13 @@ class FormatResult:
 
 def format_txt(text: str, config: FormatConfig, llm: LLMConfig) -> FormatResult:
     stats: dict[str, int] = {}
-    max_chars = int(config.max_chunk_chars)
-    max_chars = max(200, min(4_000, max_chars))
-    first_chunk_max_chars = min(4_000, max(max_chars, 2_000))
+    max_chars, first_chunk_max_chars = clamp_chunk_params(config.max_chunk_chars)
     chunks = chunk_by_lines_with_first_chunk_max(text, max_chars=max_chars, first_chunk_max_chars=first_chunk_max_chars)
 
     out_parts: list[str] = []
     for i, chunk in enumerate(chunks):
         fixed, chunk_stats = apply_rules(chunk, config)
-        llm_cfg = llm
-        if i == 0:
-            llm_cfg = replace(llm, system_prompt=FIRST_CHUNK_SYSTEM_PROMPT_PREFIX + "\n\n" + llm.system_prompt)
+        llm_cfg = build_first_chunk_config(llm) if i == 0 else llm
         fixed = call_llm_text_resilient(llm_cfg, fixed)
         stats["llm_chunks"] = stats.get("llm_chunks", 0) + 1
         out_parts.append(fixed)

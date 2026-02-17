@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+_CHUNK_CHARS_MIN = 200
+_CHUNK_CHARS_MAX = 4_000
+_FIRST_CHUNK_CHARS_MIN = 2_000
+
 
 @dataclass(frozen=True)
 class FormatConfig:
@@ -24,3 +28,13 @@ class FormatConfig:
 
     # Potentially ambiguous; default off.
     normalize_quotes: bool = False
+
+
+def clamp_chunk_params(max_chunk_chars: int) -> tuple[int, int]:
+    """Clamp and derive chunk size parameters.
+
+    Returns (max_chars, first_chunk_max_chars).
+    """
+    max_chars = max(_CHUNK_CHARS_MIN, min(_CHUNK_CHARS_MAX, int(max_chunk_chars)))
+    first_chunk_max_chars = min(_CHUNK_CHARS_MAX, max(max_chars, _FIRST_CHUNK_CHARS_MIN))
+    return max_chars, first_chunk_max_chars

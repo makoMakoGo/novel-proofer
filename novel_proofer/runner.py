@@ -6,16 +6,15 @@ import time
 import uuid
 from collections import deque
 from contextlib import suppress
-from dataclasses import replace
 from pathlib import Path
 
 from novel_proofer.formatting.chunking import iter_chunks_by_lines_with_first_chunk_max_from_file
-from novel_proofer.formatting.config import FormatConfig
+from novel_proofer.formatting.config import FormatConfig, clamp_chunk_params
 from novel_proofer.formatting.merge import merge_text_chunks_to_path
 from novel_proofer.formatting.rules import _is_chapter_title, apply_rules, is_separator_line
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
-from novel_proofer.llm.config import FIRST_CHUNK_SYSTEM_PROMPT_PREFIX, LLMConfig
+from novel_proofer.llm.config import LLMConfig, build_first_chunk_config
 
 _JOB_DEBUG_README = """\
 本目录为 novel-proofer 的单次任务调试产物。
@@ -339,7 +338,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
         llm_cfg = llm
         if index == 0:
-            llm_cfg = replace(llm, system_prompt=FIRST_CHUNK_SYSTEM_PROMPT_PREFIX + "\n\n" + llm.system_prompt)
+            llm_cfg = build_first_chunk_config(llm)
 
         result, retries, last_code, last_msg = call_llm_text_resilient_with_meta_and_raw(
             llm_cfg,
@@ -484,9 +483,7 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
             GLOBAL_JOBS.update(job_id, state="error", finished_at=time.time(), error="job input cache missing")
             return
 
-        max_chars = int(fmt.max_chunk_chars)
-        max_chars = max(200, min(4_000, max_chars))
-        first_chunk_max_chars = min(4_000, max(max_chars, 2_000))
+        max_chars, first_chunk_max_chars = clamp_chunk_params(fmt.max_chunk_chars)
         local_stats: dict[str, int] = {}
         total = 0
         for i, c in enumerate(
