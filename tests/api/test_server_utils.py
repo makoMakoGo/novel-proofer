@@ -5,42 +5,42 @@ from pathlib import Path
 
 import pytest
 
-import novel_proofer.api as api
+import novel_proofer.paths as paths
 import novel_proofer.server as server
 
 
 def test_safe_filename_and_derive_output_filename():
-    assert api._safe_filename("") == "input.txt"
-    assert api._safe_filename("..\\..\\x?.txt").endswith(".txt")
-    assert "?" not in api._safe_filename("a?b.txt")
+    assert paths._safe_filename("") == "input.txt"
+    assert paths._safe_filename("..\\..\\x?.txt").endswith(".txt")
+    assert "?" not in paths._safe_filename("a?b.txt")
 
-    out = api._derive_output_filename("demo.txt", "_rev")
+    out = paths._derive_output_filename("demo.txt", "_rev")
     assert out.endswith("_rev.txt")
 
-    out2 = api._derive_output_filename("demo", "")
+    out2 = paths._derive_output_filename("demo", "")
     assert out2.endswith("_rev.txt")
 
 
 def test_decode_text_prefers_utf8_sig():
-    assert api._decode_text(b"\xef\xbb\xbfabc") == "abc"
+    assert paths._decode_text(b"\xef\xbb\xbfabc") == "abc"
 
 
 def test_cleanup_job_dir_validation_and_removal(monkeypatch: pytest.MonkeyPatch):
     with tempfile.TemporaryDirectory() as td:
         jobs_dir = Path(td) / ".jobs"
         jobs_dir.mkdir(parents=True, exist_ok=True)
-        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+        monkeypatch.setattr(paths, "JOBS_DIR", jobs_dir)
 
         with pytest.raises(ValueError):
-            api._cleanup_job_dir("not-a-job-id")
+            paths._cleanup_job_dir("not-a-job-id")
 
         job_id = "a" * 32
         target = jobs_dir / job_id
-        assert api._cleanup_job_dir(job_id) is False
+        assert paths._cleanup_job_dir(job_id) is False
 
         target.mkdir(parents=True, exist_ok=True)
         (target / "x.txt").write_text("x", encoding="utf-8")
-        assert api._cleanup_job_dir(job_id) is True
+        assert paths._cleanup_job_dir(job_id) is True
         assert not target.exists()
 
 

@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import novel_proofer.api as api
+import novel_proofer.paths as paths
 import novel_proofer.runner as runner
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMTextResult
@@ -55,8 +56,8 @@ def test_create_job_local_mode_writes_output_and_is_queryable(monkeypatch: pytes
         out_dir.mkdir(parents=True, exist_ok=True)
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
-        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
-        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+        monkeypatch.setattr(paths, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(paths, "JOBS_DIR", jobs_dir)
 
         client = TestClient(api.app)
         options = {
@@ -133,8 +134,8 @@ def test_get_job_chunk_filter_and_paging(monkeypatch: pytest.MonkeyPatch):
         out_dir.mkdir(parents=True, exist_ok=True)
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
-        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
-        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+        monkeypatch.setattr(paths, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(paths, "JOBS_DIR", jobs_dir)
 
         client = TestClient(api.app)
 
@@ -211,7 +212,7 @@ def test_error_response_contains_request_id_and_header_roundtrip():
 
 def test_http_500_message_is_sanitized_and_has_request_id(monkeypatch: pytest.MonkeyPatch):
     with tempfile.TemporaryDirectory() as td:
-        monkeypatch.setattr(api, "TEMPLATES_DIR", Path(td))
+        monkeypatch.setattr(paths, "TEMPLATES_DIR", Path(td))
         client = TestClient(api.app)
         r = client.get("/")
         assert r.status_code == 500
@@ -243,8 +244,8 @@ def test_create_job_llm_enabled_requires_base_url_and_model(monkeypatch: pytest.
         out_dir.mkdir(parents=True, exist_ok=True)
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
-        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
-        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+        monkeypatch.setattr(paths, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(paths, "JOBS_DIR", jobs_dir)
 
         client = TestClient(api.app)
         options = {"format": {"max_chunk_chars": 2000}, "llm": {"base_url": "", "model": ""}}
@@ -306,13 +307,13 @@ def test_job_input_stats_endpoint(monkeypatch: pytest.MonkeyPatch):
         out_dir.mkdir(parents=True, exist_ok=True)
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
-        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
-        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+        monkeypatch.setattr(paths, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(paths, "JOBS_DIR", jobs_dir)
 
         client = TestClient(api.app)
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
         try:
-            api._write_input_cache(job.job_id, "a b\n　　c\n")
+            paths._write_input_cache(job.job_id, "a b\n　　c\n")
             r = client.get(f"/api/v1/jobs/{job.job_id}/input-stats")
             assert r.status_code == 200, r.text
             data = r.json()
@@ -365,8 +366,8 @@ def test_job_input_stats_endpoint(monkeypatch: pytest.MonkeyPatch):
         out_dir.mkdir(parents=True, exist_ok=True)
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
-        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
-        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+        monkeypatch.setattr(paths, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(paths, "JOBS_DIR", jobs_dir)
 
         job4 = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
         job4_dir = jobs_dir / job4.job_id
@@ -522,8 +523,8 @@ def test_rerun_all_creates_new_job_without_reupload(monkeypatch: pytest.MonkeyPa
         out_dir.mkdir(parents=True, exist_ok=True)
         jobs_dir.mkdir(parents=True, exist_ok=True)
 
-        monkeypatch.setattr(api, "OUTPUT_DIR", out_dir)
-        monkeypatch.setattr(api, "JOBS_DIR", jobs_dir)
+        monkeypatch.setattr(paths, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(paths, "JOBS_DIR", jobs_dir)
 
         client = TestClient(api.app)
         options = {
