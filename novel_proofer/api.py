@@ -453,10 +453,11 @@ def _job_to_out(st: JobStatus) -> JobOut:
     if st.state == JobState.DONE and st.output_path:
         output_path = _rel_output_path(Path(st.output_path))
 
+    fmt = st.format
     return JobOut(
         id=st.job_id,
         state=st.state,
-        phase=str(getattr(st, "phase", JobPhase.VALIDATE)),
+        phase=st.phase,
         created_at=st.created_at,
         started_at=st.started_at,
         finished_at=st.finished_at,
@@ -466,23 +467,23 @@ def _job_to_out(st: JobStatus) -> JobOut:
         debug_dir=_rel_debug_dir(st.job_id),
         progress=JobProgress(total_chunks=st.total_chunks, done_chunks=st.done_chunks, percent=pct),
         format=FormatOptions(
-            max_chunk_chars=int(getattr(getattr(st, "format", None), "max_chunk_chars", 2000)),
-            paragraph_indent=bool(getattr(getattr(st, "format", None), "paragraph_indent", True)),
-            indent_with_fullwidth_space=bool(getattr(getattr(st, "format", None), "indent_with_fullwidth_space", True)),
-            normalize_blank_lines=bool(getattr(getattr(st, "format", None), "normalize_blank_lines", True)),
-            trim_trailing_spaces=bool(getattr(getattr(st, "format", None), "trim_trailing_spaces", True)),
-            normalize_ellipsis=bool(getattr(getattr(st, "format", None), "normalize_ellipsis", True)),
-            normalize_em_dash=bool(getattr(getattr(st, "format", None), "normalize_em_dash", True)),
-            normalize_cjk_punctuation=bool(getattr(getattr(st, "format", None), "normalize_cjk_punctuation", True)),
-            fix_cjk_punct_spacing=bool(getattr(getattr(st, "format", None), "fix_cjk_punct_spacing", True)),
-            normalize_quotes=bool(getattr(getattr(st, "format", None), "normalize_quotes", False)),
+            max_chunk_chars=fmt.max_chunk_chars,
+            paragraph_indent=fmt.paragraph_indent,
+            indent_with_fullwidth_space=fmt.indent_with_fullwidth_space,
+            normalize_blank_lines=fmt.normalize_blank_lines,
+            trim_trailing_spaces=fmt.trim_trailing_spaces,
+            normalize_ellipsis=fmt.normalize_ellipsis,
+            normalize_em_dash=fmt.normalize_em_dash,
+            normalize_cjk_punctuation=fmt.normalize_cjk_punctuation,
+            fix_cjk_punct_spacing=fmt.fix_cjk_punct_spacing,
+            normalize_quotes=fmt.normalize_quotes,
         ),
         last_error_code=st.last_error_code,
         last_retry_count=st.last_retry_count,
-        llm_model=getattr(st, "last_llm_model", None),
+        llm_model=st.last_llm_model,
         stats=dict(st.stats),
         error=st.error,
-        cleanup_debug_dir=bool(getattr(st, "cleanup_debug_dir", True)),
+        cleanup_debug_dir=st.cleanup_debug_dir,
     )
 
 
@@ -493,7 +494,7 @@ def _chunk_to_out(cs: ChunkStatus) -> ChunkOut:
         started_at=cs.started_at,
         finished_at=cs.finished_at,
         retries=cs.retries,
-        llm_model=getattr(cs, "llm_model", None),
+        llm_model=cs.llm_model,
         input_chars=cs.input_chars,
         output_chars=cs.output_chars,
         last_error_code=cs.last_error_code,
@@ -910,7 +911,7 @@ async def get_job_input_stats(job_id: str = Depends(_job_id_dep)):
         if resolved.exists():
             chars = _count_non_whitespace_chars_from_utf8_file(resolved)
         else:
-            work_dir = getattr(st, "work_dir", None) or str(JOBS_DIR / st.job_id)
+            work_dir = st.work_dir or str(JOBS_DIR / st.job_id)
 
             try:
                 job_root = JOBS_DIR.resolve()
@@ -981,7 +982,7 @@ async def list_jobs(
             continue
         if wanted_states and st.state.lower() not in wanted_states:
             continue
-        st_phase = str(getattr(st, "phase", "") or "").lower()
+        st_phase = st.phase.lower()
         if wanted_phases and st_phase not in wanted_phases:
             continue
         out.append(
@@ -998,7 +999,7 @@ async def list_jobs(
                     percent=int((st.done_chunks / st.total_chunks) * 100) if st.total_chunks else 0,
                 ),
                 last_error_code=st.last_error_code,
-                llm_model=getattr(st, "last_llm_model", None),
+                llm_model=st.last_llm_model,
             )
         )
 
@@ -1015,7 +1016,7 @@ async def pause_job(job_id: str = Depends(_job_id_dep)):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    phase = str(getattr(st, "phase", "") or "").strip().lower()
+    phase = st.phase.strip().lower()
     if phase != JobPhase.PROCESS:
         raise HTTPException(status_code=409, detail=f"cannot pause job in phase={phase or None}")
     if not GLOBAL_JOBS.pause(job_id):
@@ -1037,21 +1038,21 @@ async def resume_job(
         raise HTTPException(status_code=409, detail="job is cancelled")
     if st.state != JobState.PAUSED:
         raise HTTPException(status_code=409, detail="job is not paused")
-    if getattr(st, "phase", "") == JobPhase.MERGE:
+    if st.phase == JobPhase.MERGE:
         raise HTTPException(status_code=409, detail="job is ready to merge")
-    if getattr(st, "phase", "") == JobPhase.DONE:
+    if st.phase == JobPhase.DONE:
         raise HTTPException(status_code=409, detail="job is already done")
     if not GLOBAL_JOBS.resume(job_id):
         raise HTTPException(status_code=409, detail="failed to resume job")
 
     llm = _llm_from_options(body.llm or LLMOptions())
-    prev_llm_model = getattr(st, "last_llm_model", None)
+    prev_llm_model = st.last_llm_model
     GLOBAL_JOBS.update(job_id, last_llm_model=llm.model)
-    phase = str(getattr(st, "phase", "") or "")
+    phase = st.phase
     fn: Callable[..., Any]
     args: tuple[Any, ...]
     if phase == JobPhase.VALIDATE:
-        fmt = getattr(st, "format", FormatConfig())
+        fmt = st.format
         fn = run_job
         args = (job_id, _input_cache_path(job_id), fmt, llm)
     else:
@@ -1093,7 +1094,7 @@ async def retry_failed(
         raise HTTPException(status_code=409, detail="no failed chunks to retry")
 
     llm = _llm_from_options(body.llm or LLMOptions())
-    prev_llm_model = getattr(st, "last_llm_model", None)
+    prev_llm_model = st.last_llm_model
 
     # Important: flip the visible job/chunk states before starting the worker thread, otherwise
     # clients may poll and immediately "bounce" back to the error UI state.
@@ -1137,8 +1138,8 @@ async def merge_job(job_id: str = Depends(_job_id_dep), body: MergeRequest = Bod
         raise HTTPException(status_code=409, detail="job is running")
     if st.state != JobState.PAUSED:
         raise HTTPException(status_code=409, detail=f"job is not paused (state={st.state})")
-    if getattr(st, "phase", "") != JobPhase.MERGE:
-        raise HTTPException(status_code=409, detail=f"job is not ready to merge (phase={getattr(st, 'phase', None)})")
+    if st.phase != JobPhase.MERGE:
+        raise HTTPException(status_code=409, detail=f"job is not ready to merge (phase={st.phase})")
     if not st.chunk_statuses or any(c.state != ChunkState.DONE for c in st.chunk_statuses):
         raise HTTPException(status_code=409, detail="job is not ready to merge (chunks incomplete)")
 

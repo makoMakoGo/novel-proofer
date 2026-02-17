@@ -134,7 +134,7 @@ def _should_cleanup_debug_dir(job_id: str) -> bool:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         return True
-    return bool(getattr(st, "cleanup_debug_dir", True))
+    return st.cleanup_debug_dir
 
 
 def _chunk_path(work_dir: Path, subdir: str, index: int) -> Path:
@@ -250,9 +250,7 @@ def _post_llm_deterministic_pass(job_id: str, work_dir: Path) -> None:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         return
-    fmt = getattr(st, "format", None)
-    if fmt is None:
-        return
+    fmt = st.format
 
     post_stats: dict[str, int] = {}
     for cs in st.chunk_statuses:
@@ -672,7 +670,7 @@ def merge_outputs(job_id: str, *, cleanup_debug_dir: bool | None = None) -> None
     GLOBAL_JOBS.update(job_id, state=JobState.RUNNING, phase=JobPhase.MERGE, finished_at=None, error=None)
     try:
         _merge_chunk_outputs(work_dir, total, out_path)
-        _post_merge_paragraph_indent_pass(out_path, getattr(st, "format", FormatConfig()))
+        _post_merge_paragraph_indent_pass(out_path, st.format)
         GLOBAL_JOBS.update(job_id, state=JobState.DONE, phase=JobPhase.DONE, finished_at=time.time(), done_chunks=total)
         do_cleanup = bool(st.cleanup_debug_dir) if cleanup_debug_dir is None else bool(cleanup_debug_dir)
         if do_cleanup:

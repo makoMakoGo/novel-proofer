@@ -21,6 +21,36 @@ _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
 _JOB_PHASES = set(JobPhase)
 
+_ALLOWED_JOB_UPDATE_FIELDS = {
+    "state",
+    "phase",
+    "started_at",
+    "finished_at",
+    "output_filename",
+    "output_path",
+    "work_dir",
+    "total_chunks",
+    "done_chunks",
+    "format",
+    "last_error_code",
+    "last_retry_count",
+    "last_llm_model",
+    "error",
+    "cleanup_debug_dir",
+}
+
+_ALLOWED_CHUNK_UPDATE_FIELDS = {
+    "state",
+    "started_at",
+    "finished_at",
+    "retries",
+    "last_error_code",
+    "last_error_message",
+    "llm_model",
+    "input_chars",
+    "output_chars",
+}
+
 
 @dataclass
 class ChunkStatus:
@@ -550,6 +580,9 @@ class JobStore:
         return [self._snapshot_job(s) for s in items]
 
     def update(self, job_id: str, **kwargs) -> None:
+        bad = kwargs.keys() - _ALLOWED_JOB_UPDATE_FIELDS
+        if bad:
+            raise ValueError(f"JobStore.update: unknown fields {bad}")
         flush_now = False
         with self._lock:
             st = self._jobs.get(job_id)
@@ -584,6 +617,9 @@ class JobStore:
         self._flush_job(job_id, require_dirty=False)
 
     def update_chunk(self, job_id: str, index: int, **kwargs) -> None:
+        bad = kwargs.keys() - _ALLOWED_CHUNK_UPDATE_FIELDS
+        if bad:
+            raise ValueError(f"JobStore.update_chunk: unknown fields {bad}")
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
