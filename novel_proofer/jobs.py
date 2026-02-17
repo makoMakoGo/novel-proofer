@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from novel_proofer.env import env_float
@@ -102,19 +102,30 @@ class JobStatus:
     cleanup_debug_dir: bool = True
 
 
+_FORMAT_DEFAULTS = FormatConfig()
+
+
+def _format_config_from_dict(raw: object) -> FormatConfig:
+    if not isinstance(raw, dict):
+        return FormatConfig()
+    try:
+        kwargs = {}
+        for f in fields(FormatConfig):
+            default = getattr(_FORMAT_DEFAULTS, f.name)
+            val = raw.get(f.name, default)
+            if isinstance(default, int) and not isinstance(default, bool):
+                kwargs[f.name] = int(val) if val not in (None, "") else default
+            elif isinstance(default, bool):
+                kwargs[f.name] = val if isinstance(val, bool) else default
+            else:
+                kwargs[f.name] = val
+        return FormatConfig(**kwargs)
+    except Exception:
+        return FormatConfig()
+
+
 def _chunk_to_dict(cs: ChunkStatus) -> dict:
-    return {
-        "index": int(cs.index),
-        "state": str(cs.state),
-        "started_at": cs.started_at,
-        "finished_at": cs.finished_at,
-        "retries": int(cs.retries),
-        "last_error_code": cs.last_error_code,
-        "last_error_message": cs.last_error_message,
-        "llm_model": cs.llm_model,
-        "input_chars": cs.input_chars,
-        "output_chars": cs.output_chars,
-    }
+    return asdict(cs)
 
 
 def _chunk_from_dict(d: dict) -> ChunkStatus:
@@ -136,42 +147,7 @@ def _chunk_from_dict(d: dict) -> ChunkStatus:
 
 
 def _job_to_dict(st: JobStatus) -> dict:
-    return {
-        "version": _JOB_STATE_VERSION,
-        "job": {
-            "job_id": str(st.job_id),
-            "state": str(st.state),
-            "phase": str(st.phase),
-            "created_at": float(st.created_at),
-            "started_at": st.started_at,
-            "finished_at": st.finished_at,
-            "input_filename": str(st.input_filename),
-            "output_filename": str(st.output_filename),
-            "output_path": st.output_path,
-            "total_chunks": int(st.total_chunks),
-            "done_chunks": int(st.done_chunks),
-            "format": {
-                "max_chunk_chars": int(st.format.max_chunk_chars),
-                "paragraph_indent": bool(st.format.paragraph_indent),
-                "indent_with_fullwidth_space": bool(st.format.indent_with_fullwidth_space),
-                "normalize_blank_lines": bool(st.format.normalize_blank_lines),
-                "trim_trailing_spaces": bool(st.format.trim_trailing_spaces),
-                "normalize_ellipsis": bool(st.format.normalize_ellipsis),
-                "normalize_em_dash": bool(st.format.normalize_em_dash),
-                "normalize_cjk_punctuation": bool(st.format.normalize_cjk_punctuation),
-                "fix_cjk_punct_spacing": bool(st.format.fix_cjk_punct_spacing),
-                "normalize_quotes": bool(st.format.normalize_quotes),
-            },
-            "last_error_code": st.last_error_code,
-            "last_retry_count": int(st.last_retry_count),
-            "last_llm_model": st.last_llm_model,
-            "stats": dict(st.stats),
-            "error": st.error,
-            "work_dir": st.work_dir,
-            "cleanup_debug_dir": bool(st.cleanup_debug_dir),
-            "chunk_statuses": [_chunk_to_dict(c) for c in st.chunk_statuses],
-        },
-    }
+    return {"version": _JOB_STATE_VERSION, "job": asdict(st)}
 
 
 def _job_from_dict(d: dict) -> JobStatus:
@@ -207,26 +183,7 @@ def _job_from_dict(d: dict) -> JobStatus:
     if phase not in _JOB_PHASES:
         phase = ""
 
-    fmt_obj: FormatConfig
-    fmt_raw = job.get("format")
-    if isinstance(fmt_raw, dict):
-        try:
-            fmt_obj = FormatConfig(
-                max_chunk_chars=int(fmt_raw.get("max_chunk_chars", 2000) or 2000),
-                paragraph_indent=bool(fmt_raw.get("paragraph_indent", True)),
-                indent_with_fullwidth_space=bool(fmt_raw.get("indent_with_fullwidth_space", True)),
-                normalize_blank_lines=bool(fmt_raw.get("normalize_blank_lines", True)),
-                trim_trailing_spaces=bool(fmt_raw.get("trim_trailing_spaces", True)),
-                normalize_ellipsis=bool(fmt_raw.get("normalize_ellipsis", True)),
-                normalize_em_dash=bool(fmt_raw.get("normalize_em_dash", True)),
-                normalize_cjk_punctuation=bool(fmt_raw.get("normalize_cjk_punctuation", True)),
-                fix_cjk_punct_spacing=bool(fmt_raw.get("fix_cjk_punct_spacing", True)),
-                normalize_quotes=bool(fmt_raw.get("normalize_quotes", False)),
-            )
-        except Exception:
-            fmt_obj = FormatConfig()
-    else:
-        fmt_obj = FormatConfig()
+    fmt_obj = _format_config_from_dict(job.get("format"))
 
     return JobStatus(
         job_id=str(job.get("job_id", "")),
