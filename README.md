@@ -131,6 +131,7 @@ flowchart TD
 - 🧭 [Workflow & Recovery](docs/WORKFLOW.md) - 三阶段流程、任务恢复/重新关联、按钮语义
 - 🧠 [State Machine](docs/STATE_MACHINE.md) - `state/phase/chunk` 的语义与状态转移
 - 🔧 [Detailed Architecture Doc](docs/ARCHITECTURE.md) - 系统设计原理（Why + How）
+- 🚀 [Performance Notes](docs/PERFORMANCE.md) - 热点定位、优化策略与基准结果
 - ⚔️ [Full Testcase Instructions](docs/TESTCASES.md) 
 - 🧑‍💻 [Development Guide](docs/DEVELOP.md) - 协作开发约定（分支/提交/测试/Hook）
 

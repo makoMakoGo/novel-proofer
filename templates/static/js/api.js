@@ -76,7 +76,7 @@ export async function resetJob(jobId) {
 
 export async function fetchJobSummary(jobId) {
     if (!jobId) return { ok: false, error: 'missing job_id' };
-    const q = new URLSearchParams({ chunks: '1', chunk_state: 'all', limit: '1', offset: '0' });
+    const q = new URLSearchParams({ chunks: '0' });
     return apiCall(`api/v1/jobs/${encodeURIComponent(jobId)}?${q.toString()}`);
 }
 

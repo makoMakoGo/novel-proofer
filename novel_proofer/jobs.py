@@ -21,6 +21,13 @@ _JOB_STATE_VERSION = 2
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
 _JOB_PHASES = set(JobPhase)
+_CHUNK_STATES = (
+    ChunkState.PENDING,
+    ChunkState.PROCESSING,
+    ChunkState.RETRYING,
+    ChunkState.DONE,
+    ChunkState.ERROR,
+)
 
 _ALLOWED_JOB_UPDATE_FIELDS = {
     "state",
@@ -96,6 +103,7 @@ class JobStatus:
 
     stats: dict[str, int] = field(default_factory=dict)
     chunk_statuses: list[ChunkStatus] = field(default_factory=list)
+    chunk_counts: dict[str, int] = field(default_factory=dict)
 
     error: str | None = None
     output_path: str | None = None
@@ -104,6 +112,40 @@ class JobStatus:
 
 
 _FORMAT_DEFAULTS = FormatConfig()
+
+
+def _new_chunk_counts() -> dict[str, int]:
+    return {s: 0 for s in _CHUNK_STATES}
+
+
+def _compute_chunk_counts(chunks: list[ChunkStatus]) -> dict[str, int]:
+    out = _new_chunk_counts()
+    for cs in chunks:
+        out[cs.state] = out.get(cs.state, 0) + 1
+    return out
+
+
+def _normalize_chunk_counts(raw: object, chunks: list[ChunkStatus]) -> dict[str, int]:
+    if not isinstance(raw, dict):
+        return _compute_chunk_counts(chunks)
+    out = _new_chunk_counts()
+    for k, v in raw.items():
+        key = str(k).strip().lower()
+        if not key or key not in _CHUNK_STATES:
+            continue
+        try:
+            iv = int(v) if v is not None else 0
+        except Exception:
+            iv = 0
+        out[key] = max(0, iv)
+    if chunks:
+        computed = _compute_chunk_counts(chunks)
+        if sum(out.values()) != len(chunks):
+            return computed
+        for s in _CHUNK_STATES:
+            if out.get(s, 0) != computed.get(s, 0):
+                return computed
+    return out
 
 
 def _format_config_from_dict(raw: object) -> FormatConfig:
@@ -185,6 +227,7 @@ def _job_from_dict(d: dict) -> JobStatus:
         phase = ""
 
     fmt_obj = _format_config_from_dict(job.get("format"))
+    chunk_counts = _normalize_chunk_counts(job.get("chunk_counts"), chunks)
 
     return JobStatus(
         job_id=str(job.get("job_id", "")),
@@ -203,6 +246,7 @@ def _job_from_dict(d: dict) -> JobStatus:
         last_llm_model=last_llm_model,
         stats=dict(stats),
         chunk_statuses=chunks,
+        chunk_counts=chunk_counts,
         error=job.get("error"),
         output_path=job.get("output_path"),
         work_dir=job.get("work_dir"),
@@ -398,6 +442,7 @@ class JobStore:
         # Keep counters consistent even if older files were incomplete.
         st.total_chunks = max(int(st.total_chunks), len(st.chunk_statuses))
         st.done_chunks = sum(1 for c in st.chunk_statuses if c.state == ChunkState.DONE)
+        st.chunk_counts = _compute_chunk_counts(st.chunk_statuses)
 
         # Phase migration / normalization (v1 files don't have phase).
         if st.phase not in _JOB_PHASES:
@@ -480,7 +525,7 @@ class JobStore:
             output_chars=cs.output_chars,
         )
 
-    def _snapshot_job(self, st: JobStatus) -> JobStatus:
+    def _snapshot_job(self, st: JobStatus, *, include_chunks: bool = True) -> JobStatus:
         return JobStatus(
             job_id=st.job_id,
             state=st.state,
@@ -498,7 +543,8 @@ class JobStore:
             last_retry_count=st.last_retry_count,
             last_llm_model=st.last_llm_model,
             stats=dict(st.stats),
-            chunk_statuses=[self._snapshot_chunk(c) for c in st.chunk_statuses],
+            chunk_statuses=[self._snapshot_chunk(c) for c in st.chunk_statuses] if include_chunks else [],
+            chunk_counts=dict(st.chunk_counts),
             error=st.error,
             work_dir=st.work_dir,
             cleanup_debug_dir=st.cleanup_debug_dir,
@@ -517,6 +563,7 @@ class JobStore:
             output_filename=output_filename,
             total_chunks=total_chunks,
             done_chunks=0,
+            chunk_counts=_new_chunk_counts(),
         )
         with self._lock:
             self._jobs[job_id] = status
@@ -531,11 +578,54 @@ class JobStore:
                 return None
             return self._snapshot_job(st)
 
-    def list(self) -> list[JobStatus]:
+    def get_summary(self, job_id: str) -> JobStatus | None:
         with self._lock:
-            items = list(self._jobs.values())
-        items.sort(key=lambda s: s.created_at, reverse=True)
-        return [self._snapshot_job(s) for s in items]
+            st = self._jobs.get(job_id)
+            if st is None:
+                return None
+            return self._snapshot_job(st, include_chunks=False)
+
+    def list_summaries(self) -> list[JobStatus]:
+        with self._lock:
+            snapshots = [self._snapshot_job(s, include_chunks=False) for s in self._jobs.values()]
+        snapshots.sort(key=lambda s: s.created_at, reverse=True)
+        return snapshots
+
+    def get_chunks_page(
+        self,
+        job_id: str,
+        *,
+        chunk_state: str,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[ChunkStatus], dict[str, int], bool] | None:
+        wanted = str(chunk_state or "all").strip().lower()
+        with self._lock:
+            st = self._jobs.get(job_id)
+            if st is None:
+                return None
+            counts = dict(st.chunk_counts)
+            if (not counts) and st.chunk_statuses:
+                counts = _compute_chunk_counts(st.chunk_statuses)
+                st.chunk_counts = dict(counts)
+            out: list[ChunkStatus] = []
+            matched = 0
+            has_more = False
+            for cs in st.chunk_statuses:
+                if wanted == "active":
+                    if cs.state not in {ChunkState.PROCESSING, ChunkState.RETRYING}:
+                        continue
+                elif wanted != "all" and cs.state != wanted:
+                    continue
+                if matched < offset:
+                    matched += 1
+                    continue
+                if limit > 0 and len(out) >= limit:
+                    has_more = True
+                    break
+                out.append(self._snapshot_chunk(cs))
+                matched += 1
+            return out, counts, has_more
 
     def update(self, job_id: str, **kwargs) -> None:
         bad = kwargs.keys() - _ALLOWED_JOB_UPDATE_FIELDS
@@ -571,6 +661,8 @@ class JobStore:
             st.chunk_statuses = [
                 ChunkStatus(index=i, state=ChunkState.PENDING, llm_model=llm_model) for i in range(total_chunks)
             ]
+            st.chunk_counts = _new_chunk_counts()
+            st.chunk_counts[ChunkState.PENDING] = total_chunks
             self._mark_dirty_locked(job_id)
         self._flush_job(job_id, require_dirty=False)
 
@@ -593,6 +685,8 @@ class JobStore:
                 setattr(cs, k, v)
             if "state" in kwargs and cs.state != prev_state:
                 should_persist = True
+                st.chunk_counts[prev_state] = max(0, st.chunk_counts.get(prev_state, 0) - 1)
+                st.chunk_counts[cs.state] = st.chunk_counts.get(cs.state, 0) + 1
                 if prev_state == ChunkState.DONE and st.done_chunks > 0:
                     st.done_chunks -= 1
                 if cs.state == ChunkState.DONE:
@@ -644,6 +738,8 @@ class JobStore:
 
             for cs in st.chunk_statuses:
                 if cs.state in {ChunkState.PROCESSING, ChunkState.RETRYING}:
+                    st.chunk_counts[cs.state] = max(0, st.chunk_counts.get(cs.state, 0) - 1)
+                    st.chunk_counts[ChunkState.PENDING] = st.chunk_counts.get(ChunkState.PENDING, 0) + 1
                     cs.state = ChunkState.PENDING
                     cs.started_at = None
                     cs.finished_at = None

@@ -274,6 +274,7 @@ def _post_llm_deterministic_pass(job_id: str, work_dir: Path) -> None:
 _MIN_VALIDATE_LEN = 200
 _SHORTEST_RATIO = 0.85
 _LONGEST_RATIO = 1.15
+_WORKER_WAIT_TIMEOUT_S = 0.5
 
 
 def _validate_llm_output(input_text: str, output_text: str, *, allow_shorter: bool = False) -> None:
@@ -437,7 +438,7 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
                 break
 
             done, _ = concurrent.futures.wait(
-                in_flight.keys(), timeout=0.1, return_when=concurrent.futures.FIRST_COMPLETED
+                in_flight.keys(), timeout=_WORKER_WAIT_TIMEOUT_S, return_when=concurrent.futures.FIRST_COMPLETED
             )
             for f in done:
                 in_flight.pop(f, None)

@@ -54,6 +54,33 @@ def test_job_store_update_chunk_tracks_done_chunks() -> None:
     st = js.get(job_id)
     assert st is not None
     assert st.done_chunks == 0
+    assert st.chunk_counts.get("pending", 0) == 2
+    assert st.chunk_counts.get("done", 0) == 0
+
+
+def test_job_store_summary_and_chunk_page() -> None:
+    js = JobStore()
+    st = js.create("in.txt", "out.txt", total_chunks=3)
+    job_id = st.job_id
+    js.init_chunks(job_id, total_chunks=3)
+    js.update_chunk(job_id, 0, state="done")
+    js.update_chunk(job_id, 1, state="error")
+    js.update_chunk(job_id, 2, state="processing")
+
+    summary = js.get_summary(job_id)
+    assert summary is not None
+    assert summary.chunk_statuses == []
+    assert summary.chunk_counts.get("done", 0) == 1
+    assert summary.chunk_counts.get("error", 0) == 1
+    assert summary.chunk_counts.get("processing", 0) == 1
+
+    page = js.get_chunks_page(job_id, chunk_state="active", limit=10, offset=0)
+    assert page is not None
+    chunks, counts, has_more = page
+    assert has_more is False
+    assert len(chunks) == 1
+    assert chunks[0].state == "processing"
+    assert counts.get("processing", 0) == 1
 
 
 def test_job_store_add_retry_updates_job_and_chunk() -> None:

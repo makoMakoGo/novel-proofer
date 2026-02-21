@@ -39,7 +39,6 @@ from novel_proofer.jobs import GLOBAL_JOBS, JobStatus
 from novel_proofer.llm.config import LLMConfig
 from novel_proofer.logging_setup import ensure_file_logging
 from novel_proofer.models import (
-    ChunkOut,
     InputStatsOut,
     JobActionResponse,
     JobCreateResponse,
@@ -326,7 +325,7 @@ async def get_job(
     limit: int = Query(0, ge=0),
     offset: int = Query(0, ge=0),
 ):
-    st = GLOBAL_JOBS.get(job_id)
+    st = GLOBAL_JOBS.get_summary(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
 
@@ -347,40 +346,20 @@ async def get_job(
     if chunk_state not in allowed_filters:
         chunk_state = "all"
 
-    chunk_counts: dict[str, int] = {}
-    matched = 0
-    has_more = False
-    out_chunks: list[ChunkOut] = []
-    for c in st.chunk_statuses:
-        chunk_counts[c.state] = chunk_counts.get(c.state, 0) + 1
+    page = GLOBAL_JOBS.get_chunks_page(job_id, chunk_state=chunk_state, limit=limit, offset=offset)
+    if page is None:
+        raise HTTPException(status_code=404, detail="job not found")
 
-        if chunk_state == "active":
-            if c.state not in {ChunkState.PROCESSING, ChunkState.RETRYING}:
-                continue
-        elif chunk_state != "all" and c.state != chunk_state:
-            continue
-
-        if matched < offset:
-            matched += 1
-            continue
-
-        if limit > 0 and len(out_chunks) >= limit:
-            has_more = True
-            matched += 1
-            continue
-
-        out_chunks.append(_chunk_to_out(c))
-        matched += 1
-
-    payload.chunks = out_chunks
+    chunk_items, chunk_counts, has_more = page
+    payload.chunks = [_chunk_to_out(c) for c in chunk_items]
     payload.chunk_counts = chunk_counts
-    payload.has_more = has_more
+    payload.has_more = bool(has_more)
     return payload
 
 
 @app.get("/api/v1/jobs/{job_id}/input-stats", response_model=InputStatsOut)
 async def get_job_input_stats(job_id: str = Depends(paths._job_id_dep)):
-    st = GLOBAL_JOBS.get(job_id)
+    st = GLOBAL_JOBS.get_summary(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
 
@@ -464,7 +443,7 @@ async def list_jobs(
     wanted_states = {s.strip().lower() for s in str(state or "").split(",") if s.strip()}
     wanted_phases = {s.strip().lower() for s in str(phase or "").split(",") if s.strip()}
 
-    jobs = GLOBAL_JOBS.list()
+    jobs = GLOBAL_JOBS.list_summaries()
     out: list[JobSummaryOut] = []
     for st in jobs:
         if not include_cancelled and st.state == JobState.CANCELLED:

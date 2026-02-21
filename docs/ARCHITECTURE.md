@@ -64,7 +64,7 @@ novel_proofer/
 | `background.py` | 后台任务线程池（job 级并发） | `submit()`, `shutdown()` |
 | `dotenv_store.py` | 本地 `.env` 读写（保留未知键/注释） | `read_llm_defaults()`, `update_llm_defaults()` |
 | `logging_setup.py` | 文件日志初始化 | `ensure_file_logging()` |
-| `jobs.py` | 线程安全状态管理（含持久化） | `configure_persistence()`, `load_persisted_jobs()`, `update_chunk()` |
+| `jobs.py` | 线程安全状态管理（含持久化） | `configure_persistence()`, `load_persisted_jobs()`, `get_summary()`, `get_chunks_page()` |
 | `runner.py` | 流程编排 | `run_job()`, `_llm_worker()`, `_finalize_job()` |
 | `formatting/rules.py` | 本地规则 | `apply_rules()` |
 | `formatting/chunking.py` | 分片 | `chunk_by_lines_with_first_chunk_max()`, `iter_chunks_by_lines_with_first_chunk_max_from_file()` |
@@ -575,7 +575,7 @@ class JobStore:
 
 **设计要点**：
 - 所有状态更新通过 `update()` / `update_chunk()` 方法（受锁保护）
-- 使用 snapshot 模式返回数据（避免外部修改内部状态）
+- 使用 snapshot 模式返回数据（避免外部修改内部状态）；区分 full snapshot 与 summary snapshot，避免轮询路径复制全部 `chunk_statuses`
 - `is_cancelled()` / `is_paused()` 用于 worker 检查是否应该停止
 - 可选持久化：Job 快照写入 `output/.state/jobs/{job_id}.json`，用于重启恢复（best-effort）
 - 持久化节流：后台线程合并写入（默认 5s 一次，可用 `NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S` 覆盖），避免高并发 chunk 更新导致频繁磁盘 IO
@@ -639,7 +639,7 @@ def _run_llm_for_indices(job_id, indices, work_dir, llm):
                 in_flight[fut] = i
 
             # 等待任务完成
-            done, _ = wait(in_flight.keys(), timeout=0.1, return_when=FIRST_COMPLETED)
+            done, _ = wait(in_flight.keys(), timeout=0.5, return_when=FIRST_COMPLETED)
             for f in done:
                 in_flight.pop(f)
 ```
@@ -700,6 +700,9 @@ def _merge_chunk_outputs(work_dir, total_chunks, out_path):
 | **输入缓存落盘 + 文件流式分片** | 内存占用更稳定；支持 rerun-all 无需重新上传 |
 | **Job 状态快照持久化** | 本地单机无需引入 DB，也能在重启后继续/重试 |
 | **文件日志滚动** | 替代 `print()`，便于定位 LLM/IO/状态问题 |
+| **轮询接口返回 summary（`chunks=0`）** | 避免每秒轮询复制全部分片状态，降低 CPU 与锁竞争 |
+| **分片计数增量维护** | `chunk_counts` 在状态迁移时更新，避免重复全量扫描 |
+| **Debug 分片明细按需拉取 + 节流** | 减少高频轮询时的重复 I/O 与序列化开销 |
 
 ---
 

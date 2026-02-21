@@ -115,18 +115,41 @@ export function refreshOutputPreview() {
     elements.outputPreview.textContent = `output/<job_id>_${stem}${suffix}${ext}`;
 }
 
+const CLIENT_WORD_COUNT_MAX_BYTES = 8 * 1024 * 1024;
+
+async function _countNonWhitespaceInFile(file) {
+    if (!(file instanceof File)) return null;
+    if (!file.stream || file.size > CLIENT_WORD_COUNT_MAX_BYTES) return null;
+    const reader = file.stream().getReader();
+    const decoder = new TextDecoder('utf-8');
+    let count = 0;
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) count += decoder.decode(value, { stream: true }).replace(/\s/g, '').length;
+    }
+    const tail = decoder.decode();
+    if (tail) count += tail.replace(/\s/g, '').length;
+    return count;
+}
+
 export function refreshFileName(inputCharsCallback) { // inputCharsCallback is optional async function to get word count
     const file = elements.fileInput?.files?.[0];
     if (file) {
         if (elements.fileName) elements.fileName.textContent = file.name;
         if (elements.fileInfoEmpty) elements.fileInfoEmpty.classList.add('hidden');
         if (elements.fileInfoContent) elements.fileInfoContent.classList.remove('hidden');
-        if (elements.fileWordCount) elements.fileWordCount.textContent = '读取中...';
-        
-        file.text().then(text => {
-            const count = String(text || '').replace(/\s/g, '').length;
+        if (elements.fileWordCount) {
+            elements.fileWordCount.textContent = (file.size > CLIENT_WORD_COUNT_MAX_BYTES) ? '提交后统计' : '读取中...';
+        }
+
+        const currentFile = file;
+        _countNonWhitespaceInFile(file).then(count => {
+            if (elements.fileInput?.files?.[0] !== currentFile) return;
+            if (count == null) return;
             if (elements.fileWordCount) elements.fileWordCount.textContent = count.toLocaleString();
         }).catch(() => {
+            if (elements.fileInput?.files?.[0] !== currentFile) return;
             if (elements.fileWordCount) elements.fileWordCount.textContent = '读取失败';
         });
     } else {
@@ -175,12 +198,19 @@ export function refreshSourcePanelFromJob(job) {
 }
 
 export function updateStats() {
+    const total = Number(state.totalChunksFromServer || 0);
+    const doneFromJob = Number(state.doneChunksFromServer || 0);
     const counts = state.chunkCounts || {};
-    elements.statTotal.textContent = String(state.totalChunksFromServer || 0);
-    elements.statDone.textContent = String(counts.done || 0);
-    elements.statProcessing.textContent = String((counts.processing || 0) + (counts.retrying || 0));
-    elements.statPending.textContent = String(counts.pending || 0);
-    elements.statError.textContent = String(counts.error || 0);
+    const hasCounts = !!state.chunkCounts;
+    const done = hasCounts ? Number(counts.done || 0) : doneFromJob;
+    const processing = hasCounts ? Number(counts.processing || 0) + Number(counts.retrying || 0) : 0;
+    const pending = hasCounts ? Number(counts.pending || 0) : Math.max(0, total - done);
+    const error = hasCounts ? Number(counts.error || 0) : 0;
+    elements.statTotal.textContent = String(total);
+    elements.statDone.textContent = String(done);
+    elements.statProcessing.textContent = String(processing);
+    elements.statPending.textContent = String(pending);
+    elements.statError.textContent = String(error);
 }
 
 function getStatusBadge(stateName) {
@@ -580,4 +610,3 @@ export function setLlmDirty(dirty) {
     elements.btnSaveLlmDefaults.disabled = !dirty;
     elements.btnSaveLlmDefaults.classList.toggle('opacity-50', !dirty);
 }
-

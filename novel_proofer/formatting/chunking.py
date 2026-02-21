@@ -35,10 +35,12 @@ def chunk_by_lines(text: str, max_chars: int) -> list[str]:
             chunks.append("".join(head))
         buf = tail
         size = sum(len(x) for x in buf)
-        last_blank_idx = None
-        for i, line in enumerate(buf):
-            if line.strip() == "":
-                last_blank_idx = i
+        if last_blank_idx is None:
+            return
+        if last_blank_idx <= end_idx_inclusive:
+            last_blank_idx = None
+        else:
+            last_blank_idx -= end_idx_inclusive + 1
 
     for line in lines:
         if buf and size + len(line) > max_chars:
@@ -117,13 +119,6 @@ def iter_chunks_by_lines_with_first_chunk_max_from_file(
     last_blank_idx: int | None = None
     saw_any_line = False
 
-    def _recompute_last_blank_idx() -> int | None:
-        idx: int | None = None
-        for i, line in enumerate(buf):
-            if line.strip() == "":
-                idx = i
-        return idx
-
     def _flush_all() -> list[str]:
         nonlocal buf, size, last_blank_idx
         if not buf:
@@ -143,7 +138,12 @@ def iter_chunks_by_lines_with_first_chunk_max_from_file(
         out = ["".join(head)] if head else []
         buf = tail
         size = sum(len(x) for x in buf)
-        last_blank_idx = _recompute_last_blank_idx()
+        if last_blank_idx is None:
+            return out
+        if last_blank_idx <= end_idx_inclusive:
+            last_blank_idx = None
+        else:
+            last_blank_idx -= end_idx_inclusive + 1
         return out
 
     def _on_emit() -> None:

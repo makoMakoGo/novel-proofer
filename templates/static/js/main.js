@@ -13,6 +13,9 @@ import * as ui from './ui.js';
 import * as modal from './modal.js';
 
 // --- Logic Helpers ---
+const PROCESS_POLL_MS = 1000;
+const NON_PROCESS_POLL_MS = 1500;
+const DEBUG_CHUNKS_MIN_INTERVAL_MS = 2500;
 
 async function ensureJobInputChars(jobId) {
     const jid = String(jobId || '').trim();
@@ -56,9 +59,14 @@ async function ensureJobInputChars(jobId) {
     }
 }
 
-async function refreshChunksNow(jobId) {
+async function refreshChunksNow(jobId, { force = false } = {}) {
     if (!jobId) return;
     if (state.chunksFetchInFlight) return;
+    const now = Date.now();
+    if (!force && state.lastChunksFetchAtMs > 0 && (now - state.lastChunksFetchAtMs) < DEBUG_CHUNKS_MIN_INTERVAL_MS) {
+        return;
+    }
+    state.lastChunksFetchAtMs = now;
     state.chunksFetchInFlight = true;
     try {
         const res = await api.fetchJobChunks(jobId, state.currentFilter);
@@ -69,6 +77,7 @@ async function refreshChunksNow(jobId) {
         state.chunksData = res.data.chunks || [];
         state.chunkCounts = res.data.chunk_counts || null;
         state.totalChunksFromServer = Number(res.data?.job?.progress?.total_chunks || 0);
+        state.doneChunksFromServer = Number(res.data?.job?.progress?.done_chunks || 0);
         ui.updateStats();
         ui.renderChunksTable();
     } catch (e) {
@@ -83,13 +92,16 @@ function stopPolling() {
     clearInterval(state.pollTimer);
     state.pollTimer = null;
     state.pollJobId = null;
+    state.pollIntervalMs = 0;
 }
 
-function ensurePolling(jobId) {
-    if (state.pollTimer && state.pollJobId === jobId) return;
+function ensurePolling(jobId, intervalMs) {
+    const ms = Math.max(500, Number(intervalMs || PROCESS_POLL_MS));
+    if (state.pollTimer && state.pollJobId === jobId && state.pollIntervalMs === ms) return;
     stopPolling();
     state.pollJobId = jobId;
-    state.pollTimer = setInterval(() => refreshJobOnce(jobId), 1000);
+    state.pollIntervalMs = ms;
+    state.pollTimer = setInterval(() => refreshJobOnce(jobId), ms);
 }
 
 function detachUi({ clearFile = true } = {}) {
@@ -104,6 +116,8 @@ function detachUi({ clearFile = true } = {}) {
     state.chunksData = [];
     state.chunkCounts = null;
     state.totalChunksFromServer = 0;
+    state.doneChunksFromServer = 0;
+    state.lastChunksFetchAtMs = 0;
     ui.updateStats();
     ui.renderChunksTable();
 
@@ -169,8 +183,9 @@ async function refreshJobOnce(jobId) {
         ui.refreshActionButtons(job);
         ui.refreshSourcePanelFromJob(job);
 
-        state.chunkCounts = r?.data?.chunk_counts || null;
         state.totalChunksFromServer = Number(job?.progress?.total_chunks || 0);
+        state.doneChunksFromServer = Number(job?.progress?.done_chunks || 0);
+        if (state.activeTab !== 'debug') state.chunkCounts = null;
         ui.updateStats();
 
         if (job?.state === 'error') {
@@ -184,15 +199,16 @@ async function refreshJobOnce(jobId) {
             ui.show(job?.output_path ? `完成。输出：${job.output_path}\n可点击“下载输出”或“新任务”。` : '完成。已输出到项目 output/ 目录。');
         }
 
-        const counts = state.chunkCounts || {};
-        const active = Number(counts.processing || 0) + Number(counts.retrying || 0);
         const stLower = String(job?.state || '').toLowerCase();
-        const shouldPoll = stLower === 'queued' || stLower === 'running' || (stLower === 'paused' && active > 0);
-        if (shouldPoll) ensurePolling(jobId);
+        const phaseLower = String(job?.phase || '').toLowerCase();
+        const shouldPoll = stLower === 'queued' || stLower === 'running';
+        if (shouldPoll) {
+            const nextMs = phaseLower === 'process' ? PROCESS_POLL_MS : NON_PROCESS_POLL_MS;
+            ensurePolling(jobId, nextMs);
+        }
         else stopPolling();
 
         if (state.activeTab === 'debug') {
-            state.forceChunksFetch = true;
             await refreshChunksNow(jobId);
         }
         
@@ -215,10 +231,12 @@ async function attachJob(jobId) {
     state.chunksData = [];
     state.chunkCounts = null;
     state.totalChunksFromServer = 0;
+    state.doneChunksFromServer = 0;
+    state.lastChunksFetchAtMs = 0;
     ui.updateStats();
     ui.renderChunksTable();
 
-    ensurePolling(jid);
+    ensurePolling(jid, PROCESS_POLL_MS);
     await refreshJobOnce(jid);
 }
 
@@ -375,8 +393,7 @@ function bindTabAndFilterEvents() {
             ui.switchTab(btn.dataset.tab, () => {
                 saveActiveTab(btn.dataset.tab);
                 if (btn.dataset.tab === 'debug' && state.currentJobId) {
-                    state.forceChunksFetch = true;
-                    refreshChunksNow(state.currentJobId);
+                    refreshChunksNow(state.currentJobId, { force: true });
                 }
             });
         });
@@ -389,8 +406,7 @@ function bindTabAndFilterEvents() {
             state.currentFilter = btn.dataset.filter;
             ui.elements.filterBtns.forEach(b => b.classList.toggle('active', b === btn));
             if (state.activeTab === 'debug' && state.currentJobId) {
-                state.forceChunksFetch = true;
-                refreshChunksNow(state.currentJobId);
+                refreshChunksNow(state.currentJobId, { force: true });
             } else {
                 ui.renderChunksTable();
             }

@@ -10,9 +10,9 @@ export const state = {
     chunksData: [],
     chunkCounts: null,
     totalChunksFromServer: 0,
+    doneChunksFromServer: 0,
     
     // Flags
-    forceChunksFetch: false,
     chunksFetchInFlight: false,
     createJobInFlight: false,
     pollInFlight: false,
@@ -20,6 +20,8 @@ export const state = {
     // Timers
     pollTimer: null,
     pollJobId: null,
+    pollIntervalMs: 0,
+    lastChunksFetchAtMs: 0,
 
     // Caches
     inputCharsCache: new Map(),

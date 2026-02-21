@@ -232,7 +232,7 @@ def _count_non_whitespace_chars_from_utf8_file(path: Path) -> int:
             chunk = f.read(1024 * 1024)
             if not chunk:
                 break
-            n += sum(1 for ch in chunk if not ch.isspace())
+            n += len("".join(chunk.split()))
     return n
 
 
