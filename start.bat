@@ -56,9 +56,9 @@ if not errorlevel 1 (
   if errorlevel 1 exit /b 1
 
   echo [novel-proofer] Starting server...
-  echo [novel-proofer] URL: http://%HOST%:%PORT%/
-  uv run --frozen --no-sync -m novel_proofer.server --host "%HOST%" --port %PORT%
-  exit /b %errorlevel%
+  echo [novel-proofer] URL: http://!HOST!:!PORT!/
+  uv run --frozen --no-sync -m novel_proofer.server --host "!HOST!" --port !PORT!
+  exit /b !errorlevel!
 )
 
 if not exist "%PYTHON_EXE%" (
