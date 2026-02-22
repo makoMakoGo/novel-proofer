@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from contextlib import suppress
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +68,7 @@ def _tmp_suffix() -> str:
     return f".{os.getpid()}_{next(_tmp_seq)}.tmp"
 
 
-@dataclass
+@dataclass(frozen=True)
 class ChunkStatus:
     index: int
     # UI contract: pending|processing|retrying|done|error
@@ -441,11 +441,11 @@ class JobStore:
             st.finished_at = None
 
         # Any in-flight chunks are no longer running; convert them back to pending.
-        for cs in st.chunk_statuses:
-            if cs.state in {ChunkState.PROCESSING, ChunkState.RETRYING}:
-                cs.state = ChunkState.PENDING
-                cs.started_at = None
-                cs.finished_at = None
+        _in_flight = {ChunkState.PROCESSING, ChunkState.RETRYING}
+        st.chunk_statuses = [
+            replace(cs, state=ChunkState.PENDING, started_at=None, finished_at=None) if cs.state in _in_flight else cs
+            for cs in st.chunk_statuses
+        ]
 
         # Keep counters consistent even if older files were incomplete.
         st.total_chunks = max(int(st.total_chunks), len(st.chunk_statuses))
@@ -519,20 +519,6 @@ class JobStore:
 
         return len(loaded)
 
-    def _snapshot_chunk(self, cs: ChunkStatus) -> ChunkStatus:
-        return ChunkStatus(
-            index=cs.index,
-            state=cs.state,
-            started_at=cs.started_at,
-            finished_at=cs.finished_at,
-            retries=cs.retries,
-            last_error_code=cs.last_error_code,
-            last_error_message=cs.last_error_message,
-            llm_model=cs.llm_model,
-            input_chars=cs.input_chars,
-            output_chars=cs.output_chars,
-        )
-
     def _snapshot_job(self, st: JobStatus, *, include_chunks: bool = True) -> JobStatus:
         return JobStatus(
             job_id=st.job_id,
@@ -551,7 +537,7 @@ class JobStore:
             last_retry_count=st.last_retry_count,
             last_llm_model=st.last_llm_model,
             stats=dict(st.stats),
-            chunk_statuses=[self._snapshot_chunk(c) for c in st.chunk_statuses] if include_chunks else [],
+            chunk_statuses=list(st.chunk_statuses) if include_chunks else [],
             chunk_counts=dict(st.chunk_counts),
             error=st.error,
             work_dir=st.work_dir,
@@ -631,7 +617,7 @@ class JobStore:
                 if limit > 0 and len(out) >= limit:
                     has_more = True
                     break
-                out.append(self._snapshot_chunk(cs))
+                out.append(cs)
                 matched += 1
             return out, counts, has_more
 
@@ -689,8 +675,8 @@ class JobStore:
             cs = st.chunk_statuses[index]
             prev_state = cs.state
             should_persist = False
-            for k, v in kwargs.items():
-                setattr(cs, k, v)
+            cs = replace(cs, **kwargs)
+            st.chunk_statuses[index] = cs
             if "state" in kwargs and cs.state != prev_state:
                 should_persist = True
                 st.chunk_counts[prev_state] = max(0, st.chunk_counts.get(prev_state, 0) - 1)
@@ -716,9 +702,9 @@ class JobStore:
                 st.last_error_code = last_error_code
             if 0 <= index < len(st.chunk_statuses):
                 cs = st.chunk_statuses[index]
-                cs.retries += inc
-                cs.last_error_code = last_error_code
-                cs.last_error_message = last_error_message
+                st.chunk_statuses[index] = replace(
+                    cs, retries=cs.retries + inc, last_error_code=last_error_code, last_error_message=last_error_message
+                )
             self._mark_dirty_locked(job_id)
 
     def add_stat(self, job_id: str, key: str, inc: int = 1) -> None:
@@ -744,14 +730,17 @@ class JobStore:
                 st.state = JobState.CANCELLED
                 st.finished_at = now
 
-            for cs in st.chunk_statuses:
+            for i, cs in enumerate(st.chunk_statuses):
                 if cs.state in {ChunkState.PROCESSING, ChunkState.RETRYING}:
                     st.chunk_counts[cs.state] = max(0, st.chunk_counts.get(cs.state, 0) - 1)
                     st.chunk_counts[ChunkState.PENDING] = st.chunk_counts.get(ChunkState.PENDING, 0) + 1
-                    cs.state = ChunkState.PENDING
-                    cs.started_at = None
-                    cs.finished_at = None
-                    cs.last_error_message = cs.last_error_message or "cancelled"
+                    st.chunk_statuses[i] = replace(
+                        cs,
+                        state=ChunkState.PENDING,
+                        started_at=None,
+                        finished_at=None,
+                        last_error_message=cs.last_error_message or "cancelled",
+                    )
             self._mark_dirty_locked(job_id)
         self._flush_job(job_id, require_dirty=False)
         return True
