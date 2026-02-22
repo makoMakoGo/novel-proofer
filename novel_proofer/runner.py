@@ -320,7 +320,9 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig, *, writ
     resp_path = _chunk_path(work_dir, "resp", index)
     raw_text: str | None = None
     try:
-        pre = _chunk_path(work_dir, "pre", index).read_text(encoding="utf-8")
+        pre = GLOBAL_JOBS.get_chunk_pre_text(job_id, index)
+        if pre is None:
+            pre = _chunk_path(work_dir, "pre", index).read_text(encoding="utf-8")
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
@@ -386,6 +388,8 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig, *, writ
         GLOBAL_JOBS.update_chunk(
             job_id, index, state=ChunkState.DONE, finished_at=time.time(), output_chars=len(final_text)
         )
+        # Free pre text memory once processed.
+        GLOBAL_JOBS.pop_chunk_pre_text(job_id, index)
         GLOBAL_JOBS.add_stat(job_id, "llm_chunks", 1)
     except LLMError as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
@@ -518,6 +522,8 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
         max_chars, first_chunk_max_chars = clamp_chunk_params(fmt.max_chunk_chars)
         local_stats: dict[str, int] = {}
         total = 0
+        # For performance, skip writing per-chunk pre files; keep texts in memory and read them in workers.
+        # Still create the pre/ directory for debuggability/tests.
         for i, c in enumerate(
             iter_chunks_by_lines_with_first_chunk_max_from_file(
                 input_path,
@@ -533,7 +539,7 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
                 return
 
             fixed, s = apply_rules(c, fmt)
-            _atomic_write_text(_chunk_path(work_dir, "pre", i), fixed)
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, i, fixed)
             _merge_stats(local_stats, s)
             total = i + 1
 

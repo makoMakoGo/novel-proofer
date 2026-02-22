@@ -270,6 +270,9 @@ class JobStore:
         self._jobs: dict[str, JobStatus] = {}
         self._cancelled: set[str] = set()
         self._paused: set[str] = set()
+        # In-memory store for pre-processed chunk texts to eliminate small file I/O.
+        # Not persisted to disk; cleared per-chunk after LLM processing or when jobs are deleted.
+        self._pre_texts: dict[str, dict[int, str]] = {}
         self._persist_dir: Path | None = None
         interval = (
             env_float("NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S", 5.0)
@@ -780,6 +783,8 @@ class JobStore:
         with self._persist_lock:
             with self._lock:
                 existed = job_id in self._jobs
+                # Drop in-memory pre-texts, if any.
+                self._pre_texts.pop(job_id, None)
                 if existed:
                     path = self._persist_path_for_job_id(job_id)
                 self._jobs.pop(job_id, None)
@@ -799,6 +804,30 @@ class JobStore:
     def is_cancelled(self, job_id: str) -> bool:
         with self._lock:
             return job_id in self._cancelled
+
+    # Pre-chunk text accessors (memory-only, thread-safe)
+    def set_chunk_pre_text(self, job_id: str, index: int, text: str) -> None:
+        with self._lock:
+            self._pre_texts.setdefault(job_id, {})[int(index)] = text
+
+    def get_chunk_pre_text(self, job_id: str, index: int) -> str | None:
+        with self._lock:
+            d = self._pre_texts.get(job_id)
+            return None if d is None else d.get(int(index))
+
+    def pop_chunk_pre_text(self, job_id: str, index: int) -> str | None:
+        with self._lock:
+            d = self._pre_texts.get(job_id)
+            if not d:
+                return None
+            val = d.pop(int(index), None)
+            if not d:
+                self._pre_texts.pop(job_id, None)
+            return val
+
+    def clear_all_pre_texts(self, job_id: str) -> None:
+        with self._lock:
+            self._pre_texts.pop(job_id, None)
 
     def is_paused(self, job_id: str) -> bool:
         with self._lock:
