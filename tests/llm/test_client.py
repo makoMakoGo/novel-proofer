@@ -194,6 +194,27 @@ def test_parse_sse_line(line: str, expected: tuple[str, str] | None):
     assert llm_client._parse_sse_line(line) == expected
 
 
+@pytest.mark.parametrize(
+    ("head_limit", "tail_limit", "parts", "expected"),
+    [
+        (5, 10, ["abc", "de"], "abcde"),
+        (5, 10, ["abcd", "efgh"], "abcdefgh"),
+        (5, 10, ["abc", "defghijk"], "abcdefghijk"),
+        (5, 6, ["abcdefghij", "klmnopqrst"], "abcde\n...[truncated]...\nopqrst"),
+    ],
+)
+def test_sse_debug_capture_render_is_compact(
+    head_limit: int,
+    tail_limit: int,
+    parts: list[str],
+    expected: str,
+) -> None:
+    cap = llm_client._SseDebugCapture(head_limit=head_limit, tail_limit=tail_limit)
+    for part in parts:
+        cap.add(part)
+    assert cap.render() == expected
+
+
 def test_is_loopback_host():
     assert llm_client._is_loopback_host(None) is False
     assert llm_client._is_loopback_host("") is False

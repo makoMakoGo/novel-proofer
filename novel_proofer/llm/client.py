@@ -143,10 +143,12 @@ class _SseDebugCapture:
         self._head_len = 0
         self._tail_parts: deque[str] = deque()
         self._tail_len = 0
+        self._total_len = 0
 
     def add(self, s: str) -> None:
         if not s:
             return
+        self._total_len += len(s)
 
         if self._head_len < self._head_limit:
             take = s[: self._head_limit - self._head_len]
@@ -179,13 +181,17 @@ class _SseDebugCapture:
                 self._tail_len -= excess
 
     def render(self) -> str:
+        total = self._total_len
         head = "".join(self._head_parts)
-        if head and self._head_len < self._head_limit:
+        if total <= self._head_limit:
             return head
         tail = "".join(self._tail_parts)
-        if head:
-            return head + "\n...[truncated]...\n" + tail
-        return tail
+        if total <= len(tail):
+            return tail
+        overlap = (len(head) + len(tail)) - total
+        if overlap >= 0:
+            return head + tail[overlap:]
+        return head + "\n...[truncated]...\n" + tail
 
 
 def _stream_request_impl(
