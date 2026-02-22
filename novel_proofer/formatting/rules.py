@@ -53,7 +53,10 @@ def is_separator_line(line: str) -> bool:
 
 _ellipsis_ascii_re = re.compile(r"\.{3,}")
 _ellipsis_cn_re = re.compile(r"[。．｡]{3,}")
+_ellipsis_excess_re = re.compile(r"…{3,}")
 _em_dash_re = re.compile(r"[-—]{2,}")
+_trailing_spaces_re = re.compile(r"[ \t]+(?=\n)")
+_blank_lines_re = re.compile(r"\n{3,}")
 
 
 def apply_rules(text: str, config: FormatConfig) -> tuple[str, dict[str, int]]:
@@ -65,21 +68,19 @@ def apply_rules(text: str, config: FormatConfig) -> tuple[str, dict[str, int]]:
         stats["normalize_newlines"] = stats.get("normalize_newlines", 0) + 1
 
     if config.trim_trailing_spaces:
-        text, n = re.subn(r"[ \t]+(?=\n)", "", text)
+        text, n = _trailing_spaces_re.subn("", text)
         if n:
             stats["trim_trailing_spaces"] = stats.get("trim_trailing_spaces", 0) + n
 
     if config.normalize_blank_lines:
-        # Collapse 2+ blank lines into 1 blank line.
-        text, n = re.subn(r"\n{3,}", "\n\n", text)
+        text, n = _blank_lines_re.subn("\n\n", text)
         if n:
             stats["normalize_blank_lines"] = stats.get("normalize_blank_lines", 0) + n
 
     if config.normalize_ellipsis:
-        # Chinese ellipsis is '……' (two U+2026). Normalize common variants.
         text, n1 = _ellipsis_ascii_re.subn("……", text)
         text, n2 = _ellipsis_cn_re.subn("……", text)
-        text, n3 = re.subn(r"…{3,}", "……", text)
+        text, n3 = _ellipsis_excess_re.subn("……", text)
         n = n1 + n2 + n3
         if n:
             stats["normalize_ellipsis"] = stats.get("normalize_ellipsis", 0) + n
@@ -115,6 +116,24 @@ def apply_rules(text: str, config: FormatConfig) -> tuple[str, dict[str, int]]:
 
 _CJK = r"\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af"
 
+_num_fullwidth_dot_re = re.compile(r"(?<=\d)[\uFF0E\u3002](?=\d)")
+_num_fullwidth_comma_re = re.compile(r"(?<=\d)\uFF0C(?=\d)")
+_cjk_comma_after_re = re.compile(rf"(?<=[{_CJK}])(?<!\d),(?!\d)")
+_cjk_comma_before_re = re.compile(rf"(?<!\d),(?!\d)(?=[{_CJK}])")
+_cjk_semicolon_re = re.compile(rf"(?<=[{_CJK}]);")
+_cjk_colon_re = re.compile(rf"(?<=[{_CJK}]):")
+_cjk_question_re = re.compile(rf"(?<=[{_CJK}])\?")
+_cjk_exclamation_re = re.compile(rf"(?<=[{_CJK}])!")
+# Closing punctuation chars for period lookahead: ASCII quotes, curly quotes, brackets
+_CLOSING_PUNCT = r'"\u201c\u201d\'\u2018\u2019\)\]\u3011\u300b\u300d\u300f'
+_cjk_period_re = re.compile(rf"(?<=[{_CJK}])\.(?=(?:[{_CJK}]|\s|$|[{_CLOSING_PUNCT}]))")
+_cjk_open_paren_after_re = re.compile(rf"(?<=[{_CJK}])\(")
+_close_paren_before_cjk_re = re.compile(rf"\)(?=[{_CJK}])")
+_open_paren_before_cjk_re = re.compile(rf"\((?=[{_CJK}])")
+_cjk_close_paren_re = re.compile(rf"(?<=[{_CJK}])\)")
+_cjk_space_before_punct_re = re.compile(rf"(?<=[{_CJK}])[ \t]+(?=[，。！？；：、,.!?;:])")
+_punct_space_before_cjk_re = re.compile(rf"(?<=[，。！？；：、,.!?;:])[ \t]+(?=[{_CJK}])")
+
 
 def _normalize_cjk_punctuation(text: str) -> tuple[str, int]:
     """Convert common ASCII punctuation to fullwidth when in CJK context.
@@ -126,48 +145,36 @@ def _normalize_cjk_punctuation(text: str) -> tuple[str, int]:
 
     count = 0
 
-    # Preserve numeric punctuation: some models emit fullwidth separators in numbers.
-    # - 3．14 / 3。14 -> 3.14
-    # - 1，000，000 -> 1,000,000
-    text, n = re.subn(r"(?<=\d)[\uFF0E\u3002](?=\d)", ".", text)  # fullwidth dot / ideographic full stop
+    text, n = _num_fullwidth_dot_re.subn(".", text)
     count += n
-    text, n = re.subn(r"(?<=\d)\uFF0C(?=\d)", ",", text)  # fullwidth comma
+    text, n = _num_fullwidth_comma_re.subn(",", text)
     count += n
 
-    # Comma
-    text, n = re.subn(rf"(?<=[{_CJK}])(?<!\d),(?!\d)", "，", text)
+    text, n = _cjk_comma_after_re.subn("，", text)
     count += n
-    text, n = re.subn(rf"(?<!\d),(?!\d)(?=[{_CJK}])", "，", text)
-    count += n
-
-    # Semicolon / colon
-    text, n = re.subn(rf"(?<=[{_CJK}]);", "；", text)
-    count += n
-    text, n = re.subn(rf"(?<=[{_CJK}]):", "：", text)
+    text, n = _cjk_comma_before_re.subn("，", text)
     count += n
 
-    # Question / exclamation
-    text, n = re.subn(rf"(?<=[{_CJK}])\?", "？", text)
+    text, n = _cjk_semicolon_re.subn("；", text)
     count += n
-    text, n = re.subn(rf"(?<=[{_CJK}])!", "！", text)
-    count += n
-
-    # Period: after CJK and followed by CJK/space/end/closing punctuation.
-    text, n = re.subn(
-        rf"(?<=[{_CJK}])\.(?=(?:[{_CJK}]|\s|$|[\"\”\’\)\]\】\》\」\』]))",
-        "。",
-        text,
-    )
+    text, n = _cjk_colon_re.subn("：", text)
     count += n
 
-    # Parentheses: only when directly adjacent to CJK.
-    text, n = re.subn(rf"(?<=[{_CJK}])\(", "（", text)
+    text, n = _cjk_question_re.subn("？", text)
     count += n
-    text, n = re.subn(rf"\)(?=[{_CJK}])", "）", text)
+    text, n = _cjk_exclamation_re.subn("！", text)
     count += n
-    text, n = re.subn(rf"\((?=[{_CJK}])", "（", text)
+
+    text, n = _cjk_period_re.subn("。", text)
     count += n
-    text, n = re.subn(rf"(?<=[{_CJK}])\)", "）", text)
+
+    text, n = _cjk_open_paren_after_re.subn("（", text)
+    count += n
+    text, n = _close_paren_before_cjk_re.subn("）", text)
+    count += n
+    text, n = _open_paren_before_cjk_re.subn("（", text)
+    count += n
+    text, n = _cjk_close_paren_re.subn("）", text)
     count += n
 
     return text, count
@@ -178,20 +185,10 @@ def _fix_cjk_punct_spacing(text: str) -> tuple[str, int]:
 
     count = 0
 
-    # Spaces before punctuation after CJK.
-    text, n = re.subn(
-        rf"(?<=[{_CJK}])[ \t]+(?=[，。！？；：、,.!?;:])",
-        "",
-        text,
-    )
+    text, n = _cjk_space_before_punct_re.subn("", text)
     count += n
 
-    # Spaces after punctuation before CJK.
-    text, n = re.subn(
-        rf"(?<=[，。！？；：、,.!?;:])[ \t]+(?=[{_CJK}])",
-        "",
-        text,
-    )
+    text, n = _punct_space_before_cjk_re.subn("", text)
     count += n
 
     return text, count
