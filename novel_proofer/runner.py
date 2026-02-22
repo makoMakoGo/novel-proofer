@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import concurrent.futures
+import itertools
+import os
 import shutil
 import time
-import uuid
 from collections import deque
 from contextlib import suppress
 from pathlib import Path
@@ -35,6 +36,13 @@ def _ensure_job_debug_readme(work_dir: Path) -> None:
     _atomic_write_text(p, _JOB_DEBUG_README)
 
 
+_tmp_seq = itertools.count()
+
+
+def _tmp_suffix() -> str:
+    return f".{os.getpid()}_{next(_tmp_seq)}.tmp"
+
+
 def _merge_stats(dst: dict[str, int], src: dict[str, int]) -> None:
     for k, v in src.items():
         dst[k] = dst.get(k, 0) + v
@@ -43,7 +51,7 @@ def _merge_stats(dst: dict[str, int], src: dict[str, int]) -> None:
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # Use a unique temp name to avoid cross-thread collisions.
-    tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
+    tmp = path.with_suffix(path.suffix + _tmp_suffix())
     tmp.write_text(content, encoding="utf-8")
     tmp.replace(path)
 
@@ -156,7 +164,7 @@ def _post_merge_paragraph_indent_pass(out_path: Path, fmt: FormatConfig) -> None
         return
 
     indent = ("\u3000" * 2) if fmt.indent_with_fullwidth_space else "  "
-    tmp = out_path.with_suffix(out_path.suffix + f".{uuid.uuid4().hex}.tmp")
+    tmp = out_path.with_suffix(out_path.suffix + _tmp_suffix())
 
     prev_blank = True
     try:

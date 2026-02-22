@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import codecs
+import itertools
 import logging
 import os
 import re
 import shutil
-import uuid
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
@@ -26,6 +26,12 @@ _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _filename_strip_re = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uFF00-\uFFEF._ -]+")
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+
+_tmp_seq = itertools.count()
+
+
+def _tmp_suffix() -> str:
+    return f".{os.getpid()}_{next(_tmp_seq)}.tmp"
 
 
 def _validate_job_id(job_id: str) -> str:
@@ -125,7 +131,7 @@ def _transcode_bytes_file_to_utf8_text(
     errors: str,
 ) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.with_suffix(dst.suffix + f".{uuid.uuid4().hex}.tmp")
+    tmp = dst.with_suffix(dst.suffix + _tmp_suffix())
     decoder = codecs.getincrementaldecoder(encoding)(errors=errors)
     with src.open("rb") as fin, tmp.open("w", encoding="utf-8") as fout:
         while True:
@@ -232,7 +238,7 @@ def _count_non_whitespace_chars_from_utf8_file(path: Path) -> int:
             chunk = f.read(1024 * 1024)
             if not chunk:
                 break
-            n += len("".join(chunk.split()))
+            n += sum(len(s) for s in chunk.split())
     return n
 
 

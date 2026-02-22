@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import itertools
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -58,6 +60,12 @@ _ALLOWED_CHUNK_UPDATE_FIELDS = {
     "input_chars",
     "output_chars",
 }
+
+_tmp_seq = itertools.count()
+
+
+def _tmp_suffix() -> str:
+    return f".{os.getpid()}_{next(_tmp_seq)}.tmp"
 
 
 @dataclass
@@ -308,7 +316,7 @@ class JobStore:
 
     def _atomic_write_json(self, path: Path, payload: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + f".{uuid.uuid4().hex}.tmp")
+        tmp = path.with_suffix(path.suffix + _tmp_suffix())
         try:
             tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             for attempt in range(10):
