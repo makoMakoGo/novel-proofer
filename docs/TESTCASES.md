@@ -125,7 +125,7 @@
 
 | Test case | 说明 |
 | --- | --- |
-| `tests/runner/test_extra_coverage.py::test_llm_worker_records_retries_and_aligns_newlines` | LLM 路径下：记录重试次数与错误码、保存 raw 响应到 `resp/`，并对齐输出尾部换行（如补空行）。 |
+| `tests/runner/test_extra_coverage.py::test_llm_worker_records_retries_and_aligns_newlines` | LLM 路径下：记录重试次数与错误码；在启用 raw 响应保留时写入 `resp/`；并对齐输出尾部换行（如补空行）。 |
 | `tests/runner/test_extra_coverage.py::test_llm_worker_cancel_behaviors` | 覆盖多种终止时机：开始前/LLM 返回后/异常处理中触发终止时，worker 应提前退出且避免落盘副作用。 |
 | `tests/runner/test_extra_coverage.py::test_llm_worker_ratio_validation_errors` | 输出长度校验：除首 chunk 外，过短/过长输出应标记 chunk 为 error 并写入错误信息。 |
 | `tests/runner/test_extra_coverage.py::test_run_llm_for_indices_paused_cancelled_and_worker_exception` | `_run_llm_for_indices()` 在 job paused/cancelled 时直接返回；worker 抛异常时不应导致整体失败（最终返回 done）。 |
@@ -136,7 +136,7 @@
 
 | Test case | 说明 |
 | --- | --- |
-| `tests/runner/test_jobs_logs.py::test_llm_worker_success_writes_resp_index_file_only` | 成功时仅在 `resp/` 写入按 index 命名的文件（如 `000000.txt`），不产生旧的 `req/`、`error/` 目录。 |
+| `tests/runner/test_jobs_logs.py::test_llm_worker_success_writes_resp_only_when_enabled` | 成功时默认不写 `resp/`；启用保留时仅写入按 index 命名的 `resp/000000.txt`，且不产生旧的 `req/`、`error/` 目录。 |
 | `tests/runner/test_jobs_logs.py::test_llm_worker_error_does_not_create_error_dir` | 失败时不创建 `error/` 目录，且 chunk 状态应为 error 并记录 `last_error_code/message`。 |
 | `tests/runner/test_jobs_logs.py::test_retry_failed_chunks_overwrites_resp` | 失败后重试应覆盖旧 `resp` 文件并最终写出合并输出，同时 job/chunk 状态收敛为 done。 |
 | `tests/runner/test_jobs_logs.py::test_resume_paused_job_overwrites_existing_resp` | 恢复暂停任务时，如已有旧 `resp`，也应被覆盖为新响应并生成最终输出。 |

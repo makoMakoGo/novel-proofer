@@ -8,6 +8,7 @@ from collections import deque
 from contextlib import suppress
 from pathlib import Path
 
+from novel_proofer.env import env_truthy
 from novel_proofer.formatting.chunking import iter_chunks_by_lines_with_first_chunk_max_from_file
 from novel_proofer.formatting.config import FormatConfig, clamp_chunk_params
 from novel_proofer.formatting.merge import merge_text_chunks_to_path
@@ -304,10 +305,12 @@ def _is_whitespace_only(text: str) -> bool:
     return text.strip() == ""
 
 
-def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None:
+def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig, *, write_llm_resp: bool) -> None:
     if GLOBAL_JOBS.is_cancelled(job_id):
         return
 
+    resp_path = _chunk_path(work_dir, "resp", index)
+    raw_text: str | None = None
     try:
         pre = _chunk_path(work_dir, "pre", index).read_text(encoding="utf-8")
         GLOBAL_JOBS.update_chunk(
@@ -364,7 +367,8 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
         assert filtered_text is not None
 
-        _atomic_write_text(_chunk_path(work_dir, "resp", index), raw_text or "")
+        if write_llm_resp:
+            _atomic_write_text(resp_path, raw_text or "")
 
         _validate_llm_output(pre, filtered_text, allow_shorter=(index == 0))
 
@@ -378,6 +382,8 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
     except LLMError as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
+        if raw_text is not None:
+            _atomic_write_text(resp_path, raw_text or "")
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
@@ -389,6 +395,8 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             return
+        if raw_text is not None:
+            _atomic_write_text(resp_path, raw_text or "")
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
@@ -400,6 +408,11 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig) -> None
 
 def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: LLMConfig) -> str:
     max_workers = max(1, int(llm.max_concurrency))
+    write_llm_resp = env_truthy("NOVEL_PROOFER_LLM_WRITE_RESP")
+    if not write_llm_resp:
+        st = GLOBAL_JOBS.get_summary(job_id)
+        if st is not None and not st.cleanup_debug_dir:
+            write_llm_resp = True
     GLOBAL_JOBS.update(
         job_id,
         state=JobState.RUNNING,
@@ -431,7 +444,7 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
                     and not GLOBAL_JOBS.is_paused(job_id)
                 ):
                     i = pending_indices.popleft()
-                    fut = ex.submit(_llm_worker, job_id, i, work_dir, llm)
+                    fut = ex.submit(_llm_worker, job_id, i, work_dir, llm, write_llm_resp=write_llm_resp)
                     in_flight[fut] = i
 
             if not in_flight:

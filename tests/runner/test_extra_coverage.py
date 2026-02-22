@@ -48,7 +48,7 @@ def test_llm_worker_records_retries_and_aligns_newlines(monkeypatch: pytest.Monk
         job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         try:
             cfg = LLMConfig(base_url="http://example.com", model="m")
-            runner._llm_worker(job_id, 0, work_dir, cfg)
+            runner._llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=True)
 
             st = GLOBAL_JOBS.get(job_id)
             assert st is not None
@@ -78,7 +78,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
         job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         try:
             assert GLOBAL_JOBS.cancel(job_id) is True
-            runner._llm_worker(job_id, 0, work_dir, LLMConfig(base_url="", model=""))
+            runner._llm_worker(job_id, 0, work_dir, LLMConfig(base_url="", model=""), write_llm_resp=True)
             assert not (work_dir / "resp").exists()
         finally:
             GLOBAL_JOBS.delete(job_id)
@@ -99,7 +99,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
 
             monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_cancel_then_return)
             cfg = LLMConfig(base_url="http://example.com", model="m")
-            runner._llm_worker(job_id2, 0, work_dir, cfg)
+            runner._llm_worker(job_id2, 0, work_dir, cfg, write_llm_resp=True)
             assert not (work_dir / "resp").exists()
             assert not (work_dir / "out").exists()
         finally:
@@ -121,7 +121,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
 
             monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_cancel_then_raise)
             cfg = LLMConfig(base_url="http://example.com", model="m")
-            runner._llm_worker(job_id3, 0, work_dir, cfg)
+            runner._llm_worker(job_id3, 0, work_dir, cfg, write_llm_resp=True)
             st = GLOBAL_JOBS.get(job_id3)
             assert st is not None
             assert st.chunk_statuses[0].state == "pending"
@@ -154,7 +154,7 @@ def test_llm_worker_ratio_validation_errors(monkeypatch: pytest.MonkeyPatch) -> 
                     "call_llm_text_resilient_with_meta_and_raw",
                     lambda *a, **k: (LLMTextResult(text=out_text, raw_text="RAW"), 0, None, None),
                 )
-                runner._llm_worker(job_id, index, work_dir, cfg)
+                runner._llm_worker(job_id, index, work_dir, cfg, write_llm_resp=True)
                 st = GLOBAL_JOBS.get(job_id)
                 assert st is not None
                 if expect_error_substr is None:

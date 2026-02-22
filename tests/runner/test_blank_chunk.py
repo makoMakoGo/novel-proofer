@@ -24,7 +24,7 @@ def test_llm_worker_skips_whitespace_only_chunk() -> None:
             # Base URL/model intentionally empty: if LLM call happens, it would error.
             cfg = LLMConfig(base_url="", model="")
 
-            _llm_worker(job_id, 0, work_dir, cfg)
+            _llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=False)
 
             out = (work_dir / "out" / "000000.txt").read_text(encoding="utf-8")
             assert out == pre

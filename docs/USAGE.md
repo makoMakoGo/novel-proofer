@@ -165,7 +165,7 @@ LLM 返回后进行长度校验以防止内容丢失：
 - 刷新/关闭页面时，如果任务处于 LLM 校对阶段且仍在运行，UI 会 best-effort 触发一次“暂停”（网络/浏览器限制下不保证 100% 成功；强保证请手动点「暂停」）。
 
 目录/记录的含义：
-- `output/.jobs/{job_id}/`：分片级调试产物（`pre/out/resp`），用于排障与复盘
+- `output/.jobs/{job_id}/`：分片级调试产物（`pre/out`；`resp` 为可选），用于排障与复盘
 - `output/.inputs/{job_id}.txt`：输入缓存，用于“重跑全部（新任务）无需重新上传”
 - `output/.state/jobs/{job_id}.json`：任务状态持久化，用于服务重启后的状态恢复与「加载任务」
 - `output/{job_id}_...txt`：最终输出文件（合并后生成）
@@ -177,7 +177,7 @@ LLM 返回后进行长度校验以防止内容丢失：
 | 暂停 | 将运行中的任务置为 `paused`（仅 process 可用） | 不删除 | 可继续校对；可刷新/重启后继续 |
 | 重试失败部分 | 将失败分片重置为 pending 并继续 process | 不删除 | 仅重跑失败分片；可刷新/重启后继续 |
 | 合并输出 | 合并分片输出为最终文件 | 取决于是否勾选「合并后清理中间产物（output/.jobs）」 | 合并后可下载输出；是否保留 `output/.jobs/{job_id}/` 影响排障/复盘，但不影响状态恢复 |
-| 合并后清理中间产物（output/.jobs） | 合并成功后 best-effort 删除 `output/.jobs/{job_id}/` | `output/.jobs/{job_id}/` | 不影响下载最终输出、不影响加载任务查看状态；但无法再用 `pre/out/resp` 排查/复盘该次运行 |
+| 合并后清理中间产物（output/.jobs） | 合并成功后 best-effort 删除 `output/.jobs/{job_id}/` | `output/.jobs/{job_id}/` | 不影响下载最终输出、不影响加载任务查看状态；但无法再用 `pre/out`（以及可选的 `resp`）排查/复盘该次运行 |
 | 下载输出 | 下载 `output/{job_id}_...` | 不删除 | 不影响任何可恢复性 |
 | 新任务 | UI 解除关联（不删除、不停止任务） | 不删除 | **任务仍在任务列表中**，可通过「加载任务」重新关联查看状态；仅在任务不处于 `queued/running` 时可用（校对进行中建议先「暂停」，预处理/合并进行中建议等待完成或直接删除任务） |
 | 删除任务（未完成） | 停止并删除该任务 | `output/.jobs/{job_id}/`、`output/.inputs/{job_id}.txt`、`output/.state/jobs/{job_id}.json`，并从任务列表删除 | 任务不可再加载/继续；不会删除 `output/` 下已生成的最终输出文件（如果存在）（校对进行中需先「暂停」后才允许删除） |
@@ -198,8 +198,13 @@ output/.jobs/{job_id}/
 ├── README.txt
 ├── pre/{index:06d}.txt   # 发送给 LLM 的分片输入
 ├── out/{index:06d}.txt   # 分片最终输出（通过校验）
-└── resp/{index:06d}.txt  # LLM 原始响应（覆盖式）
+└── resp/{index:06d}.txt  # LLM raw 响应（可选：默认仅失败写入；开启全量保留后成功也写）
 ```
+
+### 调试/性能开关（环境变量）
+
+- `NOVEL_PROOFER_LLM_WRITE_RESP=1`：成功 chunk 也写入 `resp/{index}.txt`（全量保留 raw 响应，便于复盘；会增加磁盘 IO；另外，当你在 UI 中关闭“合并后清理中间产物（output/.jobs）”时，也会默认保留成功 chunk 的 `resp/`）
+- `NOVEL_PROOFER_LLM_STREAM_DEBUG=1`：采集并返回截断版 SSE 原始调试文本（仅用于排障；会增加 CPU/内存开销）
 
 ### UI 调试面板
 

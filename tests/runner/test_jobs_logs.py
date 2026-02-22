@@ -30,7 +30,10 @@ def _assert_resp_files(work_dir: Path, *, expect: bool) -> None:
     assert not any("_" in name for name in files)
 
 
-def test_llm_worker_success_writes_resp_index_file_only(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("write_llm_resp", [False, True])
+def test_llm_worker_success_writes_resp_only_when_enabled(
+    monkeypatch: pytest.MonkeyPatch, *, write_llm_resp: bool
+) -> None:
     def fake_call_llm_text_resilient_with_meta_and_raw(
         cfg: LLMConfig,
         input_text: str,
@@ -55,12 +58,12 @@ def test_llm_worker_success_writes_resp_index_file_only(monkeypatch: pytest.Monk
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
             cfg = LLMConfig(base_url="http://example.com", model="m")
 
-            runner._llm_worker(job_id, 0, work_dir, cfg)
+            runner._llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=write_llm_resp)
 
             _assert_no_legacy_log_dirs(work_dir)
-            _assert_resp_files(work_dir, expect=True)
-
-            assert (work_dir / "resp" / "000000.txt").read_text(encoding="utf-8") == "RAW-1"
+            _assert_resp_files(work_dir, expect=write_llm_resp)
+            if write_llm_resp:
+                assert (work_dir / "resp" / "000000.txt").read_text(encoding="utf-8") == "RAW-1"
             assert (work_dir / "out" / "000000.txt").read_text(encoding="utf-8") == "修正后内容\n"
 
             st = GLOBAL_JOBS.get(job_id)
@@ -95,7 +98,7 @@ def test_llm_worker_error_does_not_create_error_dir(monkeypatch: pytest.MonkeyPa
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
             cfg = LLMConfig(base_url="http://example.com", model="m")
 
-            runner._llm_worker(job_id, 0, work_dir, cfg)
+            runner._llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=False)
 
             _assert_no_legacy_log_dirs(work_dir)
             _assert_resp_files(work_dir, expect=False)
@@ -148,7 +151,7 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
             GLOBAL_JOBS.update(job_id, format=runner.FormatConfig(paragraph_indent=False))
             cfg = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
 
-            runner._llm_worker(job_id, 0, work_dir, cfg)
+            runner._llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=False)
             assert (work_dir / "resp" / "000000.txt").read_text(encoding="utf-8") == "RAW-FAIL"
 
             runner.retry_failed_chunks(job_id, cfg)

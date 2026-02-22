@@ -9,12 +9,14 @@ import re
 import threading
 import time
 import urllib.parse
+from collections import deque
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 
 import httpx
 
+from novel_proofer.env import env_truthy
 from novel_proofer.llm.config import LLMConfig
 from novel_proofer.llm.think_filter import ThinkTagFilter
 
@@ -133,6 +135,59 @@ def _extract_content_from_sse_json(data: str, content_parts: list[str]) -> None:
         pass
 
 
+class _SseDebugCapture:
+    def __init__(self, *, head_limit: int, tail_limit: int) -> None:
+        self._head_limit = max(0, int(head_limit))
+        self._tail_limit = max(0, int(tail_limit))
+        self._head_parts: list[str] = []
+        self._head_len = 0
+        self._tail_parts: deque[str] = deque()
+        self._tail_len = 0
+
+    def add(self, s: str) -> None:
+        if not s:
+            return
+
+        if self._head_len < self._head_limit:
+            take = s[: self._head_limit - self._head_len]
+            if take:
+                self._head_parts.append(take)
+                self._head_len += len(take)
+
+        if self._tail_limit <= 0:
+            return
+
+        self._tail_parts.append(s)
+        self._tail_len += len(s)
+
+        while self._tail_parts and (self._tail_len - len(self._tail_parts[0]) >= self._tail_limit):
+            left = self._tail_parts.popleft()
+            self._tail_len -= len(left)
+
+        if not self._tail_parts:
+            self._tail_len = 0
+            return
+
+        excess = self._tail_len - self._tail_limit
+        if excess > 0:
+            first = self._tail_parts[0]
+            if excess >= len(first):
+                self._tail_parts.popleft()
+                self._tail_len -= len(first)
+            else:
+                self._tail_parts[0] = first[excess:]
+                self._tail_len -= excess
+
+    def render(self) -> str:
+        head = "".join(self._head_parts)
+        if head and self._head_len < self._head_limit:
+            return head
+        tail = "".join(self._tail_parts)
+        if head:
+            return head + "\n...[truncated]...\n" + tail
+        return tail
+
+
 def _stream_request_impl(
     url: str,
     payload: dict,
@@ -148,19 +203,7 @@ def _stream_request_impl(
     stream_debug is a truncated raw SSE capture to help debug cases where the
     parsed content is empty or malformed.
     """
-
-    debug_head = ""
-    debug_tail = ""
-
-    def add_debug(s: str) -> None:
-        nonlocal debug_head, debug_tail
-        if not collect_debug or not s:
-            return
-        head_limit = 8_000
-        tail_limit = 12_000
-        if len(debug_head) < head_limit:
-            debug_head += s[: head_limit - len(debug_head)]
-        debug_tail = (debug_tail + s)[-tail_limit:]
+    debug = _SseDebugCapture(head_limit=8_000, tail_limit=12_000) if collect_debug else None
 
     try:
         client = _httpx_client_for_url(url, max_connections=max_connections)
@@ -193,7 +236,8 @@ def _stream_request_impl(
                     continue
 
                 decoded = decoder.decode(chunk)
-                add_debug(decoded)
+                if debug is not None:
+                    debug.add(decoded)
 
                 buffer += decoded
                 lines = buffer.split("\n")
@@ -215,7 +259,8 @@ def _stream_request_impl(
             # Flush any remaining decoder state (handles UTF-8 split across chunk boundaries).
             tail = decoder.decode(b"", final=True)
             if tail:
-                add_debug(tail)
+                if debug is not None:
+                    debug.add(tail)
                 buffer += tail
 
             # Process remaining buffer
@@ -231,12 +276,7 @@ def _stream_request_impl(
             if not collect_debug:
                 return content, ""
 
-            if debug_head and len(debug_head) < 8_000:
-                return content, debug_head
-
-            if debug_head:
-                return content, debug_head + "\n...[truncated]...\n" + debug_tail
-            return content, debug_tail
+            return content, debug.render() if debug is not None else ""
 
     except httpx.HTTPStatusError as e:
         body = ""
@@ -294,6 +334,18 @@ def _stream_request_with_debug(
     should_stop: Callable[[], bool] | None = None,
     max_connections: int,
 ) -> tuple[str, str]:
+    if not env_truthy("NOVEL_PROOFER_LLM_STREAM_DEBUG"):
+        return (
+            _stream_request(
+                url,
+                payload,
+                headers,
+                timeout,
+                should_stop=should_stop,
+                max_connections=max_connections,
+            ),
+            "",
+        )
     return _stream_request_impl(
         url,
         payload,
