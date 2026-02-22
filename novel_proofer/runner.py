@@ -7,6 +7,7 @@ import shutil
 import time
 from collections import deque
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 
 from novel_proofer.env import env_truthy
@@ -271,7 +272,8 @@ def _post_llm_deterministic_pass(job_id: str, work_dir: Path) -> None:
         if not p.exists():
             continue
         chunk_out = p.read_text(encoding="utf-8")
-        fixed, s = apply_rules(chunk_out, fmt)
+        pre_fmt = replace(fmt, paragraph_indent=False)
+        fixed, s = apply_rules(chunk_out, pre_fmt)
         if fixed != chunk_out:
             _atomic_write_text(p, fixed)
         _merge_stats(post_stats, s)
@@ -538,7 +540,8 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
                 GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.VALIDATE, finished_at=None)
                 return
 
-            fixed, s = apply_rules(c, fmt)
+            pre_fmt = replace(fmt, paragraph_indent=False)
+            fixed, s = apply_rules(c, pre_fmt)
             GLOBAL_JOBS.set_chunk_pre_text(job_id, i, fixed)
             _merge_stats(local_stats, s)
             total = i + 1
