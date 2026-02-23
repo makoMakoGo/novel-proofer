@@ -2,6 +2,8 @@
 // Modal logic
 
 let modalCloseCallback = null;
+let modalCloseTimer = null;
+let modalToken = 0;
 
 function getElements() {
     return {
@@ -25,6 +27,13 @@ function escapeHtml(s) {
 export function openModal() {
     const el = getElements();
     if (!el.backdrop) return;
+
+    modalToken += 1;
+    if (modalCloseTimer) {
+        clearTimeout(modalCloseTimer);
+        modalCloseTimer = null;
+    }
+
     el.backdrop.classList.remove('hidden');
     el.backdrop.classList.add('flex');
     requestAnimationFrame(() => {
@@ -36,15 +45,21 @@ export function openModal() {
 export function closeModal() {
     const el = getElements();
     if (!el.backdrop) return;
+
     el.box.classList.remove('scale-100', 'opacity-100');
     el.box.classList.add('scale-95', 'opacity-0');
-    setTimeout(() => {
+
+    const token = modalToken;
+    const cb = modalCloseCallback;
+    modalCloseCallback = null;
+
+    if (modalCloseTimer) clearTimeout(modalCloseTimer);
+    modalCloseTimer = setTimeout(() => {
+        modalCloseTimer = null;
+        if (token !== modalToken) return;
         el.backdrop.classList.add('hidden');
         el.backdrop.classList.remove('flex');
-        if (modalCloseCallback) {
-            modalCloseCallback();
-            modalCloseCallback = null;
-        }
+        if (cb) cb();
     }, 200);
 }
 
@@ -63,13 +78,15 @@ export function initModal() {
 export function showConfirm(message) {
     return new Promise((resolve) => {
         const el = getElements();
+        el.title.className = 'text-base font-medium text-slate-800 mb-3';
         el.title.textContent = '确认操作';
         el.body.innerHTML = `<p class="whitespace-pre-wrap">${message}</p>`;
         el.actions.innerHTML = `
           <button type="button" class="modal-cancel px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors">取消</button>
           <button type="button" class="modal-confirm px-4 py-2 bg-ink text-white text-sm font-medium rounded-lg hover:bg-zinc-800 transition-colors">确认</button>
         `;
-        
+        el.actions.className = 'flex justify-end gap-2';
+
         modalCloseCallback = () => resolve(false);
         el.actions.querySelector('.modal-cancel').onclick = () => { closeModal(); resolve(false); };
         el.actions.querySelector('.modal-confirm').onclick = () => { closeModal(); resolve(true); };
@@ -77,10 +94,12 @@ export function showConfirm(message) {
     });
 }
 
-export function showJobPicker(jobs) {
+export function showJobPicker(jobs, { hasCurrentJob = false } = {}) {
     return new Promise((resolve) => {
         const el = getElements();
-        el.title.textContent = '选择要加载的任务';
+        const purgeLabel = hasCurrentJob ? '清理其他' : '清理全部';
+        el.title.className = 'text-base font-medium text-slate-800 mb-3 flex items-center justify-between';
+        el.title.innerHTML = `<span>选择要加载的任务</span><button type="button" class="modal-purge-btn text-xs font-normal text-red-500 hover:text-red-600 transition-colors">${purgeLabel}</button>`;
         
         const listHtml = jobs.slice(0, 20).map((j) => {
             const jobId = escapeHtml(j?.id ? String(j.id) : '');
@@ -114,9 +133,12 @@ export function showJobPicker(jobs) {
         `;
         
         el.actions.innerHTML = `<button type="button" class="modal-cancel px-4 py-2 text-sm font-medium text-slate-600 hover:text-slate-800 transition-colors">取消</button>`;
+        el.actions.className = 'flex justify-end';
         
         modalCloseCallback = () => resolve(null);
         el.actions.querySelector('.modal-cancel').onclick = () => { closeModal(); resolve(null); };
+        const purgeBtn = el.title.querySelector('.modal-purge-btn');
+        if (purgeBtn) purgeBtn.onclick = () => { closeModal(); resolve('__purge_all__'); };
         
         el.body.querySelectorAll('.job-item').forEach(btn => {
             btn.onclick = () => { closeModal(); resolve(btn.dataset.jobId); };
@@ -128,12 +150,12 @@ export function showJobPicker(jobs) {
         if (manualBtn && manualInput) {
             manualBtn.onclick = () => {
                 const val = manualInput.value.trim();
-                if (val) { closeModal(); resolve(val); }
+                if (val && val !== '__purge_all__') { closeModal(); resolve(val); }
             };
             manualInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     const val = e.target.value.trim();
-                    if (val) { closeModal(); resolve(val); }
+                    if (val && val !== '__purge_all__') { closeModal(); resolve(val); }
                 }
             });
         }

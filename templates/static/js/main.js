@@ -602,11 +602,31 @@ function bindJobActionEvents() {
     ui.elements.btnLoad?.addEventListener('click', async () => {
         const r = await api.fetchJobList();
         if (!r.ok) { ui.show(r.error); return; }
-        const jobs = Array.isArray(r?.data?.jobs) ? r.data.jobs : [];
-        if (!jobs.length) { ui.show('暂无可加载任务。'); return; }
+        const allJobs = Array.isArray(r?.data?.jobs) ? r.data.jobs : [];
+        const hasCurrentJob = !!state.currentJobId;
+        const jobs = hasCurrentJob
+            ? allJobs.filter(j => j?.id !== state.currentJobId)
+            : allJobs;
+        if (!jobs.length) {
+            ui.show(allJobs.length ? '当前没有其他可加载的任务。' : '暂无可加载任务。');
+            return;
+        }
 
-        const chosenId = await modal.showJobPicker(jobs);
+        const chosenId = await modal.showJobPicker(jobs, { hasCurrentJob });
         if (!chosenId) return;
+        if (chosenId === '__purge_all__') {
+            const confirmMsg = hasCurrentJob
+                ? '确认清理其他全部任务？\n当前正在查看的任务将被保留，其余历史任务的中间产物与状态记录将被删除且不可恢复（不会删除 output/ 下已生成的最终输出文件）。'
+                : '确认清理全部任务？\n所有历史任务的中间产物与状态记录将被删除且不可恢复（不会删除 output/ 下已生成的最终输出文件）。';
+            if (!(await modal.showConfirm(confirmMsg))) return;
+            ui.show('正在清理任务…');
+            const exclude = hasCurrentJob ? [state.currentJobId] : [];
+            const pr = await api.purgeAllJobs({ exclude });
+            if (!pr.ok) { ui.show(pr.error || '清理失败'); return; }
+            if (!hasCurrentJob) detachUi({ clearFile: true });
+            ui.show(`已清理 ${pr.data?.purged || 0} 个任务。`);
+            return;
+        }
         await attachJob(chosenId);
     });
 

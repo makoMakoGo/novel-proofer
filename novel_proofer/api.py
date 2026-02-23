@@ -51,6 +51,8 @@ from novel_proofer.models import (
     LLMSettingsPutRequest,
     LLMSettingsResponse,
     MergeRequest,
+    PurgeAllRequest,
+    PurgeAllResponse,
     RetryFailedRequest,
 )
 from novel_proofer.runner import merge_outputs, resume_paused_job, retry_failed_chunks, run_job
@@ -429,6 +431,41 @@ async def download_job_output(job_id: str = Depends(paths._job_id_dep)):
 
     filename = st.output_filename or resolved.name
     return FileResponse(str(resolved), filename=filename, media_type="text/plain; charset=utf-8")
+
+
+@app.post("/api/v1/jobs/purge-all", response_model=PurgeAllResponse)
+async def purge_all_jobs(body: PurgeAllRequest = Body(default_factory=PurgeAllRequest)):
+    """Cancel and delete every known job (except excluded), then wipe leftover disk artifacts."""
+
+    from novel_proofer.background import add_done_callback
+
+    exclude_set = set(body.exclude)
+    summaries = GLOBAL_JOBS.list_summaries()
+    purged = 0
+
+    for st in summaries:
+        jid = st.job_id
+        if jid in exclude_set:
+            continue
+        try:
+            GLOBAL_JOBS.cancel(jid)
+
+            def _cleanup(job_id: str = jid) -> None:
+                with suppress(Exception):
+                    paths._cleanup_job_dir(job_id)
+                with suppress(Exception):
+                    paths._cleanup_input_cache(job_id)
+                with suppress(Exception):
+                    paths._cleanup_job_state(job_id)
+                with suppress(Exception):
+                    GLOBAL_JOBS.delete(job_id)
+
+            add_done_callback(jid, _cleanup)
+            purged += 1
+        except Exception:
+            logger.exception("purge-all: failed to process job_id=%s", jid)
+
+    return PurgeAllResponse(ok=True, purged=purged)
 
 
 @app.get("/api/v1/jobs", response_model=JobListResponse)

@@ -109,6 +109,14 @@ export function downloadJobOutput(jobId) {
     a.remove();
 }
 
+export async function purgeAllJobs({ exclude = [] } = {}) {
+    return apiCall('api/v1/jobs/purge-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exclude }),
+    });
+}
+
 /**
  * Best effort pause on exit.
  */

@@ -146,3 +146,12 @@ class JobListResponse(BaseModel):
 class InputStatsOut(BaseModel):
     job_id: str
     input_chars: int
+
+
+class PurgeAllRequest(BaseModel):
+    exclude: list[str] = Field(default_factory=list)
+
+
+class PurgeAllResponse(BaseModel):
+    ok: bool
+    purged: int
