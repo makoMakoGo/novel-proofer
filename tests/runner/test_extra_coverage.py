@@ -195,12 +195,16 @@ def test_run_llm_for_indices_paused_cancelled_and_worker_exception(monkeypatch: 
         finally:
             GLOBAL_JOBS.delete(job2_id)
 
-        # Worker exception is ignored at f.result().
+        # Worker exception should be surfaced as a chunk error instead of being swallowed.
         monkeypatch.setattr(runner, "_llm_worker", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
         job3_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1).job_id
         try:
             GLOBAL_JOBS.init_chunks(job3_id, total_chunks=1)
             assert runner._run_llm_for_indices(job3_id, [0], work_dir, cfg) == "done"
+            st = GLOBAL_JOBS.get(job3_id)
+            assert st is not None
+            assert st.chunk_statuses[0].state == "error"
+            assert "worker crashed: boom" in (st.chunk_statuses[0].last_error_message or "")
         finally:
             GLOBAL_JOBS.delete(job3_id)
 

@@ -26,6 +26,7 @@ _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _filename_strip_re = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uFF00-\uFFEF._ -]+")
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+_SUPPORTED_INPUT_ENCODINGS = ("utf-8-sig", "utf-8", "gb18030", "gbk")
 
 _tmp_seq = itertools.count()
 
@@ -72,12 +73,17 @@ def _derive_output_filename(input_name: str, suffix: str) -> str:
 
 
 def _decode_text(data: bytes) -> str:
-    for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
+    last_error: UnicodeDecodeError | None = None
+    for enc in _SUPPORTED_INPUT_ENCODINGS:
         try:
             return data.decode(enc)
-        except Exception:
-            continue
-    return data.decode("utf-8", errors="replace")
+        except UnicodeDecodeError as e:
+            last_error = e
+    if last_error is None:
+        raise ValueError("failed to decode text with supported encodings")
+    raise ValueError(
+        f"unsupported input encoding; supported encodings: {', '.join(_SUPPORTED_INPUT_ENCODINGS)}"
+    ) from last_error
 
 
 def _rel_output_path(output_abs: Path) -> str:
@@ -151,14 +157,19 @@ async def _write_input_cache_from_upload(job_id: str, upload: UploadFile, *, lim
     try:
         await _save_upload_limited_to_file(upload, limit=limit, dst=tmp_upload)
 
-        for enc in ("utf-8-sig", "utf-8", "gb18030", "gbk"):
+        last_error: UnicodeDecodeError | None = None
+        for enc in _SUPPORTED_INPUT_ENCODINGS:
             try:
                 _transcode_bytes_file_to_utf8_text(tmp_upload, dst, encoding=enc, errors="strict")
                 return
-            except UnicodeDecodeError:
-                continue
+            except UnicodeDecodeError as e:
+                last_error = e
 
-        _transcode_bytes_file_to_utf8_text(tmp_upload, dst, encoding="utf-8", errors="replace")
+        if last_error is None:
+            raise ValueError("failed to decode upload with supported encodings")
+        raise ValueError(
+            f"unsupported input encoding; supported encodings: {', '.join(_SUPPORTED_INPUT_ENCODINGS)}"
+        ) from last_error
     finally:
         try:
             if tmp_upload.exists():
@@ -177,7 +188,7 @@ def _copy_input_cache(src_job_id: str, dst_job_id: str) -> None:
 
 
 def _cleanup_input_cache(job_id: str) -> bool:
-    """Delete output/.inputs/<job_id>.txt (best-effort, safe-guarded)."""
+    """Delete output/.inputs/<job_id>.txt (safe-guarded)."""
 
     job_id = _validate_job_id(job_id)
 
@@ -198,7 +209,7 @@ def _jobs_state_root() -> Path:
 
 
 def _cleanup_job_state(job_id: str) -> bool:
-    """Delete output/.state/jobs/<job_id>.json (best-effort, safe-guarded)."""
+    """Delete output/.state/jobs/<job_id>.json (safe-guarded)."""
 
     job_id = _validate_job_id(job_id)
 
@@ -215,7 +226,7 @@ def _cleanup_job_state(job_id: str) -> bool:
 
 
 def _cleanup_job_dir(job_id: str) -> bool:
-    """Delete output/.jobs/<job_id>/ directory (best-effort, safe-guarded)."""
+    """Delete output/.jobs/<job_id>/ directory (safe-guarded)."""
 
     job_id = _validate_job_id(job_id)
 
@@ -233,7 +244,7 @@ def _cleanup_job_dir(job_id: str) -> bool:
 
 def _count_non_whitespace_chars_from_utf8_file(path: Path) -> int:
     n = 0
-    with path.open("r", encoding="utf-8", errors="replace") as f:
+    with path.open("r", encoding="utf-8") as f:
         while True:
             chunk = f.read(1024 * 1024)
             if not chunk:

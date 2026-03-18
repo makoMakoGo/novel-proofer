@@ -3,9 +3,11 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from novel_proofer.llm.client import _maybe_filter_think_tags
+from novel_proofer.llm.client import LLMError, _maybe_filter_think_tags
 from novel_proofer.llm.config import LLMConfig
 from novel_proofer.llm.think_filter import ThinkTagFilter, filter_think_tags
 
@@ -159,27 +161,24 @@ class TestFilterThinkTagsFunction:
 
 
 class TestMaybeFilterThinkTags:
-    def test_unclosed_returns_raw_stripped_tags(self):
+    def test_unclosed_raises(self):
         cfg = LLMConfig()
         raw = "before<think>no close\nAFTER"
-        assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 1000) == "beforeno close\nAFTER"
+        with pytest.raises(LLMError, match="unclosed <think>"):
+            _maybe_filter_think_tags(cfg, raw, input_text="x" * 1000)
 
     def test_balanced_filters(self):
         cfg = LLMConfig()
         raw = "A<think>hidden</think>B"
         assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 10) == "AB"
 
-    def test_balanced_filters_can_fall_back_to_stripping(self):
+    def test_balanced_filters_reject_implausibly_short_output(self):
         cfg = LLMConfig()
         raw = "A<think>hidden</think>B"
-        assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 10_000) == "AhiddenB"
+        with pytest.raises(LLMError, match="removed too much content"):
+            _maybe_filter_think_tags(cfg, raw, input_text="x" * 10_000)
 
     def test_filtering_is_always_on_does_not_return_raw(self):
         raw = "A<think>hidden</think>B"
-        assert _maybe_filter_think_tags(LLMConfig(), raw, input_text="x" * 1000) != raw
-
-    def test_low_output_ratio_falls_back_to_stripping_tags(self):
-        cfg = LLMConfig()
-        raw = "<think>hidden</think>VISIBLE"
-        # Simulate a filter bug/edge where output becomes too small vs input.
-        assert _maybe_filter_think_tags(cfg, raw, input_text="x" * 10_000) == "hiddenVISIBLE"
+        with pytest.raises(LLMError, match="removed too much content"):
+            _maybe_filter_think_tags(LLMConfig(), raw, input_text="x" * 1000)

@@ -8,7 +8,6 @@ import re
 import threading
 import time
 import uuid
-from contextlib import suppress
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
@@ -22,7 +21,9 @@ logger = logging.getLogger(__name__)
 _JOB_STATE_VERSION = 2
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
-_JOB_PHASES = set(JobPhase)
+_JOB_PHASES = {phase.value for phase in JobPhase}
+_JOB_STATES = {state.value for state in JobState}
+_CHUNK_STATE_VALUES = {state.value for state in ChunkState}
 _CHUNK_STATES = (
     ChunkState.PENDING,
     ChunkState.PROCESSING,
@@ -133,46 +134,130 @@ def _compute_chunk_counts(chunks: list[ChunkStatus]) -> dict[str, int]:
     return out
 
 
-def _normalize_chunk_counts(raw: object, chunks: list[ChunkStatus]) -> dict[str, int]:
+def _require_dict(raw: object, *, context: str) -> dict[str, Any]:
     if not isinstance(raw, dict):
-        return _compute_chunk_counts(chunks)
-    out = _new_chunk_counts()
-    for k, v in raw.items():
-        key = str(k).strip().lower()
-        if not key or key not in _CHUNK_STATES:
-            continue
-        try:
-            iv = int(v) if v is not None else 0
-        except Exception:
-            iv = 0
-        out[key] = max(0, iv)
-    if chunks:
-        computed = _compute_chunk_counts(chunks)
-        if sum(out.values()) != len(chunks):
-            return computed
-        for s in _CHUNK_STATES:
-            if out.get(s, 0) != computed.get(s, 0):
-                return computed
+        raise ValueError(f"{context} must be an object")
+    return raw
+
+
+def _reject_unknown_fields(raw: dict[str, Any], allowed: set[str], *, context: str) -> None:
+    extra = sorted(set(raw) - allowed)
+    if extra:
+        raise ValueError(f"{context} contains unknown fields: {', '.join(extra)}")
+
+
+def _require_field(raw: dict[str, Any], key: str, *, context: str) -> Any:
+    if key not in raw:
+        raise ValueError(f"{context} missing field {key!r}")
+    return raw[key]
+
+
+def _parse_int(raw: Any, *, context: str) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise ValueError(f"{context} must be an integer")
+    return raw
+
+
+def _parse_float(raw: Any, *, context: str) -> float:
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        raise ValueError(f"{context} must be a number")
+    return float(raw)
+
+
+def _parse_bool(raw: Any, *, context: str) -> bool:
+    if not isinstance(raw, bool):
+        raise ValueError(f"{context} must be a boolean")
+    return raw
+
+
+def _parse_optional_float(raw: Any, *, context: str) -> float | None:
+    if raw is None:
+        return None
+    return _parse_float(raw, context=context)
+
+
+def _parse_optional_int(raw: Any, *, context: str) -> int | None:
+    if raw is None:
+        return None
+    return _parse_int(raw, context=context)
+
+
+def _parse_non_negative_int(raw: Any, *, context: str) -> int:
+    value = _parse_int(raw, context=context)
+    if value < 0:
+        raise ValueError(f"{context} must be >= 0")
+    return value
+
+
+def _parse_optional_non_negative_int(raw: Any, *, context: str) -> int | None:
+    if raw is None:
+        return None
+    return _parse_non_negative_int(raw, context=context)
+
+
+def _parse_str(raw: Any, *, context: str, allow_empty: bool = True) -> str:
+    if not isinstance(raw, str):
+        raise ValueError(f"{context} must be a string")
+    if not allow_empty and not raw.strip():
+        raise ValueError(f"{context} must not be empty")
+    return raw
+
+
+def _parse_optional_str(raw: Any, *, context: str) -> str | None:
+    if raw is None:
+        return None
+    return _parse_str(raw, context=context)
+
+
+def _parse_enum(raw: Any, *, context: str, allowed: set[str]) -> str:
+    value = _parse_str(raw, context=context, allow_empty=False)
+    if value not in allowed:
+        raise ValueError(f"{context} must be one of {sorted(allowed)!r}")
+    return value
+
+
+def _parse_stats(raw: object) -> dict[str, int]:
+    stats = _require_dict(raw, context="job.stats")
+    out: dict[str, int] = {}
+    for key, value in stats.items():
+        if not isinstance(key, str) or not key:
+            raise ValueError("job.stats keys must be non-empty strings")
+        out[key] = _parse_non_negative_int(value, context=f"job.stats[{key!r}]")
+    return out
+
+
+def _parse_chunk_counts(raw: object, chunks: list[ChunkStatus]) -> dict[str, int]:
+    counts = _require_dict(raw, context="job.chunk_counts")
+    expected = {str(state) for state in _CHUNK_STATES}
+    extra = sorted(set(counts) - expected)
+    if extra:
+        raise ValueError(f"job.chunk_counts contains unknown fields: {', '.join(extra)}")
+    missing = sorted(expected - set(counts))
+    if missing:
+        raise ValueError(f"job.chunk_counts missing fields: {', '.join(missing)}")
+    out = {key: _parse_non_negative_int(value, context=f"job.chunk_counts[{key!r}]") for key, value in counts.items()}
+    computed = _compute_chunk_counts(chunks)
+    if out != computed:
+        raise ValueError("job.chunk_counts does not match chunk_statuses")
     return out
 
 
 def _format_config_from_dict(raw: object) -> FormatConfig:
-    if not isinstance(raw, dict):
-        return FormatConfig()
-    try:
-        kwargs: dict[str, Any] = {}
-        for f in fields(FormatConfig):
-            default = getattr(_FORMAT_DEFAULTS, f.name)
-            val = raw.get(f.name, default)
-            if isinstance(default, int) and not isinstance(default, bool):
-                kwargs[f.name] = int(val) if val not in (None, "") else default
-            elif isinstance(default, bool):
-                kwargs[f.name] = val if isinstance(val, bool) else default
-            else:
-                kwargs[f.name] = val
-        return FormatConfig(**kwargs)
-    except Exception:
-        return FormatConfig()
+    config = _require_dict(raw, context="job.format")
+    allowed = {f.name for f in fields(FormatConfig)}
+    _reject_unknown_fields(config, allowed, context="job.format")
+    kwargs: dict[str, Any] = {}
+    for f in fields(FormatConfig):
+        value = _require_field(config, f.name, context="job.format")
+        default = getattr(_FORMAT_DEFAULTS, f.name)
+        if isinstance(default, bool):
+            kwargs[f.name] = _parse_bool(value, context=f"job.format.{f.name}")
+            continue
+        if isinstance(default, int):
+            kwargs[f.name] = _parse_int(value, context=f"job.format.{f.name}")
+            continue
+        kwargs[f.name] = value
+    return FormatConfig(**kwargs)
 
 
 def _chunk_to_dict(cs: ChunkStatus) -> dict:
@@ -180,20 +265,36 @@ def _chunk_to_dict(cs: ChunkStatus) -> dict:
 
 
 def _chunk_from_dict(d: dict) -> ChunkStatus:
-    llm_model = d.get("llm_model")
-    if llm_model is not None:
-        llm_model = str(llm_model).strip() or None
+    raw = _require_dict(d, context="chunk")
+    _reject_unknown_fields(
+        raw,
+        {
+            "index",
+            "state",
+            "started_at",
+            "finished_at",
+            "retries",
+            "last_error_code",
+            "last_error_message",
+            "llm_model",
+            "input_chars",
+            "output_chars",
+        },
+        context="chunk",
+    )
     return ChunkStatus(
-        index=int(d.get("index", 0)),
-        state=str(d.get("state", ChunkState.PENDING)),
-        started_at=d.get("started_at"),
-        finished_at=d.get("finished_at"),
-        retries=int(d.get("retries", 0) or 0),
-        last_error_code=d.get("last_error_code"),
-        last_error_message=d.get("last_error_message"),
-        llm_model=llm_model,
-        input_chars=d.get("input_chars"),
-        output_chars=d.get("output_chars"),
+        index=_parse_non_negative_int(_require_field(raw, "index", context="chunk"), context="chunk.index"),
+        state=_parse_enum(
+            _require_field(raw, "state", context="chunk"), context="chunk.state", allowed=_CHUNK_STATE_VALUES
+        ),
+        started_at=_parse_optional_float(raw.get("started_at"), context="chunk.started_at"),
+        finished_at=_parse_optional_float(raw.get("finished_at"), context="chunk.finished_at"),
+        retries=_parse_non_negative_int(_require_field(raw, "retries", context="chunk"), context="chunk.retries"),
+        last_error_code=_parse_optional_int(raw.get("last_error_code"), context="chunk.last_error_code"),
+        last_error_message=_parse_optional_str(raw.get("last_error_message"), context="chunk.last_error_message"),
+        llm_model=_parse_optional_str(raw.get("llm_model"), context="chunk.llm_model"),
+        input_chars=_parse_optional_non_negative_int(raw.get("input_chars"), context="chunk.input_chars"),
+        output_chars=_parse_optional_non_negative_int(raw.get("output_chars"), context="chunk.output_chars"),
     )
 
 
@@ -202,63 +303,112 @@ def _job_to_dict(st: JobStatus) -> dict:
 
 
 def _job_from_dict(d: dict) -> JobStatus:
-    version_raw = d.get("version", _JOB_STATE_VERSION) if isinstance(d, dict) else _JOB_STATE_VERSION
-    try:
-        version = int(version_raw)
-    except Exception:
-        version = None
-    if version is not None and version not in {1, _JOB_STATE_VERSION}:
-        logger.warning("job state version mismatch: expected %d, got %s", _JOB_STATE_VERSION, version_raw)
+    payload = _require_dict(d, context="job state file")
+    version = _parse_int(_require_field(payload, "version", context="job state file"), context="job state file.version")
+    if version != _JOB_STATE_VERSION:
+        raise ValueError(f"unsupported job state version {version}; expected {_JOB_STATE_VERSION}")
 
-    job = d.get("job") if isinstance(d, dict) else None
-    if not isinstance(job, dict):
-        raise ValueError("invalid job state file: missing job object")
+    job = _require_dict(_require_field(payload, "job", context="job state file"), context="job")
+    _reject_unknown_fields(
+        job,
+        {
+            "job_id",
+            "state",
+            "phase",
+            "created_at",
+            "started_at",
+            "finished_at",
+            "input_filename",
+            "output_filename",
+            "total_chunks",
+            "done_chunks",
+            "format",
+            "last_error_code",
+            "last_retry_count",
+            "last_llm_model",
+            "stats",
+            "chunk_statuses",
+            "chunk_counts",
+            "error",
+            "output_path",
+            "work_dir",
+            "cleanup_debug_dir",
+        },
+        context="job",
+    )
 
-    chunk_dicts = job.get("chunk_statuses", [])
-    chunks: list[ChunkStatus] = []
-    if isinstance(chunk_dicts, list):
-        for item in chunk_dicts:
-            if isinstance(item, dict):
-                chunks.append(_chunk_from_dict(item))
+    chunk_items = _require_field(job, "chunk_statuses", context="job")
+    if not isinstance(chunk_items, list):
+        raise ValueError("job.chunk_statuses must be a list")
+    chunks = [_chunk_from_dict(item) for item in chunk_items]
+    for expected_index, chunk in enumerate(chunks):
+        if chunk.index != expected_index:
+            raise ValueError(
+                f"chunk index mismatch at position {expected_index}: expected {expected_index}, got {chunk.index}"
+            )
 
-    stats = job.get("stats")
-    if not isinstance(stats, dict):
-        stats = {}
+    total_chunks = _parse_non_negative_int(
+        _require_field(job, "total_chunks", context="job"), context="job.total_chunks"
+    )
+    done_chunks = _parse_non_negative_int(_require_field(job, "done_chunks", context="job"), context="job.done_chunks")
+    counted_done = sum(1 for chunk in chunks if chunk.state == ChunkState.DONE)
+    if total_chunks != len(chunks):
+        raise ValueError("job.total_chunks does not match chunk_statuses length")
+    if done_chunks != counted_done:
+        raise ValueError("job.done_chunks does not match chunk_statuses")
 
-    last_llm_model = job.get("last_llm_model")
-    if last_llm_model is not None:
-        last_llm_model = str(last_llm_model).strip() or None
+    state = _parse_enum(_require_field(job, "state", context="job"), context="job.state", allowed=_JOB_STATES)
+    phase = _parse_enum(_require_field(job, "phase", context="job"), context="job.phase", allowed=_JOB_PHASES)
+    if state == JobState.DONE and phase != JobPhase.DONE:
+        raise ValueError("job.phase must be 'done' when job.state is 'done'")
+    if phase == JobPhase.DONE and state != JobState.DONE:
+        raise ValueError("job.state must be 'done' when job.phase is 'done'")
+    if phase == JobPhase.MERGE and any(chunk.state != ChunkState.DONE for chunk in chunks):
+        raise ValueError("job.phase 'merge' requires every chunk to be done")
+    if state == JobState.DONE and any(chunk.state != ChunkState.DONE for chunk in chunks):
+        raise ValueError("job.state 'done' requires every chunk to be done")
 
-    phase = job.get("phase")
-    phase = str(phase).strip().lower() if phase is not None else ""
-    if phase not in _JOB_PHASES:
-        phase = ""
-
-    fmt_obj = _format_config_from_dict(job.get("format"))
-    chunk_counts = _normalize_chunk_counts(job.get("chunk_counts"), chunks)
+    job_id = _parse_str(_require_field(job, "job_id", context="job"), context="job.job_id", allow_empty=False)
+    if not _JOB_ID_RE.fullmatch(job_id):
+        raise ValueError("job.job_id must be a 32-character lowercase hex string")
+    chunk_counts = _parse_chunk_counts(_require_field(job, "chunk_counts", context="job"), chunks)
 
     return JobStatus(
-        job_id=str(job.get("job_id", "")),
-        state=str(job.get("state", JobState.QUEUED)),
-        phase=phase or JobPhase.VALIDATE,
-        created_at=float(job.get("created_at", time.time())),
-        started_at=job.get("started_at"),
-        finished_at=job.get("finished_at"),
-        input_filename=str(job.get("input_filename", "")),
-        output_filename=str(job.get("output_filename", "")),
-        total_chunks=int(job.get("total_chunks", len(chunks)) or 0),
-        done_chunks=int(job.get("done_chunks", 0) or 0),
-        format=fmt_obj,
-        last_error_code=job.get("last_error_code"),
-        last_retry_count=int(job.get("last_retry_count", 0) or 0),
-        last_llm_model=last_llm_model,
-        stats=dict(stats),
+        job_id=job_id,
+        state=state,
+        phase=phase,
+        created_at=_parse_float(_require_field(job, "created_at", context="job"), context="job.created_at"),
+        started_at=_parse_optional_float(job.get("started_at"), context="job.started_at"),
+        finished_at=_parse_optional_float(job.get("finished_at"), context="job.finished_at"),
+        input_filename=_parse_str(
+            _require_field(job, "input_filename", context="job"),
+            context="job.input_filename",
+            allow_empty=False,
+        ),
+        output_filename=_parse_str(
+            _require_field(job, "output_filename", context="job"),
+            context="job.output_filename",
+            allow_empty=False,
+        ),
+        total_chunks=total_chunks,
+        done_chunks=done_chunks,
+        format=_format_config_from_dict(_require_field(job, "format", context="job")),
+        last_error_code=_parse_optional_int(job.get("last_error_code"), context="job.last_error_code"),
+        last_retry_count=_parse_non_negative_int(
+            _require_field(job, "last_retry_count", context="job"),
+            context="job.last_retry_count",
+        ),
+        last_llm_model=_parse_optional_str(job.get("last_llm_model"), context="job.last_llm_model"),
+        stats=_parse_stats(_require_field(job, "stats", context="job")),
         chunk_statuses=chunks,
         chunk_counts=chunk_counts,
-        error=job.get("error"),
-        output_path=job.get("output_path"),
-        work_dir=job.get("work_dir"),
-        cleanup_debug_dir=bool(job.get("cleanup_debug_dir", True)),
+        error=_parse_optional_str(job.get("error"), context="job.error"),
+        output_path=_parse_optional_str(job.get("output_path"), context="job.output_path"),
+        work_dir=_parse_optional_str(job.get("work_dir"), context="job.work_dir"),
+        cleanup_debug_dir=_parse_bool(
+            _require_field(job, "cleanup_debug_dir", context="job"),
+            context="job.cleanup_debug_dir",
+        ),
     )
 
 
@@ -298,8 +448,10 @@ class JobStore:
             self._persist_cv.notify_all()
             t = self._persist_thread
         if wait and t is not None:
-            with suppress(Exception):
+            try:
                 t.join(timeout=1.0)
+            except Exception:
+                logger.exception("failed to join job persistence thread")
 
     def _start_persist_thread_locked(self) -> None:
         if self._persist_thread is not None and self._persist_thread.is_alive():
@@ -332,8 +484,10 @@ class JobStore:
                     # Windows can transiently lock files (e.g., AV scanners / concurrent readers).
                     time.sleep(0.02 * (attempt + 1))
         finally:
-            with suppress(Exception):
+            try:
                 tmp.unlink(missing_ok=True)
+            except Exception:
+                logger.exception("failed to cleanup temp job state file: %s", tmp)
 
     def _persist_snapshot_unlocked(self, snapshot: JobStatus) -> None:
         path = self._persist_path_for_job_id(snapshot.job_id)
@@ -399,8 +553,10 @@ class JobStore:
                     continue
 
             for jid in due:
-                with suppress(Exception):
+                try:
                     self._flush_job(jid, require_dirty=True)
+                except Exception:
+                    logger.exception("failed to flush dirty job state: job_id=%s", jid)
 
     def _flush_job(self, job_id: str, *, require_dirty: bool) -> None:
         if self._persist_dir is None:
@@ -437,53 +593,32 @@ class JobStore:
                 self._persist_dirty_since[job_id] = time.monotonic()
                 self._persist_cv.notify_all()
 
-    def _heal_loaded_job(self, st: JobStatus) -> JobStatus:
-        # After a server restart, there is no in-flight work. Make state explicit and resumable.
+    def _restore_loaded_job_after_restart(self, st: JobStatus) -> tuple[JobStatus, bool]:
+        changed = False
         if st.state in {JobState.QUEUED, JobState.RUNNING}:
+            logger.warning("restoring in-flight job as paused after restart: job_id=%s state=%s", st.job_id, st.state)
             st.state = JobState.PAUSED
             st.finished_at = None
+            changed = True
 
-        # Any in-flight chunks are no longer running; convert them back to pending.
         _in_flight = {ChunkState.PROCESSING, ChunkState.RETRYING}
+        original_chunks = list(st.chunk_statuses)
         st.chunk_statuses = [
             replace(cs, state=ChunkState.PENDING, started_at=None, finished_at=None) if cs.state in _in_flight else cs
-            for cs in st.chunk_statuses
+            for cs in original_chunks
         ]
-
-        # Keep counters consistent even if older files were incomplete.
-        st.total_chunks = max(int(st.total_chunks), len(st.chunk_statuses))
-        st.done_chunks = sum(1 for c in st.chunk_statuses if c.state == ChunkState.DONE)
         st.chunk_counts = _compute_chunk_counts(st.chunk_statuses)
-
-        # Phase migration / normalization (v1 files don't have phase).
-        if st.phase not in _JOB_PHASES:
-            st.phase = JobPhase.VALIDATE
-
-        # Derive phase when missing or clearly stale.
-        if not st.chunk_statuses:
-            if st.state == JobState.DONE:
-                st.phase = JobPhase.DONE
-            else:
-                st.phase = JobPhase.VALIDATE
-        else:
-            if st.state == JobState.DONE:
-                st.phase = JobPhase.DONE
-            else:
-                all_done = all(c.state == ChunkState.DONE for c in st.chunk_statuses)
-                if all_done:
-                    st.phase = JobPhase.MERGE
-                else:
-                    st.phase = JobPhase.PROCESS
-
-        if st.phase == JobPhase.DONE and st.state != JobState.DONE:
-            st.phase = (
-                JobPhase.MERGE
-                if st.chunk_statuses and all(c.state == ChunkState.DONE for c in st.chunk_statuses)
-                else JobPhase.PROCESS
-            )
-        if st.state == JobState.DONE:
-            st.phase = JobPhase.DONE
-        return st
+        for old_cs, new_cs in zip(original_chunks, st.chunk_statuses, strict=False):
+            if old_cs is not new_cs:
+                logger.warning(
+                    "restoring in-flight chunk as pending after restart: job_id=%s chunk=%s state=%s",
+                    st.job_id,
+                    old_cs.index,
+                    old_cs.state,
+                )
+                changed = True
+        return st, changed
+        return st, changed
 
     def load_persisted_jobs(self) -> int:
         persist_dir = self._persist_dir
@@ -491,21 +626,15 @@ class JobStore:
             return 0
 
         loaded: list[tuple[JobStatus, bool]] = []
-        for p in persist_dir.glob("*.json"):
+        for p in sorted(persist_dir.glob("*.json")):
             try:
                 obj = json.loads(p.read_text(encoding="utf-8"))
-                src_version = obj.get("version")
-                needs_rewrite = True
-                try:
-                    needs_rewrite = int(src_version) != _JOB_STATE_VERSION
-                except Exception:
-                    needs_rewrite = True
-                st = self._heal_loaded_job(_job_from_dict(obj))
-                if not st.job_id:
-                    continue
-                loaded.append((st, needs_rewrite))
-            except Exception:
-                logger.exception("failed to load persisted job: %s", p)
+                st, needs_rewrite = self._restore_loaded_job_after_restart(_job_from_dict(obj))
+            except Exception as e:
+                raise ValueError(
+                    f"failed to load persisted job state {p}; delete the corrupted state file and retry"
+                ) from e
+            loaded.append((st, needs_rewrite))
 
         with self._lock:
             for st, _needs_rewrite in loaded:
@@ -515,7 +644,6 @@ class JobStore:
                 if st.state == JobState.PAUSED:
                     self._paused.add(st.job_id)
 
-        # Rewrite snapshots in latest schema (best-effort) to complete migration.
         for st, needs_rewrite in loaded:
             if needs_rewrite:
                 self._persist_snapshot_direct(self._snapshot_job(st))
@@ -716,7 +844,7 @@ class JobStore:
             if st is None:
                 return
             st.stats[key] = st.stats.get(key, 0) + inc
-        # Stats are best-effort diagnostics; avoid persisting on every increment for performance.
+        # Stats are non-critical diagnostics; avoid persisting on every increment for performance.
 
     def cancel(self, job_id: str) -> bool:
         with self._lock:

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
+
+from novel_proofer.env import env_int
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +15,10 @@ _in_flight: dict[str, Future] = {}
 
 
 def _max_workers_from_env() -> int:
-    raw = str(os.getenv("NOVEL_PROOFER_JOB_MAX_WORKERS", "") or "").strip()
-    if not raw:
-        return 2
-    try:
-        return max(1, int(raw))
-    except Exception:
-        return 2
+    value = env_int("NOVEL_PROOFER_JOB_MAX_WORKERS", 2)
+    if value < 1:
+        raise ValueError("NOVEL_PROOFER_JOB_MAX_WORKERS must be >= 1")
+    return value
 
 
 _EXECUTOR = ThreadPoolExecutor(

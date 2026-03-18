@@ -15,8 +15,8 @@ def env_int(name: str, default: int) -> int:
         return default
     try:
         return int(raw)
-    except Exception:
-        return default
+    except ValueError as e:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from e
 
 
 def env_float(name: str, default: float) -> float:
@@ -25,8 +25,8 @@ def env_float(name: str, default: float) -> float:
         return default
     try:
         return float(raw)
-    except Exception:
-        return default
+    except ValueError as e:
+        raise ValueError(f"{name} must be a float, got {raw!r}") from e
 
 
 def env_json_object(name: str) -> dict | None:
@@ -35,8 +35,8 @@ def env_json_object(name: str) -> dict | None:
         return None
     try:
         obj = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{name} must be valid JSON, got {raw!r}") from e
     if not isinstance(obj, dict):
         raise ValueError(f"{name} must be a JSON object")
     return obj

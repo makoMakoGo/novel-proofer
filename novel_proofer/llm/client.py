@@ -11,7 +11,6 @@ import time
 import urllib.parse
 from collections import deque
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import dataclass
 
 import httpx
@@ -40,6 +39,7 @@ _RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 _DEFAULT_MAX_RETRIES = 2
 _DEFAULT_RETRY_BACKOFF_SECONDS = 1.0
 _CANCELLED_STATUS_CODE = 499
+_NON_RETRYABLE_LOCAL_ERROR_STATUS = 400
 
 
 @dataclass(frozen=True)
@@ -77,8 +77,10 @@ def _close_http_clients() -> None:
         clients = list(_HTTP_CLIENTS.values())
         _HTTP_CLIENTS.clear()
     for c in clients:
-        with suppress(Exception):
+        try:
             c.close()
+        except Exception:
+            logger.exception("failed to close shared HTTP client")
 
 
 atexit.register(_close_http_clients)
@@ -88,7 +90,9 @@ def _httpx_client_for_url(url: str, *, max_connections: int) -> httpx.Client:
     host = urllib.parse.urlparse(url).hostname
     trust_env = not _is_loopback_host(host)
 
-    max_conn = max(1, int(max_connections))
+    max_conn = int(max_connections)
+    if max_conn < 1:
+        raise ValueError("max_connections must be >= 1")
     key = (trust_env, max_conn)
 
     with _HTTP_CLIENTS_LOCK:
@@ -100,6 +104,19 @@ def _httpx_client_for_url(url: str, *, max_connections: int) -> httpx.Client:
         client = httpx.Client(limits=limits, trust_env=trust_env)
         _HTTP_CLIENTS[key] = client
         return client
+
+
+def _http_error_body(response: httpx.Response) -> str:
+    try:
+        return (response.text or "").strip()
+    except httpx.ResponseNotRead:
+        try:
+            response.read()
+            return (response.text or "").strip()
+        except Exception:
+            return ""
+    except Exception:
+        return ""
 
 
 def _parse_sse_line(line: str) -> tuple[str, str] | None:
@@ -126,13 +143,35 @@ def _extract_content_from_sse_json(data: str, content_parts: list[str]) -> None:
         return
     try:
         obj = json.loads(data)
-        if "choices" in obj:
-            for choice in obj.get("choices", []):
-                delta = choice.get("delta", {})
-                if delta.get("content"):
-                    content_parts.append(delta["content"])
-    except json.JSONDecodeError:
-        pass
+    except json.JSONDecodeError as e:
+        preview = data[:200].replace("\n", "\\n")
+        raise LLMError(
+            f"LLM stream returned malformed SSE JSON: {preview}",
+            status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS,
+        ) from e
+    if not isinstance(obj, dict):
+        raise LLMError("LLM stream event must be a JSON object", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS)
+    choices = obj.get("choices")
+    if choices is None:
+        return
+    if not isinstance(choices, list):
+        raise LLMError("LLM stream field 'choices' must be a list", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS)
+    for choice in choices:
+        if not isinstance(choice, dict):
+            raise LLMError("LLM stream choice must be a JSON object", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS)
+        delta = choice.get("delta", {})
+        if delta is None:
+            continue
+        if not isinstance(delta, dict):
+            raise LLMError(
+                "LLM stream field 'delta' must be a JSON object", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS
+            )
+        content = delta.get("content")
+        if content is None:
+            continue
+        if not isinstance(content, str):
+            raise LLMError("LLM stream field 'content' must be a string", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS)
+        content_parts.append(content)
 
 
 class _SseDebugCapture:
@@ -226,7 +265,7 @@ def _stream_request_impl(
             content_parts: list[str] = []
             buffer = ""
             done = False
-            decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+            decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
 
             it = resp.iter_bytes(chunk_size=4096)
             while True:
@@ -285,12 +324,12 @@ def _stream_request_impl(
             return content, debug.render() if debug is not None else ""
 
     except httpx.HTTPStatusError as e:
-        body = ""
-        with suppress(Exception):
-            body = (e.response.text or "").strip()
+        body = _http_error_body(e.response)
         raise LLMError(
             f"HTTP {e.response.status_code} from LLM: {body}", status_code=int(e.response.status_code)
         ) from e
+    except UnicodeDecodeError as e:
+        raise LLMError("LLM stream is not valid UTF-8", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS) from e
     except httpx.RequestError as e:
         raise LLMError(f"LLM request failed: {e}") from e
 
@@ -370,9 +409,7 @@ def _http_post_json(url: str, payload: dict, headers: dict[str, str], timeout: f
         resp.raise_for_status()
         return resp.json()
     except httpx.HTTPStatusError as e:
-        body = ""
-        with suppress(Exception):
-            body = (e.response.text or "").strip()
+        body = _http_error_body(e.response)
         raise LLMError(
             f"HTTP {e.response.status_code} from LLM: {body}", status_code=int(e.response.status_code)
         ) from e
@@ -521,45 +558,31 @@ def _looks_like_think_unclosed(text: str) -> bool:
     return opens > closes
 
 
-def _strip_think_tags_keep_content(text: str) -> str:
-    """Remove think tag markers but keep their inner content."""
-
-    if not text:
-        return text
-    text = _THINK_OPEN_RE.sub("", text)
-    text = _THINK_CLOSE_RE.sub("", text)
-    return text
-
-
 def _maybe_filter_think_tags(_cfg: LLMConfig, raw_content: str, *, input_text: str | None = None) -> str:
-    # Think tag filtering is always enabled (safe-by-default).
-
     if not raw_content:
         return raw_content
 
-    # Fast path: avoid work when no think tags at all.
     if "<" not in raw_content:
         return raw_content
     if _THINK_OPEN_RE.search(raw_content) is None:
         return raw_content
 
-    # For normal, well-formed tags, filter them out.
+    if _looks_like_think_unclosed(raw_content):
+        raise LLMError("LLM output contains an unclosed <think> tag", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS)
+
     f = ThinkTagFilter()
     filtered = f.feed(raw_content)
     filtered += f.flush()
-
-    # Guard: if the provider output is malformed (unclosed) or filtering produced an
-    # implausibly short output vs input, fall back to stripping tag markers only.
-    if _looks_like_think_unclosed(raw_content):
-        return _strip_think_tags_keep_content(raw_content)
 
     if input_text is not None:
         expected = len(input_text)
         if expected >= _THINK_FILTER_MIN_LEN and len(filtered.strip()) < max(
             _THINK_FILTER_MIN_LEN, int(expected * _THINK_FILTER_MIN_RATIO)
         ):
-            return _strip_think_tags_keep_content(raw_content)
-
+            raise LLMError(
+                "think-tag filtering removed too much content; inspect raw LLM output",
+                status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS,
+            )
     return filtered
 
 
@@ -571,9 +594,12 @@ def _call_openai_compatible_with_raw(
     cfg: LLMConfig, input_text: str, *, should_stop: Callable[[], bool] | None = None
 ) -> LLMTextResult:
     if not cfg.base_url:
-        raise LLMError("LLM base_url is empty")
+        raise LLMError("LLM base_url is empty", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS)
     if not cfg.model:
-        raise LLMError("LLM model is empty")
+        raise LLMError("LLM model is empty", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS)
+    max_connections = int(cfg.max_concurrency)
+    if max_connections < 1:
+        raise LLMError("LLM max_concurrency must be >= 1", status_code=_NON_RETRYABLE_LOCAL_ERROR_STATUS)
 
     logger.info("LLM request: model=%s streaming=true chars=%s", cfg.model, len(input_text))
     url = cfg.base_url.rstrip("/") + "/chat/completions"
@@ -597,7 +623,7 @@ def _call_openai_compatible_with_raw(
         headers=_headers(cfg),
         timeout=cfg.timeout_seconds,
         should_stop=should_stop,
-        max_connections=max(1, int(cfg.max_concurrency)),
+        max_connections=max_connections,
     )
 
     return LLMTextResult(

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
-from novel_proofer.jobs import JobStore
+import pytest
+
+from novel_proofer.formatting.config import FormatConfig
+from novel_proofer.jobs import JobStore, _job_from_dict
+from novel_proofer.states import ChunkState, JobPhase, JobState
 
 
 def test_job_store_update_respects_started_at_and_pause_rules() -> None:
@@ -198,5 +203,172 @@ def test_job_store_persistence_is_throttled_and_flushable(tmp_path: Path) -> Non
 
         js.flush_persistence(job_id)
         assert calls == 1
+    finally:
+        js.shutdown_persistence(wait=True)
+
+
+def test_job_from_dict_rejects_missing_phase() -> None:
+    raw = {
+        "version": 2,
+        "job": {
+            "job_id": "a" * 32,
+            "state": "paused",
+            "created_at": 1.0,
+            "started_at": None,
+            "finished_at": None,
+            "input_filename": "in.txt",
+            "output_filename": "out.txt",
+            "total_chunks": 0,
+            "done_chunks": 0,
+            "format": json.loads(json.dumps(FormatConfig().__dict__)),
+            "last_error_code": None,
+            "last_retry_count": 0,
+            "last_llm_model": None,
+            "stats": {},
+            "chunk_statuses": [],
+            "chunk_counts": {
+                "pending": 0,
+                "processing": 0,
+                "retrying": 0,
+                "done": 0,
+                "error": 0,
+            },
+            "error": None,
+            "output_path": None,
+            "work_dir": None,
+            "cleanup_debug_dir": True,
+        },
+    }
+
+    with pytest.raises(ValueError, match="missing field 'phase'"):
+        _job_from_dict(raw)
+
+
+def test_job_store_load_persisted_jobs_rejects_corrupt_snapshot(tmp_path: Path) -> None:
+    bad = tmp_path / f"{'a' * 32}.json"
+    bad.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "job": {
+                    "job_id": "a" * 32,
+                    "state": JobState.PAUSED,
+                    "phase": JobPhase.MERGE,
+                    "created_at": 1.0,
+                    "started_at": None,
+                    "finished_at": None,
+                    "input_filename": "in.txt",
+                    "output_filename": "out.txt",
+                    "total_chunks": 1,
+                    "done_chunks": 0,
+                    "format": FormatConfig().__dict__,
+                    "last_error_code": None,
+                    "last_retry_count": 0,
+                    "last_llm_model": None,
+                    "stats": {},
+                    "chunk_statuses": [
+                        {
+                            "index": 0,
+                            "state": ChunkState.PENDING,
+                            "started_at": None,
+                            "finished_at": None,
+                            "retries": 0,
+                            "last_error_code": None,
+                            "last_error_message": None,
+                            "llm_model": None,
+                            "input_chars": None,
+                            "output_chars": None,
+                        }
+                    ],
+                    "chunk_counts": {
+                        "pending": 1,
+                        "processing": 0,
+                        "retrying": 0,
+                        "done": 0,
+                        "error": 0,
+                    },
+                    "error": None,
+                    "output_path": None,
+                    "work_dir": None,
+                    "cleanup_debug_dir": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    js = JobStore()
+    js.configure_persistence(persist_dir=tmp_path)
+    try:
+        with pytest.raises(ValueError, match="delete the corrupted state file and retry"):
+            js.load_persisted_jobs()
+        assert js.list_summaries() == []
+    finally:
+        js.shutdown_persistence(wait=True)
+
+
+def test_job_store_load_persisted_jobs_restores_running_job_as_paused(tmp_path: Path) -> None:
+    snap = tmp_path / f"{'b' * 32}.json"
+    snap.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "job": {
+                    "job_id": "b" * 32,
+                    "state": JobState.RUNNING,
+                    "phase": JobPhase.PROCESS,
+                    "created_at": 1.0,
+                    "started_at": 2.0,
+                    "finished_at": None,
+                    "input_filename": "in.txt",
+                    "output_filename": "out.txt",
+                    "total_chunks": 1,
+                    "done_chunks": 0,
+                    "format": FormatConfig().__dict__,
+                    "last_error_code": None,
+                    "last_retry_count": 0,
+                    "last_llm_model": None,
+                    "stats": {},
+                    "chunk_statuses": [
+                        {
+                            "index": 0,
+                            "state": ChunkState.PROCESSING,
+                            "started_at": 3.0,
+                            "finished_at": None,
+                            "retries": 0,
+                            "last_error_code": None,
+                            "last_error_message": None,
+                            "llm_model": None,
+                            "input_chars": 10,
+                            "output_chars": None,
+                        }
+                    ],
+                    "chunk_counts": {
+                        "pending": 0,
+                        "processing": 1,
+                        "retrying": 0,
+                        "done": 0,
+                        "error": 0,
+                    },
+                    "error": None,
+                    "output_path": None,
+                    "work_dir": None,
+                    "cleanup_debug_dir": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    js = JobStore()
+    js.configure_persistence(persist_dir=tmp_path)
+    try:
+        assert js.load_persisted_jobs() == 1
+        loaded = js.get("b" * 32)
+        assert loaded is not None
+        assert loaded.state == JobState.PAUSED
+        assert loaded.phase == JobPhase.PROCESS
+        assert loaded.chunk_statuses[0].state == ChunkState.PENDING
+        assert loaded.chunk_statuses[0].started_at is None
     finally:
         js.shutdown_persistence(wait=True)

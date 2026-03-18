@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import concurrent.futures
 import itertools
+import logging
 import os
 import shutil
 import time
 from collections import deque
-from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,6 +19,8 @@ from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
 from novel_proofer.llm.config import LLMConfig, build_first_chunk_config
 from novel_proofer.states import ChunkState, JobPhase, JobState
+
+logger = logging.getLogger(__name__)
 
 _JOB_DEBUG_README = """\
 本目录为 novel-proofer 的单次任务调试产物。
@@ -131,13 +133,11 @@ def _align_trailing_newlines(reference: str, text: str, *, max_newlines: int = 3
     return base + ("\n" * want)
 
 
-def _best_effort_cleanup_work_dir(job_id: str, work_dir: Path) -> None:
-    try:
-        if work_dir.exists():
-            shutil.rmtree(work_dir)
-            GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir", 1)
-    except Exception:
-        GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_error", 1)
+def _cleanup_work_dir(job_id: str, work_dir: Path) -> None:
+    if not work_dir.exists():
+        return
+    shutil.rmtree(work_dir)
+    GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir", 1)
 
 
 def _should_cleanup_debug_dir(job_id: str) -> bool:
@@ -214,9 +214,13 @@ def _post_merge_paragraph_indent_pass(out_path: Path, fmt: FormatConfig) -> None
                 prev_blank = False
         tmp.replace(out_path)
     finally:
-        with suppress(Exception):
+        try:
             if tmp.exists():
                 tmp.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            logger.exception("failed to cleanup temp merge file: %s", tmp)
 
 
 def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
@@ -255,7 +259,7 @@ def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
 
 
 def _post_llm_deterministic_pass(job_id: str, work_dir: Path) -> None:
-    """Enforce local formatting invariants on per-chunk outputs (best-effort)."""
+    """Enforce local formatting invariants on per-chunk outputs."""
 
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
@@ -421,7 +425,9 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig, *, writ
 
 
 def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: LLMConfig) -> str:
-    max_workers = max(1, int(llm.max_concurrency))
+    max_workers = int(llm.max_concurrency)
+    if max_workers < 1:
+        raise ValueError("LLM max_concurrency must be >= 1")
     write_llm_resp = env_truthy("NOVEL_PROOFER_LLM_WRITE_RESP")
     if not write_llm_resp:
         st = GLOBAL_JOBS.get_summary(job_id)
@@ -468,10 +474,19 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
                 in_flight.keys(), timeout=_WORKER_WAIT_TIMEOUT_S, return_when=concurrent.futures.FIRST_COMPLETED
             )
             for f in done:
-                in_flight.pop(f, None)
-                # Worker is responsible for updating chunk status.
-                with suppress(Exception):
+                idx = in_flight.pop(f, None)
+                try:
                     f.result()
+                except Exception as e:
+                    logger.exception("llm worker crashed: job_id=%s chunk=%s", job_id, idx)
+                    if idx is not None and not GLOBAL_JOBS.is_cancelled(job_id):
+                        GLOBAL_JOBS.update_chunk(
+                            job_id,
+                            idx,
+                            state=ChunkState.ERROR,
+                            finished_at=time.time(),
+                            last_error_message=f"worker crashed: {e}",
+                        )
 
         # If cancelled, do not keep queued chunks as 'processing'.
         if GLOBAL_JOBS.is_cancelled(job_id):
@@ -710,7 +725,7 @@ def merge_outputs(job_id: str, *, cleanup_debug_dir: bool | None = None) -> None
         GLOBAL_JOBS.update(job_id, state=JobState.DONE, phase=JobPhase.DONE, finished_at=time.time(), done_chunks=total)
         do_cleanup = bool(st.cleanup_debug_dir) if cleanup_debug_dir is None else bool(cleanup_debug_dir)
         if do_cleanup:
-            _best_effort_cleanup_work_dir(job_id, work_dir)
+            _cleanup_work_dir(job_id, work_dir)
         else:
             GLOBAL_JOBS.add_stat(job_id, "cleanup_work_dir_skipped", 1)
     except Exception as e:

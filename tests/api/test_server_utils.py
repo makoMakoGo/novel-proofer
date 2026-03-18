@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import io
 import tempfile
 from pathlib import Path
 
 import pytest
+from fastapi import UploadFile
 
 import novel_proofer.paths as paths
 import novel_proofer.server as server
@@ -23,6 +26,20 @@ def test_safe_filename_and_derive_output_filename():
 
 def test_decode_text_prefers_utf8_sig():
     assert paths._decode_text(b"\xef\xbb\xbfabc") == "abc"
+
+
+def test_decode_text_raises_on_invalid_bytes():
+    with pytest.raises(ValueError, match="unsupported input encoding"):
+        paths._decode_text(b"\xff\xfe\xff")
+
+
+def test_write_input_cache_from_upload_rejects_unsupported_encoding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(paths, "OUTPUT_DIR", tmp_path)
+    upload = UploadFile(file=io.BytesIO(b"\x81"), filename="bad.bin")
+    with pytest.raises(ValueError, match="unsupported input encoding"):
+        asyncio.run(paths._write_input_cache_from_upload("a" * 32, upload, limit=1024))
 
 
 def test_cleanup_job_dir_validation_and_removal(monkeypatch: pytest.MonkeyPatch):

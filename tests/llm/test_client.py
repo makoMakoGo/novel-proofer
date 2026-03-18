@@ -260,6 +260,15 @@ def test_stream_request_parses_openai_sse(monkeypatch: pytest.MonkeyPatch):
     assert out == "Hello world"
 
 
+def test_stream_request_raises_on_malformed_sse_json(monkeypatch: pytest.MonkeyPatch):
+    fake_resp = _FakeStreamResponse([b"data: {bad json}\n"])
+    fake_client = _FakeClient(stream_cm=_FakeStreamCM(fake_resp))
+
+    monkeypatch.setattr(llm_client, "_httpx_client_for_url", lambda url, *, max_connections: fake_client)
+    with pytest.raises(LLMError, match="malformed SSE JSON"):
+        llm_client._stream_request("http://x", {"stream": True}, headers={}, timeout=1.0, max_connections=1)
+
+
 def test_stream_request_stops_reading_after_done(monkeypatch: pytest.MonkeyPatch):
     fake_resp = _FakeStreamResponse([b"data: [DONE]\n"])
     fake_resp.iter_bytes = _IterOnceThenBoom(b"data: [DONE]\n").iter_bytes  # type: ignore[method-assign]

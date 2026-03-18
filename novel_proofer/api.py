@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -92,14 +92,17 @@ class _JobCommandService:
 
     @staticmethod
     def cleanup_failed_new_job(job_id: str) -> None:
-        with suppress(Exception):
-            paths._cleanup_job_dir(job_id)
-        with suppress(Exception):
-            paths._cleanup_input_cache(job_id)
-        with suppress(Exception):
-            paths._cleanup_job_state(job_id)
-        with suppress(Exception):
-            GLOBAL_JOBS.delete(job_id)
+        steps = (
+            ("job_dir", lambda: paths._cleanup_job_dir(job_id)),
+            ("input_cache", lambda: paths._cleanup_input_cache(job_id)),
+            ("job_state", lambda: paths._cleanup_job_state(job_id)),
+            ("job_store", lambda: GLOBAL_JOBS.delete(job_id)),
+        )
+        for label, step in steps:
+            try:
+                step()
+            except Exception:
+                logger.exception("cleanup_failed_new_job step failed: job_id=%s step=%s", job_id, label)
 
     @staticmethod
     def submit_background(
@@ -192,9 +195,11 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
     try:
         errors = exc.errors()
         if errors:
-            msg = errors[0].get("msg") or msg
+            first = errors[0]
+            if isinstance(first, dict):
+                msg = str(first.get("msg") or msg)
     except Exception:
-        pass
+        logger.exception("failed to serialize validation error: request_id=%s", request_id)
     return _error(400, msg, request_id=request_id)
 
 
@@ -257,6 +262,12 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
 
     try:
         await paths._write_input_cache_from_upload(job_id, file, limit=paths.MAX_UPLOAD_BYTES)
+    except HTTPException:
+        _JobCommandService.cleanup_failed_new_job(job_id)
+        raise
+    except ValueError as e:
+        _JobCommandService.cleanup_failed_new_job(job_id)
+        raise HTTPException(status_code=400, detail=f"failed to cache input: {e}") from e
     except Exception as e:
         _JobCommandService.cleanup_failed_new_job(job_id)
         raise HTTPException(status_code=500, detail=f"failed to cache input: {e}") from e
@@ -451,14 +462,7 @@ async def purge_all_jobs(body: PurgeAllRequest = Body(default_factory=PurgeAllRe
             GLOBAL_JOBS.cancel(jid)
 
             def _cleanup(job_id: str = jid) -> None:
-                with suppress(Exception):
-                    paths._cleanup_job_dir(job_id)
-                with suppress(Exception):
-                    paths._cleanup_input_cache(job_id)
-                with suppress(Exception):
-                    paths._cleanup_job_state(job_id)
-                with suppress(Exception):
-                    GLOBAL_JOBS.delete(job_id)
+                _JobCommandService.cleanup_failed_new_job(job_id)
 
             add_done_callback(jid, _cleanup)
             purged += 1
@@ -674,14 +678,17 @@ async def reset_job(job_id: str = Depends(paths._job_id_dep)):
     GLOBAL_JOBS.cancel(job_id)
 
     def _cleanup_and_delete() -> None:
-        try:
-            paths._cleanup_job_dir(job_id)
-            paths._cleanup_input_cache(job_id)
-            paths._cleanup_job_state(job_id)
-        except Exception:
-            logger.exception("reset cleanup failed: job_id=%s", job_id)
-        with suppress(Exception):
-            GLOBAL_JOBS.delete(job_id)
+        steps = (
+            ("job_dir", lambda: paths._cleanup_job_dir(job_id)),
+            ("input_cache", lambda: paths._cleanup_input_cache(job_id)),
+            ("job_state", lambda: paths._cleanup_job_state(job_id)),
+            ("job_store", lambda: GLOBAL_JOBS.delete(job_id)),
+        )
+        for label, step in steps:
+            try:
+                step()
+            except Exception:
+                logger.exception("reset cleanup failed: job_id=%s step=%s", job_id, label)
 
     try:
         from novel_proofer.background import add_done_callback as add_done_callback
