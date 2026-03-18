@@ -30,6 +30,7 @@ tests/.artifacts/
 # Editor / tooling
 .playwright-mcp/
 tmpclaude-*
+.vscode/
 .claude/
 .gemini/
 .shared/
