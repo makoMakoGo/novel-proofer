@@ -1,8 +1,8 @@
 # 测试用例说明
 
-在仓库根目录执行 `.venv\Scripts\python.exe -m pytest --collect-only -q`，pytest 会收集到若干测试用例（包含参数化展开；具体数量以本地输出为准）。本文档按文件列出每个用例的覆盖点，便于快速定位“在测什么”。
+在仓库根目录执行 `uv run --frozen --no-sync pytest --collect-only -q`，pytest 会收集到若干测试用例（包含参数化展开；具体数量以本地输出为准）。本文档按文件列出每个用例的覆盖点，便于快速定位“在测什么”。
 
-如需运行全部测试：`pytest -q`。
+如需运行全部测试：`uv run --frozen --no-sync pytest -q`。
 
 注意：若设置 `NOVEL_PROOFER_RUN_LLM_TESTS=true`（或传入 `--run-llm-tests`），会额外运行标记为 `llm_integration` 的真实 LLM 集成测试。
 

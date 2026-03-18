@@ -8,27 +8,20 @@ Novel Proofer is a Chinese novel formatting/proofreading tool with a FastAPI bac
 
 ## Commands
 
-**推荐使用 `uv`（`pyproject.toml` + `uv.lock`）管理依赖。** `start.bat` / `start.sh` 会优先用 uv，同步 `.venv` 并启动服务；未安装 uv 时会回退到 venv + pip + `requirements.lock.txt`。
+**使用 `uv`（`pyproject.toml` + `uv.lock`）管理依赖。** `start.bat` / `start.sh` 是 uv-only；未安装 uv 时直接失败。
 
 ```bash
-# 一键启动（优先 uv；fallback: venv + pip）
+# 一键启动（uv-only）
 start.bat
 
-# uv（推荐）
+# uv
 uv sync --frozen --no-install-project --group dev
 uv run --frozen --no-sync -m novel_proofer.server          # http://127.0.0.1:18080
 
-# pip（fallback）
-python -m venv .venv                                    # create venv (first time)
-.venv\Scripts\activate                                # activate venv
-pip install -r requirements.lock.txt
-python -m novel_proofer.server                            # http://127.0.0.1:18080
-
 # tests
 uv run --frozen --no-sync pytest -q
-pytest -q                                                 # if already in venv
 
-# Windows 自检（自动 sync 并跑测试）
+# Windows 自检
 start.bat --smoke
 ```
 

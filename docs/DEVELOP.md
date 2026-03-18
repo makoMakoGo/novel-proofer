@@ -35,29 +35,11 @@ bash start.sh
 # or: ./start.sh
 ```
 
-uv（推荐，跨平台）：
+uv（唯一支持路径，跨平台）：
 
 ```bash
 uv sync --frozen --no-install-project --no-dev
 uv run --frozen --no-sync -m novel_proofer.server
-```
-
-等价的手动方式（Windows）：
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.lock.txt
-python -m novel_proofer.server
-```
-
-等价的手动方式（WSL2 / Linux / macOS）：
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.lock.txt
-python -m novel_proofer.server
 ```
 
 ---
@@ -86,7 +68,7 @@ npm run watch:css
 1. 从 `main` 拉取最新：`git fetch origin`
 2. 新功能/修复从 `main` 开分支（示例）：`feat/ui-drop-upload`、`fix/llm-timeout`
 3. 保持分支小步提交，提交信息遵循 Conventional Commits（见下）
-4. 提交 PR 前自测（至少跑一次 `pytest -q`）
+4. 提交 PR 前自测（至少跑一次 `uv run --frozen --no-sync pytest -q`）
 5. 合并前尽量保持线性历史（按团队偏好：rebase 或 merge commit；禁止 squash merge）
 
 注：如果需要重写已推送历史（如 reword/rebase），请优先使用 `--force-with-lease`，并确保相关分支无人依赖。
@@ -143,7 +125,7 @@ bash tools/setup-git.sh
 如果你的提交被拒绝，请按提示修改为 `type(scope): subject` 格式后重试。
 
 > [!NOTE]
-> `pre-commit` hook 依赖仓库内的 `.venv`。首次运行请先创建虚拟环境并安装依赖：Windows 运行 `.\start.bat`；WSL2 / Linux / macOS 运行 `bash start.sh`（或按上文手动方式创建 venv）。
+> `pre-commit` hook 依赖 `uv sync` 生成的仓库内 `.venv`。首次运行请先执行 `.\start.bat` / `bash start.sh`，或手动跑 `uv sync --frozen --no-install-project --group dev`。
 > 若 hook 提示它自动修复了格式/导入顺序，请 `git add` 后重新提交即可。
 
 ---
@@ -152,10 +134,10 @@ bash tools/setup-git.sh
 
 ### 5.1 跑测试
 
-在已激活虚拟环境的前提下：
+推荐直接使用 uv：
 
 ```bash
-pytest -q
+uv run --frozen --no-sync pytest -q
 ```
 
 也可一键跑 smoke：

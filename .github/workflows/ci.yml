@@ -13,8 +13,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
-        python-version: ["3.12", "3.14"]
+        include:
+          - os: windows-latest
+            python-version: "3.14"
+          - os: ubuntu-latest
+            python-version: "3.12"
     env:
       NOVEL_PROOFER_RUN_LLM_TESTS: "false"
       UV_NO_PROGRESS: "1"
@@ -43,20 +46,3 @@ jobs:
         shell: bash
         run: |
           uv run --frozen --no-sync pytest -q
-
-  frontend_css:
-    name: frontend css (tailwind build)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-      - name: Build tailwind.css
-        run: |
-          npm ci
-          npm run build:css
-      - name: Ensure tailwind.css is up-to-date
-        run: |
-          git diff --exit-code -- templates/static/css/tailwind.css

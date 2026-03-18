@@ -577,7 +577,7 @@ class JobStore:
 - 所有状态更新通过 `update()` / `update_chunk()` 方法（受锁保护）
 - 使用 snapshot 模式返回数据（避免外部修改内部状态）；区分 full snapshot 与 summary snapshot，避免轮询路径复制全部 `chunk_statuses`
 - `is_cancelled()` / `is_paused()` 用于 worker 检查是否应该停止
-- 可选持久化：Job 快照写入 `output/.state/jobs/{job_id}.json`，用于重启恢复（best-effort）
+- 可选持久化：Job 快照写入 `output/.state/jobs/{job_id}.json`，用于重启恢复；快照损坏时会直接报错，不做静默修复
 - 持久化节流：后台线程合并写入（默认 5s 一次，可用 `NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S` 覆盖），避免高并发 chunk 更新导致频繁磁盘 IO
 - 关键状态：`done/error/cancelled` 终态会触发立即落盘（降低状态回退）
 - 重启自愈：将无意义的“运行中”状态收敛为可继续的 `paused/pending`

@@ -32,7 +32,7 @@
 - 📌 LLM 配置支持"保存默认"，写入本地 `.env` 并自动预填
 - 🌀 支持"重跑全部（新任务）"，无需重新上传文件
 
-**If you like this app, please consider giving it a [Star](https://github.com/zhu-jl18/novel-proofer) ⭐️, thanks! (^-^)**
+**If you like this app, please consider giving it a [Star](https://github.com/makoMakoGo/novel-proofer) ⭐️, thanks! (^-^)**
 
 
 
@@ -57,7 +57,7 @@ Windows（推荐）：
 .\start.bat
 ```
 > [!NOTE]
-> `start.bat` / `start.sh` 会优先使用 `uv`（如果已安装，会读取 `pyproject.toml` + `uv.lock`）；否则回退到创建 `.venv` 并从 `requirements.lock.txt` 安装依赖。
+> `start.bat` / `start.sh` 现在是 **uv-only**。未安装 `uv` 时会直接报错，不再维护 `venv + pip` 路径。
 
 
 WSL2 / Linux / macOS：
@@ -71,31 +71,11 @@ bash start.sh
 
 Try manual installation and start alternatively:
 
-uv（推荐，跨平台）：
+uv（唯一支持路径，跨平台）：
 
 ```bash
 uv sync --frozen --no-install-project --no-dev
 uv run --frozen --no-sync -m novel_proofer.server
-```
-
-pip（fallback）：
-
-Windows：
-
-```bat
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.lock.txt
-python -m novel_proofer.server
-```
-
-WSL2 / Linux / macOS：
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.lock.txt
-python -m novel_proofer.server
 ```
 
 启动后访问 http://127.0.0.1:18080 即可使用。

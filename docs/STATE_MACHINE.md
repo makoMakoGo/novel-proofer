@@ -99,4 +99,4 @@ stateDiagram-v2
 - `retrying` 在**展示层**应视为 `processing` 的子状态：进度条与“处理中”统计/过滤可把 `processing + retrying` 合并为 “Active/处理中”。
 - 表格行内仍保留诊断能力：通过 `重试次数` 与 `信息(last_error_*)` 表达“正在重试/曾重试/最终错误”。
 - 主流程按钮推荐按 `job.phase` 呈现为：**开始校验 / 开始处理 / 合并输出**；并将“新任务（detach）”与“删除任务（reset）”区分（校对进行中建议先“暂停”再执行这两类操作）。
-- 为避免页面关闭/刷新导致 LLM 继续运行消耗时间/费用，UI 可在退出时 best-effort 调用一次 `/pause`（仅对 `phase=process` 生效）。
+- 为避免页面关闭/刷新导致 LLM 继续运行消耗时间/费用，UI 可在退出时调用一次 `/pause`（仅对 `phase=process` 生效）；如果请求没有送达，任务就会继续运行。
