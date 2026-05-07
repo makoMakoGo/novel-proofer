@@ -19,6 +19,7 @@ from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
 from novel_proofer.llm.config import LLMConfig, build_first_chunk_config
 from novel_proofer.states import ChunkState, JobPhase, JobState
+from novel_proofer.workflow import ProcessingFinalState, processing_final_state
 
 logger = logging.getLogger(__name__)
 
@@ -234,8 +235,8 @@ def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
     if cur is None:
         return False
 
-    has_error = any(c.state == ChunkState.ERROR for c in cur.chunk_statuses)
-    if has_error:
+    final_state = processing_final_state([c.state for c in cur.chunk_statuses])
+    if final_state == ProcessingFinalState.ERROR:
         GLOBAL_JOBS.update(
             job_id,
             state=JobState.ERROR,

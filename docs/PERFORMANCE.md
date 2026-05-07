@@ -80,5 +80,5 @@ UI 1s 轮询
 
 已执行：
 
-- `uv run --frozen --no-sync pytest -q`
+- `uv run --frozen --no-sync python -m pytest -q`
 - 结果：`124 passed`

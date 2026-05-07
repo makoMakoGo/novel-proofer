@@ -19,7 +19,8 @@ uv sync --frozen --no-install-project --group dev
 uv run --frozen --no-sync -m novel_proofer.server          # http://127.0.0.1:18080
 
 # tests
-uv run --frozen --no-sync pytest -q
+uv run --frozen --no-sync python -m pytest -q
+uv run --frozen --no-sync python -m mypy novel_proofer
 
 # Windows 自检
 start.bat --smoke

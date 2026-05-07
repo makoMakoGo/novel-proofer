@@ -57,6 +57,7 @@ from novel_proofer.models import (
 )
 from novel_proofer.runner import merge_outputs, resume_paused_job, retry_failed_chunks, run_job
 from novel_proofer.states import ChunkState, JobPhase, JobState
+from novel_proofer.workflow import ResumeTarget, can_merge, can_pause, can_resume, can_retry_failed
 
 logger = logging.getLogger(__name__)
 
@@ -525,11 +526,11 @@ async def pause_job(job_id: str = Depends(paths._job_id_dep)):
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    phase = st.phase.strip().lower()
-    if phase != JobPhase.PROCESS:
-        raise HTTPException(status_code=409, detail=f"cannot pause job in phase={phase or None}")
+    pause_guard = can_pause(st.state, st.phase)
+    if not pause_guard.allowed:
+        raise HTTPException(status_code=409, detail=pause_guard.reason)
     if not GLOBAL_JOBS.pause(job_id):
-        raise HTTPException(status_code=409, detail=f"cannot pause job in state={st.state}")
+        raise HTTPException(status_code=409, detail="failed to pause job")
     st2 = GLOBAL_JOBS.get(job_id) or st
     return JobActionResponse(ok=True, job=_job_to_out(st2))
 
@@ -541,26 +542,18 @@ async def resume_job(
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if st.state == JobState.RUNNING:
-        raise HTTPException(status_code=409, detail="job is running")
-    if st.state == JobState.CANCELLED:
-        raise HTTPException(status_code=409, detail="job is cancelled")
-    if st.state != JobState.PAUSED:
-        raise HTTPException(status_code=409, detail="job is not paused")
-    if st.phase == JobPhase.MERGE:
-        raise HTTPException(status_code=409, detail="job is ready to merge")
-    if st.phase == JobPhase.DONE:
-        raise HTTPException(status_code=409, detail="job is already done")
+    resume_guard = can_resume(st.state, st.phase)
+    if not resume_guard.allowed:
+        raise HTTPException(status_code=409, detail=resume_guard.reason)
     if not GLOBAL_JOBS.resume(job_id):
         raise HTTPException(status_code=409, detail="failed to resume job")
 
     llm = _llm_from_options(body.llm or LLMOptions())
     prev_llm_model = st.last_llm_model
     GLOBAL_JOBS.update(job_id, last_llm_model=llm.model)
-    phase = st.phase
     fn: Callable[..., Any]
     args: tuple[Any, ...]
-    if phase == JobPhase.VALIDATE:
+    if resume_guard.target == ResumeTarget.VALIDATE:
         fmt = st.format
         fn = run_job
         args = (job_id, paths._input_cache_path(job_id), fmt, llm)
@@ -589,18 +582,11 @@ async def retry_failed(
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if GLOBAL_JOBS.is_cancelled(job_id):
-        raise HTTPException(status_code=409, detail="job is cancelled")
-    if st.state == JobState.RUNNING:
-        raise HTTPException(status_code=409, detail="job is running")
-    if st.state == JobState.CANCELLED:
-        raise HTTPException(status_code=409, detail="job is cancelled")
-    if st.state != JobState.ERROR:
-        raise HTTPException(status_code=409, detail=f"job is not in error state (state={st.state})")
+    retry_guard = can_retry_failed(st.state, [c.state for c in st.chunk_statuses])
+    if not retry_guard.allowed:
+        raise HTTPException(status_code=409, detail=retry_guard.reason)
 
     failed = [c.index for c in st.chunk_statuses if c.state == ChunkState.ERROR]
-    if not failed:
-        raise HTTPException(status_code=409, detail="no failed chunks to retry")
 
     llm = _llm_from_options(body.llm or LLMOptions())
     prev_llm_model = st.last_llm_model
@@ -641,16 +627,9 @@ async def merge_job(job_id: str = Depends(paths._job_id_dep), body: MergeRequest
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    if GLOBAL_JOBS.is_cancelled(job_id) or st.state == JobState.CANCELLED:
-        raise HTTPException(status_code=409, detail="job is cancelled")
-    if st.state == JobState.RUNNING:
-        raise HTTPException(status_code=409, detail="job is running")
-    if st.state != JobState.PAUSED:
-        raise HTTPException(status_code=409, detail=f"job is not paused (state={st.state})")
-    if st.phase != JobPhase.MERGE:
-        raise HTTPException(status_code=409, detail=f"job is not ready to merge (phase={st.phase})")
-    if not st.chunk_statuses or any(c.state != ChunkState.DONE for c in st.chunk_statuses):
-        raise HTTPException(status_code=409, detail="job is not ready to merge (chunks incomplete)")
+    merge_guard = can_merge(st.state, st.phase, [c.state for c in st.chunk_statuses])
+    if not merge_guard.allowed:
+        raise HTTPException(status_code=409, detail=merge_guard.reason)
 
     if not GLOBAL_JOBS.resume(job_id):
         raise HTTPException(status_code=409, detail="failed to start merge")

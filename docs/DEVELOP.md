@@ -68,7 +68,7 @@ npm run watch:css
 1. 从 `main` 拉取最新：`git fetch origin`
 2. 新功能/修复从 `main` 开分支（示例）：`feat/ui-drop-upload`、`fix/llm-timeout`
 3. 保持分支小步提交，提交信息遵循 Conventional Commits（见下）
-4. 提交 PR 前自测（至少跑一次 `uv run --frozen --no-sync pytest -q`）
+4. 提交 PR 前自测（至少跑一次 `uv run --frozen --no-sync python -m pytest -q`）
 5. 合并前尽量保持线性历史（按团队偏好：rebase 或 merge commit；禁止 squash merge）
 
 注：如果需要重写已推送历史（如 reword/rebase），请优先使用 `--force-with-lease`，并确保相关分支无人依赖。
@@ -137,7 +137,7 @@ bash tools/setup-git.sh
 推荐直接使用 uv：
 
 ```bash
-uv run --frozen --no-sync pytest -q
+uv run --frozen --no-sync python -m pytest -q
 ```
 
 也可一键跑 smoke：
