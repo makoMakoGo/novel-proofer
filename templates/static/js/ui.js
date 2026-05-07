@@ -1,5 +1,6 @@
 
 import { state, UI_STATE_FIELDS } from './state.js';
+import { actionAvailability, primaryActionKey } from './workflow.js';
 
 // DOM Elements Cache
 export const elements = {};
@@ -504,9 +505,11 @@ function _setDisabled(el, disabled) {
 }
 
 export function refreshActionButtons(job) {
-    const st = String(job?.state || '').toLowerCase();
-    const phase = String(job?.phase || '').toLowerCase();
-    const hasJob = !!job;
+    const hasLocalFile = !!elements.fileInput?.files?.[0];
+    const actions = actionAvailability(job, {
+        hasLocalFile,
+        createJobInFlight: state.createJobInFlight,
+    });
 
     // Styles
     const BTN_SOLID_INK = 'w-full px-5 py-2.5 bg-ink hover:bg-zinc-800 text-white text-sm font-medium rounded-lg transition-colors active:scale-[0.99]';
@@ -517,37 +520,25 @@ export function refreshActionButtons(job) {
     const BTN_OUTLINE_AMBER = 'w-full px-5 py-2.5 bg-white border border-amber-200 text-amber-700 hover:bg-amber-50 text-sm font-medium rounded-lg transition-colors';
     const BTN_OUTLINE_RED = 'w-full px-5 py-2.5 bg-white border border-red-200 text-red-700 hover:bg-red-50 text-sm font-medium rounded-lg transition-colors';
 
-    const canResumeValidate = hasJob && st === 'paused' && phase === 'validate';
-    const hasLocalFile = !!elements.fileInput?.files?.[0];
-    const canStartValidate = (!hasJob) && hasLocalFile && !state.createJobInFlight;
-    const canValidate = canResumeValidate || canStartValidate;
-    const isSubmitting = (!hasJob) && state.createJobInFlight;
-
-    if (elements.btnValidate) elements.btnValidate.textContent = canResumeValidate ? '继续预处理' : (isSubmitting ? '提交中...' : '开始预处理');
-
-    const canProcess = hasJob && st === 'paused' && phase === 'process';
-    if (elements.btnProcess) {
-        const done = Number(job?.progress?.done_chunks || 0);
-        elements.btnProcess.textContent = (hasJob && phase === 'process' && done > 0) ? '继续校对' : '开始校对';
+    if (elements.btnValidate) {
+        elements.btnValidate.textContent = actions.canResumeValidate
+            ? '继续预处理'
+            : (actions.isSubmitting ? '提交中...' : '开始预处理');
     }
 
-    const canMerge = hasJob && st === 'paused' && phase === 'merge';
-    const canPause = hasJob && (st === 'queued' || st === 'running') && phase === 'process';
-    const canRetry = hasJob && st === 'error';
-    const canNewTask = hasJob && !(st === 'queued' || st === 'running');
-    const canDeleteTask = hasJob && !((st === 'queued' || st === 'running') && phase === 'process');
-    const canDownload = hasJob && st === 'done';
+    if (elements.btnProcess) {
+        elements.btnProcess.textContent = (actions.hasJob && actions.phase === 'process' && actions.doneChunks > 0)
+            ? '继续校对'
+            : '开始校对';
+    }
 
     if (elements.btnCancel) elements.btnCancel.textContent = '新任务';
-    if (elements.btnReset) elements.btnReset.textContent = (hasJob && st === 'done') ? '删除任务记录' : '删除任务';
+    if (elements.btnReset) elements.btnReset.textContent = (actions.hasJob && actions.state === 'done') ? '删除任务记录' : '删除任务';
 
-    let primaryKey = null;
-    if (!hasJob || (st === 'paused' && phase === 'validate')) primaryKey = 'validate';
-    else if (st === 'paused' && phase === 'process') primaryKey = 'process';
-    else if (st === 'paused' && phase === 'merge') primaryKey = 'merge';
-    else if (st === 'done') primaryKey = 'download';
-    else if ((st === 'queued' || st === 'running') && phase === 'process') primaryKey = 'pause';
-    else if (st === 'error') primaryKey = 'retry';
+    const primaryKey = primaryActionKey(job, {
+        hasLocalFile,
+        createJobInFlight: state.createJobInFlight,
+    });
 
     if (elements.btnValidate) elements.btnValidate.className = (primaryKey === 'validate') ? BTN_SOLID_INK : BTN_OUTLINE;
     if (elements.btnProcess) elements.btnProcess.className = (primaryKey === 'process') ? BTN_SOLID_INK : BTN_OUTLINE;
@@ -559,14 +550,14 @@ export function refreshActionButtons(job) {
     if (elements.btnReset) elements.btnReset.className = BTN_OUTLINE_RED;
     if (elements.btnLoad) elements.btnLoad.className = BTN_OUTLINE;
 
-    _setDisabled(elements.btnValidate, !canValidate);
-    _setDisabled(elements.btnProcess, !canProcess);
-    _setDisabled(elements.btnMerge, !canMerge);
-    _setDisabled(elements.btnPause, !canPause);
-    _setDisabled(elements.btnRetry, !canRetry);
-    _setDisabled(elements.btnCancel, !canNewTask);
-    _setDisabled(elements.btnReset, !canDeleteTask);
-    _setDisabled(elements.btnDownload, !canDownload);
+    _setDisabled(elements.btnValidate, !actions.canValidate);
+    _setDisabled(elements.btnProcess, !actions.canProcess);
+    _setDisabled(elements.btnMerge, !actions.canMerge);
+    _setDisabled(elements.btnPause, !actions.canPause);
+    _setDisabled(elements.btnRetry, !actions.canRetry);
+    _setDisabled(elements.btnCancel, !actions.canDetach);
+    _setDisabled(elements.btnReset, !actions.canHardReset);
+    _setDisabled(elements.btnDownload, !actions.canDownload);
     _setDisabled(elements.btnLoad, false);
 
     refreshWorkflowStepper(job);

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 # Avoid polluting the host environment: tests assume the repo `.venv` is managed by uv.
-# Use `uv run pytest -q` or `start.bat --smoke`.
+# Use `uv run --frozen --no-sync python -m pytest -q` or `start.bat --smoke`.
 import pytest
 
 # Ensure the repo root (containing `novel_proofer/`) is importable when pytest
@@ -95,7 +95,7 @@ def pytest_configure(config):
     if not in_venv:
         raise RuntimeError(
             "Tests must run inside the repo virtualenv (.venv) managed by uv. "
-            "Use `uv run pytest -q` or `start.bat --smoke`."
+            "Use `uv run --frozen --no-sync python -m pytest -q` or `start.bat --smoke`."
         )
 
 

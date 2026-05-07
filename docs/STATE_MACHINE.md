@@ -7,6 +7,8 @@
 - **Chunk 状态**：任务内每个分片的生命周期（`pending|processing|retrying|done|error`）。
 
 > 设计原则：`retrying` **不是**“待重试队列”，而是**同一次分片处理内部**的“自动重试/退避等待”中间态；手动“重试失败分片”应当把分片重置为 `pending` 再重新调度。
+>
+> 当前代码把 workflow 决策集中在 `novel_proofer.workflow`：API、runner 与持久化加载都应复用同一组 guard / invariant helper，而不是在各层重复手写状态判断。
 
 ## Chunk 状态机
 
@@ -93,6 +95,13 @@ stateDiagram-v2
 - `progress.total_chunks` / `progress.done_chunks`：进度与百分比展示的基准。
 - `last_retry_count`：全任务范围的自动重试总次数（统计/观测用）。
 - `last_llm_model`（API 里暴露为 `job.llm_model`）：**本轮/最近一次**执行所用模型名（配合每个分片的 `llm_model` 进行定位）。
+
+## 代码边界
+
+- `novel_proofer.workflow`：集中表达状态转移守卫与持久化 invariant，例如 `can_pause()`、`can_resume()`、`can_retry_failed()`、`can_merge()`、`processing_final_state()`、`validate_job_phase_invariants()`。
+- `novel_proofer.api`：只负责把 guard 结果转换成 HTTP 响应与提交后台任务，不再拥有独立的 workflow 判断规则。
+- `novel_proofer.runner`：只负责执行阶段，并在阶段结束时调用 workflow helper 判定最终进入 `error` 还是 `merge`。
+- `novel_proofer.jobs`：只负责存储/持久化/恢复，并复用 workflow invariant 校验落盘状态是否自洽。
 
 ## UI 展示约定（推荐）
 

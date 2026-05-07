@@ -15,6 +15,7 @@ from typing import Any
 from novel_proofer.env import env_float
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.states import ChunkState, JobPhase, JobState
+from novel_proofer.workflow import WorkflowInvariantError, validate_job_phase_invariants
 
 logger = logging.getLogger(__name__)
 
@@ -359,14 +360,10 @@ def _job_from_dict(d: dict) -> JobStatus:
 
     state = _parse_enum(_require_field(job, "state", context="job"), context="job.state", allowed=_JOB_STATES)
     phase = _parse_enum(_require_field(job, "phase", context="job"), context="job.phase", allowed=_JOB_PHASES)
-    if state == JobState.DONE and phase != JobPhase.DONE:
-        raise ValueError("job.phase must be 'done' when job.state is 'done'")
-    if phase == JobPhase.DONE and state != JobState.DONE:
-        raise ValueError("job.state must be 'done' when job.phase is 'done'")
-    if phase == JobPhase.MERGE and any(chunk.state != ChunkState.DONE for chunk in chunks):
-        raise ValueError("job.phase 'merge' requires every chunk to be done")
-    if state == JobState.DONE and any(chunk.state != ChunkState.DONE for chunk in chunks):
-        raise ValueError("job.state 'done' requires every chunk to be done")
+    try:
+        validate_job_phase_invariants(state, phase, [chunk.state for chunk in chunks])
+    except WorkflowInvariantError as e:
+        raise ValueError(str(e)) from e
 
     job_id = _parse_str(_require_field(job, "job_id", context="job"), context="job.job_id", allow_empty=False)
     if not _JOB_ID_RE.fullmatch(job_id):
