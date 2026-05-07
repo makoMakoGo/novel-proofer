@@ -48,12 +48,12 @@ class ResumeGuard(WorkflowGuard):
         return cls(False, reason=reason)
 
 
-def _state_value(state: JobState | str) -> str:
-    return JobState(state).value
+def _as_state(state: JobState | str) -> JobState:
+    return JobState(state)
 
 
-def _phase_value(phase: JobPhase | str) -> str:
-    return JobPhase(phase).value
+def _as_phase(phase: JobPhase | str) -> JobPhase:
+    return JobPhase(phase)
 
 
 def _chunk_states(chunks: Iterable[ChunkState | str]) -> list[ChunkState]:
@@ -65,60 +65,60 @@ def is_in_flight_job_state(state: JobState | str) -> bool:
 
 
 def can_pause(state: JobState | str, phase: JobPhase | str) -> WorkflowGuard:
-    state_value = _state_value(state)
-    phase_value = _phase_value(phase)
-    if phase_value != JobPhase.PROCESS:
-        return WorkflowGuard.reject(f"cannot pause job in phase={phase_value}")
-    if not is_in_flight_job_state(state_value):
-        return WorkflowGuard.reject(f"cannot pause job in state={state_value}")
+    st = _as_state(state)
+    ph = _as_phase(phase)
+    if ph != JobPhase.PROCESS:
+        return WorkflowGuard.reject(f"cannot pause job in phase={ph.value}")
+    if st not in {JobState.QUEUED, JobState.RUNNING}:
+        return WorkflowGuard.reject(f"cannot pause job in state={st.value}")
     return WorkflowGuard.allow()
 
 
 def can_resume(state: JobState | str, phase: JobPhase | str) -> ResumeGuard:
-    state_value = _state_value(state)
-    phase_value = _phase_value(phase)
-    if state_value == JobState.RUNNING:
+    st = _as_state(state)
+    ph = _as_phase(phase)
+    if st == JobState.RUNNING:
         return ResumeGuard.reject("job is running")
-    if state_value == JobState.CANCELLED:
+    if st == JobState.CANCELLED:
         return ResumeGuard.reject("job is cancelled")
-    if state_value != JobState.PAUSED:
+    if st != JobState.PAUSED:
         return ResumeGuard.reject("job is not paused")
-    if phase_value == JobPhase.MERGE:
+    if ph == JobPhase.MERGE:
         return ResumeGuard.reject("job is ready to merge")
-    if phase_value == JobPhase.DONE:
+    if ph == JobPhase.DONE:
         return ResumeGuard.reject("job is already done")
-    if phase_value == JobPhase.VALIDATE:
+    if ph == JobPhase.VALIDATE:
         return ResumeGuard.allow_target(ResumeTarget.VALIDATE)
-    if phase_value == JobPhase.PROCESS:
+    if ph == JobPhase.PROCESS:
         return ResumeGuard.allow_target(ResumeTarget.PROCESS)
-    return ResumeGuard.reject(f"cannot resume job in phase={phase_value}")
+    return ResumeGuard.reject(f"cannot resume job in phase={ph.value}")
 
 
 def can_retry_failed(state: JobState | str, chunks: Iterable[ChunkState | str]) -> WorkflowGuard:
-    state_value = _state_value(state)
-    if state_value == JobState.CANCELLED:
+    st = _as_state(state)
+    if st == JobState.CANCELLED:
         return WorkflowGuard.reject("job is cancelled")
-    if state_value == JobState.RUNNING:
+    if st == JobState.RUNNING:
         return WorkflowGuard.reject("job is running")
-    if state_value != JobState.ERROR:
-        return WorkflowGuard.reject(f"job is not in error state (state={state_value})")
+    if st != JobState.ERROR:
+        return WorkflowGuard.reject(f"job is not in error state (state={st.value})")
     if not any(chunk == ChunkState.ERROR for chunk in _chunk_states(chunks)):
         return WorkflowGuard.reject("no failed chunks to retry")
     return WorkflowGuard.allow()
 
 
 def can_merge(state: JobState | str, phase: JobPhase | str, chunks: Iterable[ChunkState | str]) -> WorkflowGuard:
-    state_value = _state_value(state)
-    phase_value = _phase_value(phase)
+    st = _as_state(state)
+    ph = _as_phase(phase)
     chunk_states = _chunk_states(chunks)
-    if state_value == JobState.CANCELLED:
+    if st == JobState.CANCELLED:
         return WorkflowGuard.reject("job is cancelled")
-    if state_value == JobState.RUNNING:
+    if st == JobState.RUNNING:
         return WorkflowGuard.reject("job is running")
-    if state_value != JobState.PAUSED:
-        return WorkflowGuard.reject(f"job is not paused (state={state_value})")
-    if phase_value != JobPhase.MERGE:
-        return WorkflowGuard.reject(f"job is not ready to merge (phase={phase_value})")
+    if st != JobState.PAUSED:
+        return WorkflowGuard.reject(f"job is not paused (state={st.value})")
+    if ph != JobPhase.MERGE:
+        return WorkflowGuard.reject(f"job is not ready to merge (phase={ph.value})")
     if not chunk_states or any(chunk != ChunkState.DONE for chunk in chunk_states):
         return WorkflowGuard.reject("job is not ready to merge (chunks incomplete)")
     return WorkflowGuard.allow()

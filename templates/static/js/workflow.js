@@ -2,7 +2,7 @@
 
 export function normalizeJobState(job) {
     return {
-        hasJob: !!job,
+        hasJob: !!job?.id,
         state: String(job?.state || '').toLowerCase(),
         phase: String(job?.phase || '').toLowerCase(),
         doneChunks: Number(job?.progress?.done_chunks || 0),
