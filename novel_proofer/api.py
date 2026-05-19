@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from novel_proofer import paths
@@ -93,7 +93,7 @@ class _JobCommandService:
 
     @staticmethod
     def cleanup_failed_new_job(job_id: str) -> None:
-        steps = (
+        steps: tuple[tuple[str, Callable[[], object]], ...] = (
             ("job_dir", lambda: paths._cleanup_job_dir(job_id)),
             ("input_cache", lambda: paths._cleanup_input_cache(job_id)),
             ("job_state", lambda: paths._cleanup_job_state(job_id)),
@@ -167,7 +167,7 @@ app = FastAPI(lifespan=_lifespan)
 
 
 @app.middleware("http")
-async def _request_id_middleware(request: Request, call_next):
+async def _request_id_middleware(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
     request_id = _request_id_from_request(request)
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
@@ -179,7 +179,7 @@ app.mount("/static", StaticFiles(directory=str(paths.TEMPLATES_DIR / "static")),
 
 
 @app.exception_handler(HTTPException)
-async def _http_exception_handler(request: Request, exc: HTTPException):
+async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     request_id = _request_id_from_request(request)
     status_code = int(exc.status_code)
     message = str(exc.detail)
@@ -190,7 +190,7 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
 
 
 @app.exception_handler(RequestValidationError)
-async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+async def _validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     request_id = _request_id_from_request(request)
     msg = "bad request"
     try:
@@ -205,14 +205,14 @@ async def _validation_exception_handler(request: Request, exc: RequestValidation
 
 
 @app.exception_handler(Exception)
-async def _unhandled_exception_handler(request: Request, exc: Exception):
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     request_id = _request_id_from_request(request)
     logger.exception("unhandled exception: request_id=%s", request_id)
     return _error(500, _INTERNAL_ERROR_MESSAGE, request_id=request_id)
 
 
 @app.get("/", include_in_schema=False)
-async def index():
+async def index() -> FileResponse:
     path = paths.TEMPLATES_DIR / "index.html"
     if not path.exists():
         raise HTTPException(status_code=500, detail="missing templates/index.html")
@@ -220,12 +220,12 @@ async def index():
 
 
 @app.get("/healthz")
-async def healthz():
+async def healthz() -> dict[str, bool]:
     return {"ok": True}
 
 
 @app.get("/api/v1/settings/llm", response_model=LLMSettingsResponse)
-async def get_llm_settings():
+async def get_llm_settings() -> LLMSettingsResponse:
     path = dotenv_path(workdir=paths.WORKDIR)
     try:
         defaults = read_llm_defaults(path)
@@ -235,7 +235,7 @@ async def get_llm_settings():
 
 
 @app.put("/api/v1/settings/llm", response_model=LLMSettingsResponse)
-async def put_llm_settings(body: LLMSettingsPutRequest = Body(...)):
+async def put_llm_settings(body: LLMSettingsPutRequest = Body(...)) -> LLMSettingsResponse:
     path = dotenv_path(workdir=paths.WORKDIR)
     patch = LLMDefaults(**body.llm.model_dump())
     updates = llm_env_updates_from_defaults_patch(patch, fields_set=set(body.llm.model_fields_set))
@@ -251,7 +251,7 @@ async def put_llm_settings(body: LLMSettingsPutRequest = Body(...)):
 
 
 @app.post("/api/v1/jobs", response_model=JobCreateResponse, status_code=201)
-async def create_job(file: UploadFile = File(...), options: str = Form(...)):
+async def create_job(file: UploadFile = File(...), options: str = Form(...)) -> JobCreateResponse:
     if file is None:
         raise HTTPException(status_code=400, detail="file is required")
     opts = _parse_options_json(options)
@@ -288,7 +288,7 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)):
 
 
 @app.post("/api/v1/jobs/{job_id}/rerun-all", response_model=JobCreateResponse, status_code=201)
-async def rerun_all(job_id: str = Depends(paths._job_id_dep), options: JobOptions = Body(...)):
+async def rerun_all(job_id: str = Depends(paths._job_id_dep), options: JobOptions = Body(...)) -> JobCreateResponse:
     st0 = GLOBAL_JOBS.get(job_id)
     if st0 is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -338,7 +338,7 @@ async def get_job(
     chunk_state: str = Query("all"),
     limit: int = Query(0, ge=0),
     offset: int = Query(0, ge=0),
-):
+) -> JobGetResponse:
     st = GLOBAL_JOBS.get_summary(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -372,7 +372,7 @@ async def get_job(
 
 
 @app.get("/api/v1/jobs/{job_id}/input-stats", response_model=InputStatsOut)
-async def get_job_input_stats(job_id: str = Depends(paths._job_id_dep)):
+async def get_job_input_stats(job_id: str = Depends(paths._job_id_dep)) -> InputStatsOut:
     st = GLOBAL_JOBS.get_summary(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -420,7 +420,7 @@ async def get_job_input_stats(job_id: str = Depends(paths._job_id_dep)):
 
 
 @app.get("/api/v1/jobs/{job_id}/download")
-async def download_job_output(job_id: str = Depends(paths._job_id_dep)):
+async def download_job_output(job_id: str = Depends(paths._job_id_dep)) -> FileResponse:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -446,7 +446,7 @@ async def download_job_output(job_id: str = Depends(paths._job_id_dep)):
 
 
 @app.post("/api/v1/jobs/purge-all", response_model=PurgeAllResponse)
-async def purge_all_jobs(body: PurgeAllRequest = Body(default_factory=PurgeAllRequest)):
+async def purge_all_jobs(body: PurgeAllRequest = Body(default_factory=PurgeAllRequest)) -> PurgeAllResponse:
     """Cancel and delete every known job (except excluded), then wipe leftover disk artifacts."""
 
     from novel_proofer.background import add_done_callback
@@ -481,7 +481,7 @@ async def list_jobs(
     limit: int = Query(50, ge=0, le=500),
     offset: int = Query(0, ge=0),
     include_cancelled: int = Query(0, ge=0, le=1),
-):
+) -> JobListResponse:
     wanted_states = {s.strip().lower() for s in str(state or "").split(",") if s.strip()}
     wanted_phases = {s.strip().lower() for s in str(phase or "").split(",") if s.strip()}
 
@@ -522,7 +522,7 @@ async def list_jobs(
 
 
 @app.post("/api/v1/jobs/{job_id}/pause", response_model=JobActionResponse)
-async def pause_job(job_id: str = Depends(paths._job_id_dep)):
+async def pause_job(job_id: str = Depends(paths._job_id_dep)) -> JobActionResponse:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -538,7 +538,7 @@ async def pause_job(job_id: str = Depends(paths._job_id_dep)):
 @app.post("/api/v1/jobs/{job_id}/resume", response_model=JobActionResponse)
 async def resume_job(
     job_id: str = Depends(paths._job_id_dep), body: RetryFailedRequest = Body(default_factory=RetryFailedRequest)
-):
+) -> JobActionResponse:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -578,7 +578,7 @@ async def resume_job(
 @app.post("/api/v1/jobs/{job_id}/retry-failed", response_model=JobActionResponse)
 async def retry_failed(
     job_id: str = Depends(paths._job_id_dep), body: RetryFailedRequest = Body(default_factory=RetryFailedRequest)
-):
+) -> JobActionResponse:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -623,7 +623,9 @@ async def retry_failed(
 
 
 @app.post("/api/v1/jobs/{job_id}/merge", response_model=JobActionResponse)
-async def merge_job(job_id: str = Depends(paths._job_id_dep), body: MergeRequest = Body(default_factory=MergeRequest)):
+async def merge_job(
+    job_id: str = Depends(paths._job_id_dep), body: MergeRequest = Body(default_factory=MergeRequest)
+) -> JobActionResponse:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -649,7 +651,7 @@ async def merge_job(job_id: str = Depends(paths._job_id_dep), body: MergeRequest
 
 
 @app.post("/api/v1/jobs/{job_id}/reset", response_model=JobActionResponse)
-async def reset_job(job_id: str = Depends(paths._job_id_dep)):
+async def reset_job(job_id: str = Depends(paths._job_id_dep)) -> JobActionResponse:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
@@ -657,7 +659,7 @@ async def reset_job(job_id: str = Depends(paths._job_id_dep)):
     GLOBAL_JOBS.cancel(job_id)
 
     def _cleanup_and_delete() -> None:
-        steps = (
+        steps: tuple[tuple[str, Callable[[], object]], ...] = (
             ("job_dir", lambda: paths._cleanup_job_dir(job_id)),
             ("input_cache", lambda: paths._cleanup_input_cache(job_id)),
             ("job_state", lambda: paths._cleanup_job_state(job_id)),
@@ -682,7 +684,7 @@ async def reset_job(job_id: str = Depends(paths._job_id_dep)):
 
 
 @app.post("/api/v1/jobs/{job_id}/cleanup-debug", response_model=JobActionResponse)
-async def cleanup_debug(job_id: str = Depends(paths._job_id_dep)):
+async def cleanup_debug(job_id: str = Depends(paths._job_id_dep)) -> JobActionResponse:
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")

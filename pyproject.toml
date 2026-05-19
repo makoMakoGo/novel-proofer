@@ -54,6 +54,20 @@ quote-style = "double"
 
 [tool.mypy]
 python_version = "3.12"
+strict = true
 ignore_missing_imports = true
 warn_unused_ignores = true
 show_error_codes = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = [
+  "--strict-config",
+  "--strict-markers",
+  "--durations=10",
+  "--cov=novel_proofer",
+  "--cov-branch",
+  "--cov-report=term-missing",
+  "--cov-fail-under=80",
+]

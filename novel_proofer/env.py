@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 
 def env_truthy(name: str) -> bool:
@@ -29,7 +30,7 @@ def env_float(name: str, default: float) -> float:
         raise ValueError(f"{name} must be a float, got {raw!r}") from e
 
 
-def env_json_object(name: str) -> dict | None:
+def env_json_object(name: str) -> dict[str, Any] | None:
     raw = str(os.getenv(name, "")).strip()
     if not raw:
         return None

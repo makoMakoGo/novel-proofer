@@ -11,7 +11,7 @@ from novel_proofer.env import env_int
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
-_in_flight: dict[str, Future] = {}
+_in_flight: dict[str, Future[Any]] = {}
 
 
 def _max_workers_from_env() -> int:
@@ -45,7 +45,7 @@ def submit(job_id: str, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) ->
         fut = _EXECUTOR.submit(fn, *args, **kwargs)
         _in_flight[jid] = fut
 
-    def _done(f: Future) -> None:
+    def _done(f: Future[Any]) -> None:
         with _lock:
             # Only remove if this callback matches the currently tracked future.
             if _in_flight.get(jid) is f:
@@ -75,7 +75,7 @@ def add_done_callback(job_id: str, cb: Callable[[], Any]) -> None:
         cb()
         return
 
-    def _wrap(_f: Future) -> None:
+    def _wrap(_f: Future[Any]) -> None:
         try:
             cb()
         except Exception:
