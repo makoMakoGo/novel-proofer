@@ -12,6 +12,7 @@ import urllib.parse
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any, cast
 
 import httpx
 
@@ -235,7 +236,7 @@ class _SseDebugCapture:
 
 def _stream_request_impl(
     url: str,
-    payload: dict,
+    payload: dict[str, Any],
     headers: dict[str, str],
     timeout: float,
     *,
@@ -336,7 +337,7 @@ def _stream_request_impl(
 
 def _stream_request(
     url: str,
-    payload: dict,
+    payload: dict[str, Any],
     headers: dict[str, str],
     timeout: float,
     *,
@@ -372,7 +373,7 @@ def _stream_request(
 
 def _stream_request_with_debug(
     url: str,
-    payload: dict,
+    payload: dict[str, Any],
     headers: dict[str, str],
     timeout: float,
     *,
@@ -402,12 +403,12 @@ def _stream_request_with_debug(
     )
 
 
-def _http_post_json(url: str, payload: dict, headers: dict[str, str], timeout: float) -> dict:
+def _http_post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
     try:
         client = _httpx_client_for_url(url, max_connections=1)
         resp = client.post(url, json=payload, headers=headers, timeout=httpx.Timeout(float(timeout)))
         resp.raise_for_status()
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
     except httpx.HTTPStatusError as e:
         body = _http_error_body(e.response)
         raise LLMError(
@@ -603,7 +604,7 @@ def _call_openai_compatible_with_raw(
 
     logger.info("LLM request: model=%s streaming=true chars=%s", cfg.model, len(input_text))
     url = cfg.base_url.rstrip("/") + "/chat/completions"
-    payload: dict = {
+    payload: dict[str, Any] = {
         "model": cfg.model,
         "temperature": cfg.temperature,
         "stream": True,  # Always use streaming

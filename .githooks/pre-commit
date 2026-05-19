@@ -40,6 +40,12 @@ echo "[pre-commit] ruff format (staged files)"
 echo "[pre-commit] ruff check --fix (staged files)"
 "$py" -m ruff check --fix "${files[@]}"
 
+echo "[pre-commit] tracked file size check"
+"$py" tools/check-large-files.py
+
+echo "[pre-commit] AGENTS.md instruction check"
+"$py" tools/check-agents.py
+
 changed=0
 for f in "${files[@]}"; do
   if [[ "${before_hash["$f"]}" != "$(git hash-object "$f")" ]]; then

@@ -7,6 +7,7 @@ import os
 import shutil
 import time
 from collections import deque
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -153,7 +154,7 @@ def _chunk_path(work_dir: Path, subdir: str, index: int) -> Path:
 
 
 def _merge_chunk_outputs(work_dir: Path, total_chunks: int, out_path: Path) -> None:
-    def _iter_chunks():
+    def _iter_chunks() -> Iterator[tuple[str, bool]]:
         for i in range(total_chunks):
             p = _chunk_path(work_dir, "out", i)
             yield (p.read_text(encoding="utf-8"), i == total_chunks - 1)
@@ -447,7 +448,7 @@ def _run_llm_for_indices(job_id: str, indices: list[int], work_dir: Path, llm: L
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
         # Submit gradually so cancel can actually stop launching new work.
         pending_indices = deque(indices)
-        in_flight: dict[concurrent.futures.Future, int] = {}
+        in_flight: dict[concurrent.futures.Future[None], int] = {}
 
         while pending_indices or in_flight:
             if GLOBAL_JOBS.is_cancelled(job_id):

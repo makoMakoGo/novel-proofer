@@ -49,7 +49,6 @@ yarn-debug.log*
 yarn-error.log*
 
 # Local agent notes
-AGENTS.md
 .serena/
 
 # OpenSpec (local/spec workspace)

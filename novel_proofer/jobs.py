@@ -156,7 +156,7 @@ def _require_field(raw: dict[str, Any], key: str, *, context: str) -> Any:
 def _parse_int(raw: Any, *, context: str) -> int:
     if isinstance(raw, bool) or not isinstance(raw, int):
         raise ValueError(f"{context} must be an integer")
-    return raw
+    return int(raw)
 
 
 def _parse_float(raw: Any, *, context: str) -> float:
@@ -261,11 +261,11 @@ def _format_config_from_dict(raw: object) -> FormatConfig:
     return FormatConfig(**kwargs)
 
 
-def _chunk_to_dict(cs: ChunkStatus) -> dict:
+def _chunk_to_dict(cs: ChunkStatus) -> dict[str, Any]:
     return asdict(cs)
 
 
-def _chunk_from_dict(d: dict) -> ChunkStatus:
+def _chunk_from_dict(d: dict[str, Any]) -> ChunkStatus:
     raw = _require_dict(d, context="chunk")
     _reject_unknown_fields(
         raw,
@@ -299,11 +299,11 @@ def _chunk_from_dict(d: dict) -> ChunkStatus:
     )
 
 
-def _job_to_dict(st: JobStatus) -> dict:
+def _job_to_dict(st: JobStatus) -> dict[str, Any]:
     return {"version": _JOB_STATE_VERSION, "job": asdict(st)}
 
 
-def _job_from_dict(d: dict) -> JobStatus:
+def _job_from_dict(d: dict[str, Any]) -> JobStatus:
     payload = _require_dict(d, context="job state file")
     version = _parse_int(_require_field(payload, "version", context="job state file"), context="job state file.version")
     if version != _JOB_STATE_VERSION:
@@ -466,7 +466,7 @@ class JobStore:
             return None
         return self._persist_dir / f"{job_id}.json"
 
-    def _atomic_write_json(self, path: Path, payload: dict) -> None:
+    def _atomic_write_json(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + _tmp_suffix())
         try:
@@ -749,7 +749,7 @@ class JobStore:
                 matched += 1
             return out, counts, has_more
 
-    def update(self, job_id: str, **kwargs) -> None:
+    def update(self, job_id: str, **kwargs: Any) -> None:
         bad = kwargs.keys() - _ALLOWED_JOB_UPDATE_FIELDS
         if bad:
             raise ValueError(f"JobStore.update: unknown fields {bad}")
@@ -788,7 +788,7 @@ class JobStore:
             self._mark_dirty_locked(job_id)
         self._flush_job(job_id, require_dirty=False)
 
-    def update_chunk(self, job_id: str, index: int, **kwargs) -> None:
+    def update_chunk(self, job_id: str, index: int, **kwargs: Any) -> None:
         bad = kwargs.keys() - _ALLOWED_CHUNK_UPDATE_FIELDS
         if bad:
             raise ValueError(f"JobStore.update_chunk: unknown fields {bad}")

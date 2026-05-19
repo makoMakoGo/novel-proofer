@@ -41,8 +41,23 @@ jobs:
       - name: Mypy
         shell: bash
         run: |
-          uv run --frozen --no-sync mypy novel_proofer
+          uv run --frozen --no-sync python -m mypy novel_proofer
+      - name: Validate agent instructions
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          uv run --frozen --no-sync python tools/check-agents.py
       - name: Pytest
         shell: bash
         run: |
-          uv run --frozen --no-sync pytest -q
+          uv run --frozen --no-sync python -m pytest -q
+      - name: Check OpenAPI schema freshness
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          uv run --frozen --no-sync python tools/export-openapi.py --check
+      - name: Check tracked file sizes
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          uv run --frozen --no-sync python tools/check-large-files.py

@@ -1,0 +1,1532 @@
+{
+  "components": {
+    "schemas": {
+      "Body_create_job_api_v1_jobs_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          },
+          "options": {
+            "title": "Options",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "options"
+        ],
+        "title": "Body_create_job_api_v1_jobs_post",
+        "type": "object"
+      },
+      "ChunkOut": {
+        "properties": {
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "input_chars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Chars"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "last_error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Message"
+          },
+          "llm_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Model"
+          },
+          "output_chars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Chars"
+          },
+          "retries": {
+            "default": 0,
+            "title": "Retries",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "state"
+        ],
+        "title": "ChunkOut",
+        "type": "object"
+      },
+      "FormatOptions": {
+        "properties": {
+          "fix_cjk_punct_spacing": {
+            "default": true,
+            "title": "Fix Cjk Punct Spacing",
+            "type": "boolean"
+          },
+          "indent_with_fullwidth_space": {
+            "default": true,
+            "title": "Indent With Fullwidth Space",
+            "type": "boolean"
+          },
+          "max_chunk_chars": {
+            "default": 2000,
+            "maximum": 4000.0,
+            "minimum": 200.0,
+            "title": "Max Chunk Chars",
+            "type": "integer"
+          },
+          "normalize_blank_lines": {
+            "default": true,
+            "title": "Normalize Blank Lines",
+            "type": "boolean"
+          },
+          "normalize_cjk_punctuation": {
+            "default": true,
+            "title": "Normalize Cjk Punctuation",
+            "type": "boolean"
+          },
+          "normalize_ellipsis": {
+            "default": true,
+            "title": "Normalize Ellipsis",
+            "type": "boolean"
+          },
+          "normalize_em_dash": {
+            "default": true,
+            "title": "Normalize Em Dash",
+            "type": "boolean"
+          },
+          "normalize_quotes": {
+            "default": false,
+            "title": "Normalize Quotes",
+            "type": "boolean"
+          },
+          "paragraph_indent": {
+            "default": true,
+            "title": "Paragraph Indent",
+            "type": "boolean"
+          },
+          "trim_trailing_spaces": {
+            "default": true,
+            "title": "Trim Trailing Spaces",
+            "type": "boolean"
+          }
+        },
+        "title": "FormatOptions",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "InputStatsOut": {
+        "properties": {
+          "input_chars": {
+            "title": "Input Chars",
+            "type": "integer"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "input_chars"
+        ],
+        "title": "InputStatsOut",
+        "type": "object"
+      },
+      "JobActionResponse": {
+        "properties": {
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "JobActionResponse",
+        "type": "object"
+      },
+      "JobCreateResponse": {
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/JobOut"
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "title": "JobCreateResponse",
+        "type": "object"
+      },
+      "JobGetResponse": {
+        "properties": {
+          "chunk_counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Counts"
+          },
+          "chunks": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ChunkOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunks"
+          },
+          "has_more": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Has More"
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobOut"
+          }
+        },
+        "required": [
+          "job"
+        ],
+        "title": "JobGetResponse",
+        "type": "object"
+      },
+      "JobListResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobSummaryOut"
+            },
+            "title": "Jobs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "jobs"
+        ],
+        "title": "JobListResponse",
+        "type": "object"
+      },
+      "JobOptions": {
+        "properties": {
+          "format": {
+            "$ref": "#/components/schemas/FormatOptions"
+          },
+          "llm": {
+            "$ref": "#/components/schemas/LLMOptions"
+          },
+          "output": {
+            "$ref": "#/components/schemas/OutputOptions"
+          }
+        },
+        "title": "JobOptions",
+        "type": "object"
+      },
+      "JobOut": {
+        "properties": {
+          "cleanup_debug_dir": {
+            "default": true,
+            "title": "Cleanup Debug Dir",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "debug_dir": {
+            "title": "Debug Dir",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "format": {
+            "$ref": "#/components/schemas/FormatOptions"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_filename": {
+            "title": "Input Filename",
+            "type": "string"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "last_retry_count": {
+            "default": 0,
+            "title": "Last Retry Count",
+            "type": "integer"
+          },
+          "llm_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Model"
+          },
+          "output_filename": {
+            "title": "Output Filename",
+            "type": "string"
+          },
+          "output_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Path"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/JobProgress"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "stats": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Stats",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "phase",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "input_filename",
+          "output_filename",
+          "output_path",
+          "debug_dir",
+          "progress",
+          "format"
+        ],
+        "title": "JobOut",
+        "type": "object"
+      },
+      "JobProgress": {
+        "properties": {
+          "done_chunks": {
+            "title": "Done Chunks",
+            "type": "integer"
+          },
+          "percent": {
+            "title": "Percent",
+            "type": "integer"
+          },
+          "total_chunks": {
+            "title": "Total Chunks",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_chunks",
+          "done_chunks",
+          "percent"
+        ],
+        "title": "JobProgress",
+        "type": "object"
+      },
+      "JobSummaryOut": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_filename": {
+            "title": "Input Filename",
+            "type": "string"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          },
+          "llm_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Model"
+          },
+          "output_filename": {
+            "title": "Output Filename",
+            "type": "string"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/JobProgress"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "phase",
+          "created_at",
+          "input_filename",
+          "output_filename",
+          "progress"
+        ],
+        "title": "JobSummaryOut",
+        "type": "object"
+      },
+      "LLMOptions": {
+        "properties": {
+          "api_key": {
+            "default": "",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "base_url": {
+            "default": "",
+            "title": "Base Url",
+            "type": "string"
+          },
+          "extra_params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extra Params"
+          },
+          "max_concurrency": {
+            "default": 20,
+            "title": "Max Concurrency",
+            "type": "integer"
+          },
+          "model": {
+            "default": "",
+            "title": "Model",
+            "type": "string"
+          },
+          "temperature": {
+            "default": 0.0,
+            "title": "Temperature",
+            "type": "number"
+          },
+          "timeout_seconds": {
+            "default": 180.0,
+            "title": "Timeout Seconds",
+            "type": "number"
+          }
+        },
+        "title": "LLMOptions",
+        "type": "object"
+      },
+      "LLMSettings": {
+        "properties": {
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "extra_params": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extra Params"
+          },
+          "max_concurrency": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Concurrency"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "timeout_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout Seconds"
+          }
+        },
+        "title": "LLMSettings",
+        "type": "object"
+      },
+      "LLMSettingsPutRequest": {
+        "properties": {
+          "llm": {
+            "$ref": "#/components/schemas/LLMSettings"
+          }
+        },
+        "title": "LLMSettingsPutRequest",
+        "type": "object"
+      },
+      "LLMSettingsResponse": {
+        "properties": {
+          "llm": {
+            "$ref": "#/components/schemas/LLMSettings"
+          }
+        },
+        "required": [
+          "llm"
+        ],
+        "title": "LLMSettingsResponse",
+        "type": "object"
+      },
+      "MergeRequest": {
+        "properties": {
+          "cleanup_debug_dir": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleanup Debug Dir"
+          }
+        },
+        "title": "MergeRequest",
+        "type": "object"
+      },
+      "OutputOptions": {
+        "properties": {
+          "cleanup_debug_dir": {
+            "default": true,
+            "title": "Cleanup Debug Dir",
+            "type": "boolean"
+          },
+          "suffix": {
+            "default": "_rev",
+            "title": "Suffix",
+            "type": "string"
+          }
+        },
+        "title": "OutputOptions",
+        "type": "object"
+      },
+      "PurgeAllRequest": {
+        "properties": {
+          "exclude": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Exclude",
+            "type": "array"
+          }
+        },
+        "title": "PurgeAllRequest",
+        "type": "object"
+      },
+      "PurgeAllResponse": {
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "purged": {
+            "title": "Purged",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ok",
+          "purged"
+        ],
+        "title": "PurgeAllResponse",
+        "type": "object"
+      },
+      "RetryFailedRequest": {
+        "properties": {
+          "llm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LLMOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "RetryFailedRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/jobs": {
+      "get": {
+        "operationId": "list_jobs_api_v1_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "State",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "phase",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Phase",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_cancelled",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Include Cancelled",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Jobs"
+      },
+      "post": {
+        "operationId": "create_job_api_v1_jobs_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_create_job_api_v1_jobs_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Job"
+      }
+    },
+    "/api/v1/jobs/purge-all": {
+      "post": {
+        "description": "Cancel and delete every known job (except excluded), then wipe leftover disk artifacts.",
+        "operationId": "purge_all_jobs_api_v1_jobs_purge_all_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeAllRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurgeAllResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Purge All Jobs"
+      }
+    },
+    "/api/v1/jobs/{job_id}": {
+      "get": {
+        "operationId": "get_job_api_v1_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "chunks",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 1,
+              "minimum": 0,
+              "title": "Chunks",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "chunk_state",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "title": "Chunk State",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobGetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Job"
+      }
+    },
+    "/api/v1/jobs/{job_id}/cleanup-debug": {
+      "post": {
+        "operationId": "cleanup_debug_api_v1_jobs__job_id__cleanup_debug_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobActionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cleanup Debug"
+      }
+    },
+    "/api/v1/jobs/{job_id}/download": {
+      "get": {
+        "operationId": "download_job_output_api_v1_jobs__job_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Job Output"
+      }
+    },
+    "/api/v1/jobs/{job_id}/input-stats": {
+      "get": {
+        "operationId": "get_job_input_stats_api_v1_jobs__job_id__input_stats_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InputStatsOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Job Input Stats"
+      }
+    },
+    "/api/v1/jobs/{job_id}/merge": {
+      "post": {
+        "operationId": "merge_job_api_v1_jobs__job_id__merge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobActionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Merge Job"
+      }
+    },
+    "/api/v1/jobs/{job_id}/pause": {
+      "post": {
+        "operationId": "pause_job_api_v1_jobs__job_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobActionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pause Job"
+      }
+    },
+    "/api/v1/jobs/{job_id}/rerun-all": {
+      "post": {
+        "operationId": "rerun_all_api_v1_jobs__job_id__rerun_all_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobOptions"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rerun All"
+      }
+    },
+    "/api/v1/jobs/{job_id}/reset": {
+      "post": {
+        "operationId": "reset_job_api_v1_jobs__job_id__reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobActionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset Job"
+      }
+    },
+    "/api/v1/jobs/{job_id}/resume": {
+      "post": {
+        "operationId": "resume_job_api_v1_jobs__job_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryFailedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobActionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Job"
+      }
+    },
+    "/api/v1/jobs/{job_id}/retry-failed": {
+      "post": {
+        "operationId": "retry_failed_api_v1_jobs__job_id__retry_failed_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryFailedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobActionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Failed"
+      }
+    },
+    "/api/v1/settings/llm": {
+      "get": {
+        "operationId": "get_llm_settings_api_v1_settings_llm_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Llm Settings"
+      },
+      "put": {
+        "operationId": "put_llm_settings_api_v1_settings_llm_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LLMSettingsPutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMSettingsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Llm Settings"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Healthz Healthz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz"
+      }
+    }
+  }
+}
