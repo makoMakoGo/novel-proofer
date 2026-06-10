@@ -3,8 +3,11 @@
 
 export const state = {
     currentJobId: null,
-    currentJobState: null,
-    currentJobPhase: null,
+    currentJobExecutionState: null,
+    currentJobWorkflowPhase: null,
+    currentJobWaitReason: null,
+    currentJobTerminalState: null,
+    currentJobCommands: [],
     currentFilter: 'all',
     activeTab: 'progress',
     chunksData: [],

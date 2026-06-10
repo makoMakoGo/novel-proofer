@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import HTTPException, Request
@@ -19,15 +20,25 @@ from novel_proofer.models import (
     JobOptions,
     JobOut,
     JobProgress,
+    JobSummaryOut,
     LLMOptions,
     LLMSettings,
 )
 from novel_proofer.paths import _rel_debug_dir, _rel_output_path
-from novel_proofer.states import JobState
+from novel_proofer.states import ExecutionState, JobCommand, JobPhase, JobState, TerminalState
 
 _INTERNAL_ERROR_MESSAGE = "internal server error"
 
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+@dataclass(frozen=True)
+class _JobSnapshotFields:
+    workflow_phase: str
+    execution_state: str
+    wait_reason: str | None
+    terminal_state: str | None
+    available_commands: list[str]
 
 
 def _error_code_for_status(status_code: int) -> str:
@@ -73,10 +84,14 @@ def _job_to_out(st: JobStatus) -> JobOut:
         output_path = _rel_output_path(Path(st.output_path))
 
     fmt = st.format
+    snapshot = _job_snapshot_fields(st)
     return JobOut(
         id=st.job_id,
-        state=st.state,
-        phase=st.phase,
+        workflow_phase=snapshot.workflow_phase,
+        execution_state=snapshot.execution_state,
+        wait_reason=snapshot.wait_reason,
+        terminal_state=snapshot.terminal_state,
+        available_commands=snapshot.available_commands,
         created_at=st.created_at,
         started_at=st.started_at,
         finished_at=st.finished_at,
@@ -103,6 +118,83 @@ def _job_to_out(st: JobStatus) -> JobOut:
         stats=dict(st.stats),
         error=st.error,
         cleanup_debug_dir=st.cleanup_debug_dir,
+    )
+
+
+def _job_summary_to_out(st: JobStatus) -> JobSummaryOut:
+    pct = 0
+    if st.total_chunks > 0:
+        pct = int((st.done_chunks / st.total_chunks) * 100)
+
+    snapshot = _job_snapshot_fields(st)
+    return JobSummaryOut(
+        id=st.job_id,
+        workflow_phase=snapshot.workflow_phase,
+        execution_state=snapshot.execution_state,
+        wait_reason=snapshot.wait_reason,
+        terminal_state=snapshot.terminal_state,
+        available_commands=snapshot.available_commands,
+        created_at=st.created_at,
+        input_filename=st.input_filename,
+        output_filename=st.output_filename,
+        progress=JobProgress(total_chunks=st.total_chunks, done_chunks=st.done_chunks, percent=pct),
+        last_error_code=st.last_error_code,
+        llm_model=st.last_llm_model,
+    )
+
+
+def _job_snapshot_fields(st: JobStatus) -> _JobSnapshotFields:
+    state = JobState(st.state)
+    phase = JobPhase(st.phase)
+    execution_state = ExecutionState.IDLE
+    terminal_state: TerminalState | None = None
+    wait_reason: str | None = None
+
+    if state == JobState.QUEUED:
+        execution_state = ExecutionState.QUEUED
+    elif state == JobState.RUNNING:
+        execution_state = ExecutionState.RUNNING
+    elif state == JobState.PAUSED:
+        wait_reason = str(st.wait_reason or "")
+        if not wait_reason:
+            raise ValueError("paused job snapshot requires wait_reason")
+    elif state == JobState.DONE:
+        terminal_state = TerminalState.DONE
+    elif state == JobState.ERROR:
+        terminal_state = TerminalState.ERROR
+    elif state == JobState.CANCELLED:
+        terminal_state = TerminalState.CANCELLED
+    else:
+        raise ValueError(f"unknown job state: {state}")
+
+    commands: list[JobCommand] = []
+    chunk_counts = dict(st.chunk_counts or {})
+    failed_chunks = int(chunk_counts.get("error", 0) or 0)
+    all_chunks_done = st.total_chunks > 0 and int(chunk_counts.get("done", 0) or 0) == st.total_chunks
+
+    if state == JobState.PAUSED and phase == JobPhase.VALIDATE:
+        commands.append(JobCommand.VALIDATE)
+    if state == JobState.PAUSED and phase == JobPhase.PROCESS:
+        commands.append(JobCommand.PROCESS)
+    if state in {JobState.QUEUED, JobState.RUNNING} and phase == JobPhase.PROCESS:
+        commands.append(JobCommand.PAUSE)
+    if state == JobState.ERROR and failed_chunks > 0:
+        commands.append(JobCommand.RETRY_FAILED)
+    if state == JobState.PAUSED and phase == JobPhase.MERGE and all_chunks_done:
+        commands.append(JobCommand.MERGE)
+    if state not in {JobState.QUEUED, JobState.RUNNING, JobState.CANCELLED}:
+        commands.append(JobCommand.DETACH)
+    if state != JobState.CANCELLED:
+        commands.append(JobCommand.RESET)
+    if state == JobState.DONE:
+        commands.append(JobCommand.DOWNLOAD)
+
+    return _JobSnapshotFields(
+        workflow_phase=phase.value,
+        execution_state=execution_state.value,
+        wait_reason=wait_reason,
+        terminal_state=terminal_state.value if terminal_state is not None else None,
+        available_commands=[command.value for command in commands],
     )
 
 

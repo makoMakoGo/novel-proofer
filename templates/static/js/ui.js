@@ -342,8 +342,29 @@ export function setJobCard(job) {
 
 function _stateLabel(s) {
     const v = String(s || '').toLowerCase();
-    const map = { queued: '排队中', running: '运行中', paused: '已暂停', done: '已完成', cancelled: '已删除', error: '出错' };
+    const map = { queued: '排队中', running: '运行中', idle: '空闲', done: '已完成', cancelled: '已删除', error: '出错' };
     return map[v] || (v || '-');
+}
+
+function _snapshotLabel(job) {
+    const execution = String(job?.execution_state || '').toLowerCase();
+    const wait = job?.wait_reason == null ? null : String(job.wait_reason).toLowerCase();
+    const terminal = job?.terminal_state == null ? null : String(job.terminal_state).toLowerCase();
+
+    if (terminal) {
+        const labels = { done: '已完成', error: '出错', cancelled: '已删除' };
+        return labels[terminal] || `未知终态:${terminal}`;
+    }
+    if (execution === 'queued' || execution === 'running') return _stateLabel(execution);
+    if (execution !== 'idle') return `未知执行态:${execution || '-'}`;
+    if (!wait) return '空闲';
+    const waitLabels = {
+        ready_to_process: '等待开始校对',
+        user_paused: '已暂停',
+        ready_to_merge: '等待合并输出',
+        server_recovered: '服务重启后等待继续',
+    };
+    return waitLabels[wait] || `未知等待原因:${wait}`;
 }
 
 export function setProgressFromJob(job) {
@@ -354,29 +375,36 @@ export function setProgressFromJob(job) {
     }
 
     if (elements.progress) elements.progress.classList.remove('hidden');
-    const st = String(job.state || '').toLowerCase();
-    const phase = String(job.phase || '').toLowerCase();
+    const execution = String(job.execution_state || '').toLowerCase();
+    const phase = String(job.workflow_phase || '').toLowerCase();
+    const wait = job?.wait_reason == null ? null : String(job.wait_reason).toLowerCase();
+    const terminal = job?.terminal_state == null ? null : String(job.terminal_state).toLowerCase();
     const done = Number(job?.progress?.done_chunks || 0);
     const total = Number(job?.progress?.total_chunks || 0);
-    const pct = total > 0 ? Math.floor((done / total) * 100) : (st === 'done' ? 100 : 0);
+    const pct = total > 0 ? Math.floor((done / total) * 100) : (terminal === 'done' ? 100 : 0);
     
     if (elements.bar) {
         elements.bar.style.width = pct + '%';
         elements.bar.classList.remove('bg-ink', 'bg-amber-500', 'bg-red-500', 'bg-emerald-500');
-        if (st === 'error') elements.bar.classList.add('bg-red-500');
-        else if (st === 'paused') elements.bar.classList.add('bg-amber-500');
-        else if (st === 'done') elements.bar.classList.add('bg-emerald-500');
+        if (terminal === 'error') elements.bar.classList.add('bg-red-500');
+        else if (wait) elements.bar.classList.add('bg-amber-500');
+        else if (terminal === 'done') elements.bar.classList.add('bg-emerald-500');
         else elements.bar.classList.add('bg-ink');
     }
 
-    let left = _stateLabel(st);
-    if (st === 'running' && phase === 'validate') left = '正在预处理…';
-    if (st === 'paused' && phase === 'process') left = (done > 0 ? '校对已暂停' : '预处理完成，等待开始校对');
-    if (st === 'running' && phase === 'process') left = '正在校对…';
-    if (st === 'error' && phase === 'process') left = '校对出错';
-    if (st === 'paused' && phase === 'merge') left = '校对完成，等待合并输出';
-    if (st === 'running' && phase === 'merge') left = '正在合并输出…';
-    if (st === 'done') left = '完成';
+    let left = _snapshotLabel(job);
+    if (execution === 'queued' && phase === 'validate') left = '预处理排队中…';
+    if (execution === 'running' && phase === 'validate') left = '正在预处理…';
+    if (wait === 'ready_to_process') left = '预处理完成，等待开始校对';
+    if (wait === 'user_paused') left = '校对已暂停';
+    if (execution === 'queued' && phase === 'process') left = '校对排队中…';
+    if (execution === 'running' && phase === 'process') left = '正在校对…';
+    if (terminal === 'error' && phase === 'process') left = '校对出错';
+    if (wait === 'ready_to_merge') left = '校对完成，等待合并输出';
+    if (wait === 'server_recovered') left = '服务重启后等待继续';
+    if (execution === 'queued' && phase === 'merge') left = '合并排队中…';
+    if (execution === 'running' && phase === 'merge') left = '正在合并输出…';
+    if (terminal === 'done') left = '完成';
 
     if (elements.metaLeft) elements.metaLeft.textContent = left;
     if (elements.metaCounter) elements.metaCounter.textContent = `${done}/${total}`;
@@ -412,7 +440,7 @@ const LLM_FIELDS = [
 
 export function refreshLocks(job) {
     const hasJob = !!job;
-    const llmLocked = hasJob && ['queued', 'running'].includes(String(job.state || ''));
+    const llmLocked = hasJob && ['queued', 'running'].includes(String(job.execution_state || ''));
 
     _setFieldsDisabled(SLICE_FIELDS, hasJob);
     if (elements.sliceLockHint) {
@@ -428,8 +456,10 @@ export function refreshLocks(job) {
 }
 
 export function refreshWorkflowStepper(job) {
-    const st = String(job?.state || '').toLowerCase();
-    const phase = String(job?.phase || '').toLowerCase();
+    const execution = String(job?.execution_state || '').toLowerCase();
+    const phase = String(job?.workflow_phase || '').toLowerCase();
+    const terminal = job?.terminal_state == null ? null : String(job.terminal_state).toLowerCase();
+    const wait = job?.wait_reason == null ? null : String(job.wait_reason).toLowerCase();
     const hasJob = !!job;
 
     const order = ['validate', 'process', 'merge', 'done'];
@@ -438,7 +468,7 @@ export function refreshWorkflowStepper(job) {
 
     let cur = hasJob ? phase : 'validate';
     if (!order.includes(cur)) cur = 'validate';
-    if (st === 'done') cur = 'done';
+    if (terminal === 'done') cur = 'done';
     const curIdx = order.indexOf(cur);
 
     elements.wfNodes.forEach((node) => {
@@ -446,7 +476,7 @@ export function refreshWorkflowStepper(job) {
         const idx = order.indexOf(step);
         const isDone = idx >= 0 && idx < curIdx;
         const isActive = idx === curIdx;
-        const isError = isActive && hasJob && st === 'error';
+        const isError = isActive && hasJob && terminal === 'error';
 
         const dot = node.querySelector('.wf-dot');
         const label = node.querySelector('.wf-label');
@@ -486,10 +516,12 @@ export function refreshWorkflowStepper(job) {
         let badgeText = '未开始';
         let badgeCls = 'text-xs text-slate-400';
         if (hasJob) {
-            badgeText = _stateLabel(st);
-            if (st === 'paused') badgeCls = 'text-xs text-amber-600';
-            else if (st === 'error') badgeCls = 'text-xs text-red-600';
-            else if (st === 'done') badgeCls = 'text-xs text-emerald-600';
+            badgeText = _snapshotLabel(job);
+            if (wait) badgeCls = 'text-xs text-amber-600';
+            else if (terminal === 'error') badgeCls = 'text-xs text-red-600';
+            else if (terminal === 'done') badgeCls = 'text-xs text-emerald-600';
+            else if (terminal === 'cancelled') badgeCls = 'text-xs text-slate-600';
+            else if (execution === 'queued' || execution === 'running') badgeCls = 'text-xs text-slate-500';
             else badgeCls = 'text-xs text-slate-500';
         }
         elements.wfStateBadge.textContent = badgeText;
@@ -527,13 +559,13 @@ export function refreshActionButtons(job) {
     }
 
     if (elements.btnProcess) {
-        elements.btnProcess.textContent = (actions.hasJob && actions.phase === 'process' && actions.doneChunks > 0)
+        elements.btnProcess.textContent = (actions.hasJob && actions.workflowPhase === 'process' && actions.doneChunks > 0)
             ? '继续校对'
             : '开始校对';
     }
 
     if (elements.btnCancel) elements.btnCancel.textContent = '新任务';
-    if (elements.btnReset) elements.btnReset.textContent = (actions.hasJob && actions.state === 'done') ? '删除任务记录' : '删除任务';
+    if (elements.btnReset) elements.btnReset.textContent = (actions.hasJob && actions.terminalState === 'done') ? '删除任务记录' : '删除任务';
 
     const primaryKey = primaryActionKey(job, {
         hasLocalFile,
