@@ -328,6 +328,13 @@
       },
       "JobOut": {
         "properties": {
+          "available_commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Available Commands",
+            "type": "array"
+          },
           "cleanup_debug_dir": {
             "default": true,
             "title": "Cleanup Debug Dir",
@@ -351,6 +358,10 @@
               }
             ],
             "title": "Error"
+          },
+          "execution_state": {
+            "title": "Execution State",
+            "type": "string"
           },
           "finished_at": {
             "anyOf": [
@@ -416,10 +427,6 @@
             ],
             "title": "Output Path"
           },
-          "phase": {
-            "title": "Phase",
-            "type": "string"
-          },
           "progress": {
             "$ref": "#/components/schemas/JobProgress"
           },
@@ -434,22 +441,44 @@
             ],
             "title": "Started At"
           },
-          "state": {
-            "title": "State",
-            "type": "string"
-          },
           "stats": {
             "additionalProperties": {
               "type": "integer"
             },
             "title": "Stats",
             "type": "object"
+          },
+          "terminal_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal State"
+          },
+          "wait_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Reason"
+          },
+          "workflow_phase": {
+            "title": "Workflow Phase",
+            "type": "string"
           }
         },
         "required": [
           "id",
-          "state",
-          "phase",
+          "workflow_phase",
+          "execution_state",
           "created_at",
           "started_at",
           "finished_at",
@@ -488,9 +517,20 @@
       },
       "JobSummaryOut": {
         "properties": {
+          "available_commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Available Commands",
+            "type": "array"
+          },
           "created_at": {
             "title": "Created At",
             "type": "number"
+          },
+          "execution_state": {
+            "title": "Execution State",
+            "type": "string"
           },
           "id": {
             "title": "Id",
@@ -526,22 +566,40 @@
             "title": "Output Filename",
             "type": "string"
           },
-          "phase": {
-            "title": "Phase",
-            "type": "string"
-          },
           "progress": {
             "$ref": "#/components/schemas/JobProgress"
           },
-          "state": {
-            "title": "State",
+          "terminal_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terminal State"
+          },
+          "wait_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Reason"
+          },
+          "workflow_phase": {
+            "title": "Workflow Phase",
             "type": "string"
           }
         },
         "required": [
           "id",
-          "state",
-          "phase",
+          "workflow_phase",
+          "execution_state",
           "created_at",
           "input_filename",
           "output_filename",

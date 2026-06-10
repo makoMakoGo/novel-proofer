@@ -14,16 +14,17 @@ from typing import Any
 
 from novel_proofer.env import env_float
 from novel_proofer.formatting.config import FormatConfig
-from novel_proofer.states import ChunkState, JobPhase, JobState
+from novel_proofer.states import ChunkState, JobPhase, JobState, WaitReason
 from novel_proofer.workflow import WorkflowInvariantError, validate_job_phase_invariants
 
 logger = logging.getLogger(__name__)
 
-_JOB_STATE_VERSION = 2
+_JOB_STATE_VERSION = 3
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
 _JOB_PHASES = {phase.value for phase in JobPhase}
 _JOB_STATES = {state.value for state in JobState}
+_WAIT_REASONS = {reason.value for reason in WaitReason}
 _CHUNK_STATE_VALUES = {state.value for state in ChunkState}
 _CHUNK_STATES = (
     ChunkState.PENDING,
@@ -36,6 +37,7 @@ _CHUNK_STATES = (
 _ALLOWED_JOB_UPDATE_FIELDS = {
     "state",
     "phase",
+    "wait_reason",
     "started_at",
     "finished_at",
     "output_filename",
@@ -94,6 +96,8 @@ class JobStatus:
     state: str
     # validate|process|merge|done
     phase: str
+    # ready_to_process|user_paused|ready_to_merge|server_recovered when state=paused; otherwise None
+    wait_reason: str | None
     created_at: float
     started_at: float | None
     finished_at: float | None
@@ -316,6 +320,7 @@ def _job_from_dict(d: dict[str, Any]) -> JobStatus:
             "job_id",
             "state",
             "phase",
+            "wait_reason",
             "created_at",
             "started_at",
             "finished_at",
@@ -360,6 +365,13 @@ def _job_from_dict(d: dict[str, Any]) -> JobStatus:
 
     state = _parse_enum(_require_field(job, "state", context="job"), context="job.state", allowed=_JOB_STATES)
     phase = _parse_enum(_require_field(job, "phase", context="job"), context="job.phase", allowed=_JOB_PHASES)
+    wait_reason = _parse_optional_str(job.get("wait_reason"), context="job.wait_reason")
+    if wait_reason is not None and wait_reason not in _WAIT_REASONS:
+        raise ValueError(f"job.wait_reason must be one of {sorted(_WAIT_REASONS)!r}")
+    if state == JobState.PAUSED and wait_reason is None:
+        raise ValueError("job.wait_reason is required when job.state is 'paused'")
+    if state != JobState.PAUSED and wait_reason is not None:
+        raise ValueError("job.wait_reason must be null unless job.state is 'paused'")
     try:
         validate_job_phase_invariants(state, phase, [chunk.state for chunk in chunks])
     except WorkflowInvariantError as e:
@@ -374,6 +386,7 @@ def _job_from_dict(d: dict[str, Any]) -> JobStatus:
         job_id=job_id,
         state=state,
         phase=phase,
+        wait_reason=wait_reason,
         created_at=_parse_float(_require_field(job, "created_at", context="job"), context="job.created_at"),
         started_at=_parse_optional_float(job.get("started_at"), context="job.started_at"),
         finished_at=_parse_optional_float(job.get("finished_at"), context="job.finished_at"),
@@ -595,6 +608,7 @@ class JobStore:
         if st.state in {JobState.QUEUED, JobState.RUNNING}:
             logger.warning("restoring in-flight job as paused after restart: job_id=%s state=%s", st.job_id, st.state)
             st.state = JobState.PAUSED
+            st.wait_reason = WaitReason.SERVER_RECOVERED
             st.finished_at = None
             changed = True
 
@@ -652,6 +666,7 @@ class JobStore:
             job_id=st.job_id,
             state=st.state,
             phase=st.phase,
+            wait_reason=st.wait_reason,
             created_at=st.created_at,
             started_at=st.started_at,
             finished_at=st.finished_at,
@@ -678,6 +693,7 @@ class JobStore:
             job_id=job_id,
             state=JobState.QUEUED,
             phase=JobPhase.VALIDATE,
+            wait_reason=None,
             created_at=time.time(),
             started_at=None,
             finished_at=None,
@@ -760,12 +776,33 @@ class JobStore:
                 return
             if st.state == JobState.CANCELLED:
                 return
-            for k, v in kwargs.items():
+            requested_state = str(kwargs.get("state", st.state))
+            if requested_state not in _JOB_STATES:
+                raise ValueError(f"JobStore.update: state must be one of {sorted(_JOB_STATES)!r}")
+            target_state = (
+                str(st.state)
+                if str(st.state) == JobState.PAUSED.value
+                and requested_state in {JobState.QUEUED.value, JobState.RUNNING.value}
+                else requested_state
+            )
+            raw_wait_reason = kwargs.get(
+                "wait_reason", st.wait_reason if target_state == JobState.PAUSED.value else None
+            )
+            target_wait_reason = None if raw_wait_reason is None else str(raw_wait_reason)
+            if target_wait_reason is not None and target_wait_reason not in _WAIT_REASONS:
+                raise ValueError(f"JobStore.update: wait_reason must be one of {sorted(_WAIT_REASONS)!r}")
+            if target_state == JobState.PAUSED.value and target_wait_reason is None:
+                raise ValueError("JobStore.update: wait_reason is required when state is paused")
+            if target_state != JobState.PAUSED.value and target_wait_reason is not None:
+                raise ValueError("JobStore.update: wait_reason must be None unless state is paused")
+            normalized = dict(kwargs)
+            if "state" in normalized:
+                normalized["state"] = target_state
+            normalized["wait_reason"] = target_wait_reason if target_state == JobState.PAUSED.value else None
+            for k, v in normalized.items():
                 if k == "started_at" and st.started_at is not None and v is not None:
                     continue
-                if k == "state" and st.state == JobState.PAUSED and v in {JobState.QUEUED, JobState.RUNNING}:
-                    continue
-                if k == "state" and v in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}:
+                if k == "state" and str(v) in {JobState.DONE.value, JobState.ERROR.value, JobState.CANCELLED.value}:
                     self._paused.discard(job_id)
                 setattr(st, k, v)
             self._mark_dirty_locked(job_id)
@@ -856,6 +893,7 @@ class JobStore:
             # Update visible state immediately so clients can stop polling.
             if st.state not in {JobState.DONE, JobState.ERROR}:
                 st.state = JobState.CANCELLED
+                st.wait_reason = None
                 st.finished_at = now
 
             for i, cs in enumerate(st.chunk_statuses):
@@ -883,6 +921,7 @@ class JobStore:
 
             self._paused.add(job_id)
             st.state = JobState.PAUSED
+            st.wait_reason = WaitReason.USER_PAUSED
             st.finished_at = None
             self._mark_dirty_locked(job_id)
         return True
@@ -898,6 +937,7 @@ class JobStore:
             self._paused.discard(job_id)
             if st.state == JobState.PAUSED:
                 st.state = JobState.QUEUED
+                st.wait_reason = None
                 st.finished_at = None
             self._mark_dirty_locked(job_id)
         return True

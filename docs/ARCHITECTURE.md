@@ -557,12 +557,36 @@ class JobStore:
             # 已标记为 cancelled（删除任务/reset）的 job 不接受更新
             if st.state == "cancelled":
                 return
-            # started_at 只接受首次写入
-            if k == "started_at" and st.started_at is not None:
-                continue
-            # paused 状态不被 running 覆盖
-            if k == "state" and st.state == "paused" and v in {"queued", "running"}:
-                continue
+
+            requested_state = kwargs.get("state", st.state)
+            target_state = (
+                st.state
+                if st.state == "paused" and requested_state in {"queued", "running"}
+                else requested_state
+            )
+            target_wait_reason = kwargs.get(
+                "wait_reason",
+                st.wait_reason if target_state == "paused" else None,
+            )
+
+            # paused 必须携带显式 wait_reason；离开 paused 时清空 wait_reason
+            if target_state == "paused" and target_wait_reason is None:
+                raise ValueError("wait_reason is required when state is paused")
+            if target_state != "paused" and target_wait_reason is not None:
+                raise ValueError("wait_reason must be null unless state is paused")
+
+            for k, v in kwargs.items():
+                # started_at 只接受首次写入
+                if k == "started_at" and st.started_at is not None:
+                    continue
+                # paused 状态不被 running 覆盖
+                if k == "state" and st.state == "paused" and v in {"queued", "running"}:
+                    continue
+                setattr(st, k, v)
+
+            # 离开 paused 时清空 wait_reason
+            if st.state != "paused":
+                st.wait_reason = None
 
             # 标记 dirty：让后台线程批量落盘（避免每个 chunk 更新都做一次全量 snapshot + 写盘）
             self._persist_dirty.add(job_id)
@@ -576,6 +600,7 @@ class JobStore:
 **设计要点**：
 - 所有状态更新通过 `update()` / `update_chunk()` 方法（受锁保护）
 - 使用 snapshot 模式返回数据（避免外部修改内部状态）；区分 full snapshot 与 summary snapshot，避免轮询路径复制全部 `chunk_statuses`
+- API 快照暴露 `workflow_phase` / `execution_state` / `wait_reason` / `terminal_state` / `available_commands`，不把内部 `state` / `phase` 原样公开给前端判断
 - `is_cancelled()` / `is_paused()` 用于 worker 检查是否应该停止
 - 可选持久化：Job 快照写入 `output/.state/jobs/{job_id}.json`，用于重启恢复；快照损坏时会直接报错，不做静默修复
 - 持久化节流：后台线程合并写入（默认 5s 一次，可用 `NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S` 覆盖），避免高并发 chunk 更新导致频繁磁盘 IO

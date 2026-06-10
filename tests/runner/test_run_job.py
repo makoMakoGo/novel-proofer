@@ -78,6 +78,41 @@ def test_run_job_local_mode_cleans_up_by_default(monkeypatch: pytest.MonkeyPatch
             GLOBAL_JOBS.delete(job_id)
 
 
+def test_run_job_pause_after_chunk_initialization_stays_in_process_phase(monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        work_dir = Path(td) / "work"
+        out_path = Path(td) / "out.txt"
+        input_path = Path(td) / "in.txt"
+        input_path.write_text("第1章\r\n\r\n你好。\r\n", encoding="utf-8")
+
+        job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+        job_id = job.job_id
+        original_init_chunks = GLOBAL_JOBS.init_chunks
+
+        def pause_after_init_chunks(target_job_id: str, *args: object, **kwargs: object) -> None:
+            original_init_chunks(target_job_id, *args, **kwargs)
+            assert GLOBAL_JOBS.pause(target_job_id) is True
+
+        monkeypatch.setattr(GLOBAL_JOBS, "init_chunks", pause_after_init_chunks)
+        try:
+            GLOBAL_JOBS.update(job_id, work_dir=str(work_dir), output_path=str(out_path))
+
+            runner.run_job(
+                job_id,
+                input_path,
+                FormatConfig(max_chunk_chars=2000),
+                LLMConfig(base_url="http://example.com", model="m", max_concurrency=1),
+            )
+
+            st = GLOBAL_JOBS.get(job_id)
+            assert st is not None
+            assert st.state == "paused"
+            assert st.phase == "process"
+            assert st.wait_reason == "user_paused"
+        finally:
+            GLOBAL_JOBS.delete(job_id)
+
+
 def test_run_job_local_mode_keeps_debug_dir_when_opted_out(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         runner,

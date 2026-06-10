@@ -19,6 +19,7 @@ from novel_proofer.converters import (
     _chunk_to_out,
     _error,
     _format_from_options,
+    _job_summary_to_out,
     _job_to_out,
     _llm_from_options,
     _llm_settings_from_defaults,
@@ -45,7 +46,6 @@ from novel_proofer.models import (
     JobGetResponse,
     JobListResponse,
     JobOptions,
-    JobProgress,
     JobSummaryOut,
     LLMOptions,
     LLMSettingsPutRequest,
@@ -495,23 +495,7 @@ async def list_jobs(
         st_phase = st.phase.lower()
         if wanted_phases and st_phase not in wanted_phases:
             continue
-        out.append(
-            JobSummaryOut(
-                id=st.job_id,
-                state=st.state,
-                phase=st_phase or JobPhase.VALIDATE,
-                created_at=st.created_at,
-                input_filename=st.input_filename,
-                output_filename=st.output_filename,
-                progress=JobProgress(
-                    total_chunks=int(st.total_chunks or 0),
-                    done_chunks=int(st.done_chunks or 0),
-                    percent=int((st.done_chunks / st.total_chunks) * 100) if st.total_chunks else 0,
-                ),
-                last_error_code=st.last_error_code,
-                llm_model=st.last_llm_model,
-            )
-        )
+        out.append(_job_summary_to_out(st))
 
     if offset:
         out = out[offset:]

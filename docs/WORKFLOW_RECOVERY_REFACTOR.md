@@ -71,11 +71,13 @@ It does not own backend job lifecycle. Browser refresh, close, hidden, or naviga
 
 The API snapshot should expose enough information for the UI to render without guessing from `paused`.
 
-Required meanings:
+Implemented snapshot fields:
 
-- `phase`: where the durable workflow is, such as validate, process, merge, or done.
+- `workflow_phase`: where the durable workflow is, such as validate, process, merge, or done.
 - `execution_state`: whether this backend process currently has an execution attempt for the job.
 - `wait_reason`: why a durable job is idle.
+- `terminal_state`: whether the job has reached done, error, or cancelled.
+- `available_commands`: the explicit commands the UI may present.
 
 Recommended wait reasons:
 
@@ -84,7 +86,7 @@ Recommended wait reasons:
 - `ready_to_merge`: processing completed and the job is waiting for merge.
 - `server_recovered`: the backend restarted after a previously active job, and no execution is currently running.
 
-The implementation may choose exact field names in the API snapshot issue, but the meanings must remain separable.
+The UI must consume these fields directly instead of reconstructing behavior from the internal persisted `state` and `phase`.
 
 ## Browser Lifecycle
 

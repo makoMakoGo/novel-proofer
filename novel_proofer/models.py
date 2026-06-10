@@ -71,8 +71,11 @@ class JobProgress(BaseModel):
 
 class JobOut(BaseModel):
     id: str
-    state: str
-    phase: str
+    workflow_phase: str
+    execution_state: str
+    wait_reason: str | None = None
+    terminal_state: str | None = None
+    available_commands: list[str] = Field(default_factory=list)
     created_at: float
     started_at: float | None
     finished_at: float | None
@@ -129,8 +132,11 @@ class MergeRequest(BaseModel):
 
 class JobSummaryOut(BaseModel):
     id: str
-    state: str
-    phase: str
+    workflow_phase: str
+    execution_state: str
+    wait_reason: str | None = None
+    terminal_state: str | None = None
+    available_commands: list[str] = Field(default_factory=list)
     created_at: float
     input_filename: str
     output_filename: str

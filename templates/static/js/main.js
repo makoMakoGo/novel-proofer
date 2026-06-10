@@ -104,13 +104,32 @@ function ensurePolling(jobId, intervalMs) {
     state.pollTimer = setInterval(() => refreshJobOnce(jobId), ms);
 }
 
+function clearCurrentJobSnapshot() {
+    state.currentJobExecutionState = null;
+    state.currentJobWorkflowPhase = null;
+    state.currentJobWaitReason = null;
+    state.currentJobTerminalState = null;
+    state.currentJobCommands = [];
+}
+
+function jobLoadingSnapshot(jobId) {
+    return {
+        id: jobId,
+        execution_state: null,
+        workflow_phase: null,
+        wait_reason: null,
+        terminal_state: null,
+        available_commands: [],
+        progress: { done_chunks: 0, total_chunks: 0 },
+    };
+}
+
 function detachUi({ clearFile = true } = {}) {
     stopPolling();
     state.pollInFlight = false;
 
     state.currentJobId = null;
-    state.currentJobState = null;
-    state.currentJobPhase = null;
+    clearCurrentJobSnapshot();
     setAttachedJobId(null);
 
     state.chunksData = [];
@@ -151,8 +170,11 @@ async function refreshJobOnce(jobId) {
         }
 
         const job = r?.data?.job;
-        state.currentJobState = job?.state || null;
-        state.currentJobPhase = job?.phase || null;
+        state.currentJobExecutionState = job?.execution_state || null;
+        state.currentJobWorkflowPhase = job?.workflow_phase || null;
+        state.currentJobWaitReason = job?.wait_reason || null;
+        state.currentJobTerminalState = job?.terminal_state || null;
+        state.currentJobCommands = Array.isArray(job?.available_commands) ? job.available_commands.map((v) => String(v)) : [];
 
         // Sync slice settings from job
         const fmt = job?.format || null;
@@ -188,20 +210,23 @@ async function refreshJobOnce(jobId) {
         if (state.activeTab !== 'debug') state.chunkCounts = null;
         ui.updateStats();
 
-        if (job?.state === 'error') {
+        if (job?.terminal_state === 'error') {
             ui.show(job?.error || '处理出错');
-        } else if (job?.state === 'paused' && job?.phase === 'process') {
-            const done = Number(job?.progress?.done_chunks || 0);
-            ui.show(done > 0 ? '校对已暂停：可点击“继续校对”。' : '预处理完成：可点击“开始校对”。');
-        } else if (job?.state === 'paused' && job?.phase === 'merge') {
+        } else if (job?.wait_reason === 'ready_to_process') {
+            ui.show('预处理完成：可点击“开始校对”。');
+        } else if (job?.wait_reason === 'user_paused') {
+            ui.show('校对已暂停：可点击“继续校对”。');
+        } else if (job?.wait_reason === 'ready_to_merge') {
             ui.show('校对完成：可点击“合并输出”。');
-        } else if (job?.state === 'done') {
+        } else if (job?.wait_reason === 'server_recovered') {
+            ui.show('服务重启后任务已恢复为等待状态，请确认后继续。');
+        } else if (job?.terminal_state === 'done') {
             ui.show(job?.output_path ? `完成。输出：${job.output_path}\n可点击“下载输出”或“新任务”。` : '完成。已输出到项目 output/ 目录。');
         }
 
-        const stLower = String(job?.state || '').toLowerCase();
-        const phaseLower = String(job?.phase || '').toLowerCase();
-        const shouldPoll = stLower === 'queued' || stLower === 'running';
+        const executionLower = String(job?.execution_state || '').toLowerCase();
+        const phaseLower = String(job?.workflow_phase || '').toLowerCase();
+        const shouldPoll = executionLower === 'queued' || executionLower === 'running';
         if (shouldPoll) {
             const nextMs = phaseLower === 'process' ? PROCESS_POLL_MS : NON_PROCESS_POLL_MS;
             ensurePolling(jobId, nextMs);
@@ -225,6 +250,12 @@ async function refreshJobOnce(jobId) {
 async function attachJob(jobId) {
     const jid = String(jobId || '').trim();
     if (!jid) return;
+    const switchingJob = state.currentJobId !== jid;
+    if (switchingJob) {
+        stopPolling();
+        state.pollInFlight = false;
+        clearCurrentJobSnapshot();
+    }
     state.currentJobId = jid;
     setAttachedJobId(jid);
 
@@ -235,6 +266,12 @@ async function attachJob(jobId) {
     state.lastChunksFetchAtMs = 0;
     ui.updateStats();
     ui.renderChunksTable();
+    const loadingJob = jobLoadingSnapshot(jid);
+    ui.setJobCard(loadingJob);
+    ui.setProgressFromJob(null);
+    ui.refreshLocks(loadingJob);
+    ui.refreshActionButtons(loadingJob);
+    ui.refreshSourcePanelFromJob(loadingJob);
 
     ensurePolling(jid, PROCESS_POLL_MS);
     await refreshJobOnce(jid);
@@ -536,7 +573,7 @@ function bindJobActionEvents() {
             ui.elements.form.requestSubmit();
             return;
         }
-        if (state.currentJobState === 'paused' && state.currentJobPhase === 'validate') {
+        if (state.currentJobCommands.includes('validate')) {
             const jobId = state.currentJobId;
             ui.show('继续预处理…');
 
@@ -554,9 +591,9 @@ function bindJobActionEvents() {
     ui.elements.btnCancel?.addEventListener('click', async () => {
         const jobId = state.currentJobId;
         if (!jobId) return;
-        const st = String(state.currentJobState || '').toLowerCase();
-        const phase = String(state.currentJobPhase || '').toLowerCase();
-        const isRunning = st === 'queued' || st === 'running';
+        const execution = String(state.currentJobExecutionState || '').toLowerCase();
+        const phase = String(state.currentJobWorkflowPhase || '').toLowerCase();
+        const isRunning = execution === 'queued' || execution === 'running';
         if (isRunning) {
             if (phase === 'process') ui.show('校对进行中：请先“暂停”再开始新任务。');
             else ui.show('任务运行中：请等待完成后再开始新任务，或直接删除任务。');
@@ -569,16 +606,17 @@ function bindJobActionEvents() {
     ui.elements.btnReset?.addEventListener('click', async () => {
         const jobId = state.currentJobId;
         if (!jobId) return;
-        const st = String(state.currentJobState || '').toLowerCase();
-        const phase = String(state.currentJobPhase || '').toLowerCase();
+        const execution = String(state.currentJobExecutionState || '').toLowerCase();
+        const phase = String(state.currentJobWorkflowPhase || '').toLowerCase();
+        const terminal = String(state.currentJobTerminalState || '').toLowerCase();
 
-        if ((st === 'queued' || st === 'running') && phase === 'process') {
+        if ((execution === 'queued' || execution === 'running') && phase === 'process') {
             ui.show('校对进行中：请先“暂停”再删除任务。');
             return;
         }
 
-        const isRunning = st === 'queued' || st === 'running';
-        const isDone = st === 'done';
+        const isRunning = execution === 'queued' || execution === 'running';
+        const isDone = terminal === 'done';
         const isValidateRunning = isRunning && phase === 'validate';
         const isMergeRunning = isRunning && phase === 'merge';
         const phaseLabel = isValidateRunning ? '预处理' : (isMergeRunning ? '合并' : '');
@@ -591,7 +629,7 @@ function bindJobActionEvents() {
 
         if (!(await modal.showConfirm(confirmMsg))) return;
 
-        ui.show((st === 'done') ? '正在删除任务记录…' : '正在删除任务…');
+        ui.show(isDone ? '正在删除任务记录…' : '正在删除任务…');
         const r = await api.resetJob(jobId);
         if (!r.ok) { ui.show(r.error); return; }
 

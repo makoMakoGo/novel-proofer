@@ -3,12 +3,54 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import JobStore, _job_from_dict
-from novel_proofer.states import ChunkState, JobPhase, JobState
+from novel_proofer.states import ChunkState, JobPhase, JobState, WaitReason
+
+
+def _raw_job_snapshot(
+    *,
+    state: JobState | str = JobState.PAUSED,
+    phase: JobPhase | str = JobPhase.PROCESS,
+    wait_reason: WaitReason | str | None = WaitReason.USER_PAUSED,
+) -> dict[str, Any]:
+    return {
+        "version": 3,
+        "job": {
+            "job_id": "a" * 32,
+            "state": state,
+            "phase": phase,
+            "wait_reason": wait_reason,
+            "created_at": 1.0,
+            "started_at": None,
+            "finished_at": None,
+            "input_filename": "in.txt",
+            "output_filename": "out.txt",
+            "total_chunks": 0,
+            "done_chunks": 0,
+            "format": json.loads(json.dumps(FormatConfig().__dict__)),
+            "last_error_code": None,
+            "last_retry_count": 0,
+            "last_llm_model": None,
+            "stats": {},
+            "chunk_statuses": [],
+            "chunk_counts": {
+                "pending": 0,
+                "processing": 0,
+                "retrying": 0,
+                "done": 0,
+                "error": 0,
+            },
+            "error": None,
+            "output_path": None,
+            "work_dir": None,
+            "cleanup_debug_dir": True,
+        },
+    }
 
 
 def test_job_store_update_respects_started_at_and_pause_rules() -> None:
@@ -23,11 +65,18 @@ def test_job_store_update_respects_started_at_and_pause_rules() -> None:
     assert st.started_at == 123.0
 
     assert js.pause(job_id) is True
+    paused = js.get(job_id)
+    assert paused is not None
+    assert paused.wait_reason == WaitReason.USER_PAUSED
     # update() should not move paused -> running/queued.
     js.update(job_id, state="running")
     st2 = js.get(job_id)
     assert st2 is not None
     assert st2.state == "paused"
+    assert st2.wait_reason == WaitReason.USER_PAUSED
+
+    with pytest.raises(ValueError, match="wait_reason must be one of"):
+        js.update(job_id, wait_reason="bogus")
 
     # Marking terminal state should clear paused flag.
     js.update(job_id, state="done", finished_at=time.time())
@@ -144,6 +193,9 @@ def test_job_store_pause_resume_and_delete() -> None:
 
     assert js.resume(job_id) is True
     assert js.is_paused(job_id) is False
+    resumed = js.get(job_id)
+    assert resumed is not None
+    assert resumed.wait_reason is None
 
     assert js.delete(job_id) is True
     assert js.delete(job_id) is False
@@ -208,39 +260,24 @@ def test_job_store_persistence_is_throttled_and_flushable(tmp_path: Path) -> Non
 
 
 def test_job_from_dict_rejects_missing_phase() -> None:
-    raw = {
-        "version": 2,
-        "job": {
-            "job_id": "a" * 32,
-            "state": "paused",
-            "created_at": 1.0,
-            "started_at": None,
-            "finished_at": None,
-            "input_filename": "in.txt",
-            "output_filename": "out.txt",
-            "total_chunks": 0,
-            "done_chunks": 0,
-            "format": json.loads(json.dumps(FormatConfig().__dict__)),
-            "last_error_code": None,
-            "last_retry_count": 0,
-            "last_llm_model": None,
-            "stats": {},
-            "chunk_statuses": [],
-            "chunk_counts": {
-                "pending": 0,
-                "processing": 0,
-                "retrying": 0,
-                "done": 0,
-                "error": 0,
-            },
-            "error": None,
-            "output_path": None,
-            "work_dir": None,
-            "cleanup_debug_dir": True,
-        },
-    }
+    raw = _raw_job_snapshot()
+    del raw["job"]["phase"]
 
     with pytest.raises(ValueError, match="missing field 'phase'"):
+        _job_from_dict(raw)
+
+
+def test_job_from_dict_rejects_paused_without_wait_reason() -> None:
+    raw = _raw_job_snapshot(wait_reason=None)
+
+    with pytest.raises(ValueError, match="wait_reason is required"):
+        _job_from_dict(raw)
+
+
+def test_job_from_dict_rejects_non_paused_with_wait_reason() -> None:
+    raw = _raw_job_snapshot(state=JobState.RUNNING, phase=JobPhase.VALIDATE, wait_reason=WaitReason.USER_PAUSED)
+
+    with pytest.raises(ValueError, match="wait_reason must be null"):
         _job_from_dict(raw)
 
 
@@ -249,11 +286,12 @@ def test_job_store_load_persisted_jobs_rejects_corrupt_snapshot(tmp_path: Path) 
     bad.write_text(
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "job": {
                     "job_id": "a" * 32,
                     "state": JobState.PAUSED,
                     "phase": JobPhase.MERGE,
+                    "wait_reason": WaitReason.READY_TO_MERGE,
                     "created_at": 1.0,
                     "started_at": None,
                     "finished_at": None,
@@ -312,11 +350,12 @@ def test_job_store_load_persisted_jobs_restores_running_job_as_paused(tmp_path: 
     snap.write_text(
         json.dumps(
             {
-                "version": 2,
+                "version": 3,
                 "job": {
                     "job_id": "b" * 32,
                     "state": JobState.RUNNING,
                     "phase": JobPhase.PROCESS,
+                    "wait_reason": None,
                     "created_at": 1.0,
                     "started_at": 2.0,
                     "finished_at": None,
@@ -368,6 +407,7 @@ def test_job_store_load_persisted_jobs_restores_running_job_as_paused(tmp_path: 
         assert loaded is not None
         assert loaded.state == JobState.PAUSED
         assert loaded.phase == JobPhase.PROCESS
+        assert loaded.wait_reason == WaitReason.SERVER_RECOVERED
         assert loaded.chunk_statuses[0].state == ChunkState.PENDING
         assert loaded.chunk_statuses[0].started_at is None
     finally:

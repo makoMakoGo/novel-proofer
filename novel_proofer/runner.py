@@ -19,7 +19,7 @@ from novel_proofer.formatting.rules import apply_rules, is_chapter_title, is_sep
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
 from novel_proofer.llm.config import LLMConfig, build_first_chunk_config
-from novel_proofer.states import ChunkState, JobPhase, JobState
+from novel_proofer.states import ChunkState, JobPhase, JobState, WaitReason
 from novel_proofer.workflow import ProcessingFinalState, processing_final_state
 
 logger = logging.getLogger(__name__)
@@ -253,6 +253,7 @@ def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
         job_id,
         state=JobState.PAUSED,
         phase=JobPhase.MERGE,
+        wait_reason=WaitReason.READY_TO_MERGE,
         finished_at=None,
         error=None,
         done_chunks=total,
@@ -554,7 +555,13 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
                 GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
                 return
             if GLOBAL_JOBS.is_paused(job_id):
-                GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.VALIDATE, finished_at=None)
+                GLOBAL_JOBS.update(
+                    job_id,
+                    state=JobState.PAUSED,
+                    phase=JobPhase.VALIDATE,
+                    wait_reason=WaitReason.USER_PAUSED,
+                    finished_at=None,
+                )
                 return
 
             pre_fmt = replace(fmt, paragraph_indent=False)
@@ -572,10 +579,23 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
             GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
             return
         if GLOBAL_JOBS.is_paused(job_id):
-            GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.VALIDATE, finished_at=None)
+            GLOBAL_JOBS.update(
+                job_id,
+                state=JobState.PAUSED,
+                phase=JobPhase.PROCESS,
+                wait_reason=WaitReason.USER_PAUSED,
+                finished_at=None,
+            )
             return
 
-        GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.PROCESS, finished_at=None, error=None)
+        GLOBAL_JOBS.update(
+            job_id,
+            state=JobState.PAUSED,
+            phase=JobPhase.PROCESS,
+            wait_reason=WaitReason.READY_TO_PROCESS,
+            finished_at=None,
+            error=None,
+        )
     except Exception as e:
         if GLOBAL_JOBS.is_cancelled(job_id):
             GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
@@ -630,7 +650,13 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
         GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
         return
     if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
-        GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.PROCESS, finished_at=None)
+        GLOBAL_JOBS.update(
+            job_id,
+            state=JobState.PAUSED,
+            phase=JobPhase.PROCESS,
+            wait_reason=WaitReason.USER_PAUSED,
+            finished_at=None,
+        )
         return
     _post_llm_deterministic_pass(job_id, work_dir)
     _finalize_processing(job_id, total, "some chunks still failed; update LLM config and retry again")
@@ -675,7 +701,13 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
         GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
         return
     if outcome == "paused" or GLOBAL_JOBS.is_paused(job_id):
-        GLOBAL_JOBS.update(job_id, state=JobState.PAUSED, phase=JobPhase.PROCESS, finished_at=None)
+        GLOBAL_JOBS.update(
+            job_id,
+            state=JobState.PAUSED,
+            phase=JobPhase.PROCESS,
+            wait_reason=WaitReason.USER_PAUSED,
+            finished_at=None,
+        )
         return
 
     _post_llm_deterministic_pass(job_id, work_dir)

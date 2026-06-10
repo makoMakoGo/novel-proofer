@@ -23,11 +23,31 @@ def _wait_job_done(client: TestClient, job_id: str, *, timeout_seconds: float = 
         res = client.get(f"/api/v1/jobs/{job_id}?chunks=0")
         assert res.status_code == 200
         last = res.json()
-        state = (last.get("job") or {}).get("state")
-        if state in {"done", "error", "cancelled", "paused"}:
+        job = last.get("job") or {}
+        if job.get("terminal_state") in {"done", "error", "cancelled"} or job.get("wait_reason"):
             return last
         time.sleep(0.05)
     raise AssertionError(f"job did not finish in time; last={last}")
+
+
+def _assert_snapshot(
+    body: dict,
+    *,
+    workflow_phase: str,
+    execution_state: str = "idle",
+    wait_reason: str | None = None,
+    terminal_state: str | None = None,
+    commands: set[str] | None = None,
+) -> None:
+    job = body.get("job") or {}
+    assert "state" not in job
+    assert "phase" not in job
+    assert job.get("workflow_phase") == workflow_phase
+    assert job.get("execution_state") == execution_state
+    assert job.get("wait_reason") == wait_reason
+    assert job.get("terminal_state") == terminal_state
+    if commands is not None:
+        assert set(job.get("available_commands") or []) == commands
 
 
 def test_healthz_ok():
@@ -80,8 +100,12 @@ def test_create_job_local_mode_writes_output_and_is_queryable(monkeypatch: pytes
         try:
             # Phase 1: validate (ends paused, ready to process)
             st1 = _wait_job_done(client, job_id, timeout_seconds=5.0)
-            assert (st1.get("job") or {}).get("state") == "paused"
-            assert (st1.get("job") or {}).get("phase") == "process"
+            _assert_snapshot(
+                st1,
+                workflow_phase="process",
+                wait_reason="ready_to_process",
+                commands={"process", "detach", "reset"},
+            )
 
             # Phase 2: process (ends paused, ready to merge)
             r2 = client.post(
@@ -90,15 +114,23 @@ def test_create_job_local_mode_writes_output_and_is_queryable(monkeypatch: pytes
             )
             assert r2.status_code == 200, r2.text
             st2 = _wait_job_done(client, job_id, timeout_seconds=10.0)
-            assert (st2.get("job") or {}).get("state") == "paused"
-            assert (st2.get("job") or {}).get("phase") == "merge"
+            _assert_snapshot(
+                st2,
+                workflow_phase="merge",
+                wait_reason="ready_to_merge",
+                commands={"merge", "detach", "reset"},
+            )
 
             # Phase 3: merge (ends done, output exists)
             r3 = client.post(f"/api/v1/jobs/{job_id}/merge", json={"cleanup_debug_dir": True})
             assert r3.status_code == 200, r3.text
             final = _wait_job_done(client, job_id, timeout_seconds=5.0)
-            assert (final.get("job") or {}).get("state") == "done"
-            assert (final.get("job") or {}).get("phase") == "done"
+            _assert_snapshot(
+                final,
+                workflow_phase="done",
+                terminal_state="done",
+                commands={"detach", "reset", "download"},
+            )
 
             output_filename = (final.get("job") or {}).get("output_filename")
             assert isinstance(output_filename, str) and output_filename
@@ -157,20 +189,18 @@ def test_get_job_chunk_filter_and_paging(monkeypatch: pytest.MonkeyPatch):
 
         try:
             st1 = _wait_job_done(client, job_id, timeout_seconds=10.0)
-            assert (st1.get("job") or {}).get("state") == "paused"
-            assert (st1.get("job") or {}).get("phase") == "process"
+            _assert_snapshot(st1, workflow_phase="process", wait_reason="ready_to_process")
 
             client.post(
                 f"/api/v1/jobs/{job_id}/resume",
                 json={"llm": {"base_url": "http://example.com", "model": "m", "max_concurrency": 1}},
             )
             st2 = _wait_job_done(client, job_id, timeout_seconds=10.0)
-            assert (st2.get("job") or {}).get("state") == "paused"
-            assert (st2.get("job") or {}).get("phase") == "merge"
+            _assert_snapshot(st2, workflow_phase="merge", wait_reason="ready_to_merge")
 
             client.post(f"/api/v1/jobs/{job_id}/merge", json={"cleanup_debug_dir": True})
             final = _wait_job_done(client, job_id, timeout_seconds=10.0)
-            assert (final.get("job") or {}).get("state") == "done"
+            _assert_snapshot(final, workflow_phase="done", terminal_state="done")
 
             r2 = client.get(f"/api/v1/jobs/{job_id}?chunks=1&chunk_state=done&limit=1&offset=0")
             assert r2.status_code == 200
@@ -262,13 +292,14 @@ def test_create_job_llm_enabled_requires_base_url_and_model(monkeypatch: pytest.
         try:
             # Validate succeeds without LLM config.
             st1 = _wait_job_done(client, job_id, timeout_seconds=5.0)
-            assert (st1.get("job") or {}).get("state") == "paused"
-            assert (st1.get("job") or {}).get("phase") == "process"
+            _assert_snapshot(st1, workflow_phase="process", wait_reason="ready_to_process")
 
             # Processing requires base_url/model and should fail when empty.
             client.post(f"/api/v1/jobs/{job_id}/resume", json={"llm": {"base_url": "", "model": ""}})
             st2 = _wait_job_done(client, job_id, timeout_seconds=5.0)
-            assert (st2.get("job") or {}).get("state") == "error"
+            _assert_snapshot(
+                st2, workflow_phase="process", terminal_state="error", commands={"retry_failed", "detach", "reset"}
+            )
         finally:
             GLOBAL_JOBS.delete(str(job_id))
 
@@ -297,6 +328,56 @@ def test_job_actions_pause_resume(monkeypatch: pytest.MonkeyPatch):
         assert st2 is not None and st2.state in {"queued", "running"}
     finally:
         GLOBAL_JOBS.delete(job2.job_id)
+
+
+def test_job_snapshot_contract_covers_running_user_paused_and_cancelled() -> None:
+    client = TestClient(api.app)
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    try:
+        GLOBAL_JOBS.update(job.job_id, state="running", phase="process")
+
+        running = client.get(f"/api/v1/jobs/{job.job_id}?chunks=0")
+        assert running.status_code == 200, running.text
+        _assert_snapshot(
+            running.json(),
+            workflow_phase="process",
+            execution_state="running",
+            commands={"pause", "reset"},
+        )
+
+        paused = client.post(f"/api/v1/jobs/{job.job_id}/pause")
+        assert paused.status_code == 200, paused.text
+        _assert_snapshot(
+            paused.json(),
+            workflow_phase="process",
+            wait_reason="user_paused",
+            commands={"process", "detach", "reset"},
+        )
+
+        GLOBAL_JOBS.resume(job.job_id)
+        GLOBAL_JOBS.cancel(job.job_id)
+        cancelled = client.get(f"/api/v1/jobs/{job.job_id}?chunks=0")
+        assert cancelled.status_code == 200, cancelled.text
+        _assert_snapshot(cancelled.json(), workflow_phase="process", terminal_state="cancelled", commands=set())
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
+
+
+def test_job_list_uses_snapshot_contract_without_legacy_state_fields() -> None:
+    client = TestClient(api.app)
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    try:
+        r = client.get("/api/v1/jobs")
+        assert r.status_code == 200, r.text
+        item = next(j for j in (r.json().get("jobs") or []) if j.get("id") == job.job_id)
+        assert "state" not in item
+        assert "phase" not in item
+        assert item.get("workflow_phase") == "validate"
+        assert item.get("execution_state") == "queued"
+        assert item.get("wait_reason") is None
+        assert item.get("terminal_state") is None
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
 
 
 def test_job_input_stats_endpoint(monkeypatch: pytest.MonkeyPatch):
@@ -544,8 +625,7 @@ def test_rerun_all_creates_new_job_without_reupload(monkeypatch: pytest.MonkeyPa
 
         try:
             st1 = _wait_job_done(client, job_id, timeout_seconds=5.0)
-            assert (st1.get("job") or {}).get("state") == "paused"
-            assert (st1.get("job") or {}).get("phase") == "process"
+            _assert_snapshot(st1, workflow_phase="process", wait_reason="ready_to_process")
 
             input_cache = out_dir / ".inputs" / f"{job_id}.txt"
             assert input_cache.exists()
@@ -556,8 +636,7 @@ def test_rerun_all_creates_new_job_without_reupload(monkeypatch: pytest.MonkeyPa
             assert isinstance(job_id2, str) and len(job_id2) == 32 and job_id2 != job_id
 
             st2 = _wait_job_done(client, job_id2, timeout_seconds=5.0)
-            assert (st2.get("job") or {}).get("state") == "paused"
-            assert (st2.get("job") or {}).get("phase") == "process"
+            _assert_snapshot(st2, workflow_phase="process", wait_reason="ready_to_process")
 
             # Process + merge rerun job to ensure output path is produced.
             client.post(
@@ -565,12 +644,11 @@ def test_rerun_all_creates_new_job_without_reupload(monkeypatch: pytest.MonkeyPa
                 json={"llm": {"base_url": "http://example.com", "model": "m", "max_concurrency": 1}},
             )
             st3 = _wait_job_done(client, job_id2, timeout_seconds=5.0)
-            assert (st3.get("job") or {}).get("state") == "paused"
-            assert (st3.get("job") or {}).get("phase") == "merge"
+            _assert_snapshot(st3, workflow_phase="merge", wait_reason="ready_to_merge")
 
             client.post(f"/api/v1/jobs/{job_id2}/merge", json={"cleanup_debug_dir": True})
             final2 = _wait_job_done(client, job_id2, timeout_seconds=5.0)
-            assert (final2.get("job") or {}).get("state") == "done"
+            _assert_snapshot(final2, workflow_phase="done", terminal_state="done")
             assert (out_dir / (final2.get("job") or {}).get("output_filename")).exists()
         finally:
             GLOBAL_JOBS.delete(str(job_id))
