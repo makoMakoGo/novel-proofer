@@ -100,6 +100,20 @@ Rules in `formatting/rules.py` (order matters):
 - `POST /api/v1/jobs/purge-all` - Delete all jobs except optionally excluded IDs
 - `GET /api/v1/settings/llm` / `PUT` - Read/write default LLM settings
 
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues for `makoMakoGo/novel-proofer`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The repo uses the canonical engineering-skill triage label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo; use OpenSpec plus the project docs as the domain source of truth. See `docs/agents/domain.md`.
+
 <!-- OPENSPEC:START -->
 # OpenSpec Instructions
 
