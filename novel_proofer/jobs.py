@@ -776,27 +776,35 @@ class JobStore:
                 return
             if st.state == JobState.CANCELLED:
                 return
-            requested_state = kwargs.get("state", st.state)
+            requested_state = str(kwargs.get("state", st.state))
+            if requested_state not in _JOB_STATES:
+                raise ValueError(f"JobStore.update: state must be one of {sorted(_JOB_STATES)!r}")
             target_state = (
-                st.state
-                if st.state == JobState.PAUSED and requested_state in {JobState.QUEUED, JobState.RUNNING}
+                str(st.state)
+                if str(st.state) == JobState.PAUSED.value
+                and requested_state in {JobState.QUEUED.value, JobState.RUNNING.value}
                 else requested_state
             )
-            target_wait_reason = kwargs.get("wait_reason", st.wait_reason if target_state == JobState.PAUSED else None)
-            if target_state == JobState.PAUSED and target_wait_reason is None:
+            raw_wait_reason = kwargs.get(
+                "wait_reason", st.wait_reason if target_state == JobState.PAUSED.value else None
+            )
+            target_wait_reason = None if raw_wait_reason is None else str(raw_wait_reason)
+            if target_wait_reason is not None and target_wait_reason not in _WAIT_REASONS:
+                raise ValueError(f"JobStore.update: wait_reason must be one of {sorted(_WAIT_REASONS)!r}")
+            if target_state == JobState.PAUSED.value and target_wait_reason is None:
                 raise ValueError("JobStore.update: wait_reason is required when state is paused")
-            if target_state != JobState.PAUSED and target_wait_reason is not None:
+            if target_state != JobState.PAUSED.value and target_wait_reason is not None:
                 raise ValueError("JobStore.update: wait_reason must be None unless state is paused")
-            for k, v in kwargs.items():
+            normalized = dict(kwargs)
+            if "state" in normalized:
+                normalized["state"] = target_state
+            normalized["wait_reason"] = target_wait_reason if target_state == JobState.PAUSED.value else None
+            for k, v in normalized.items():
                 if k == "started_at" and st.started_at is not None and v is not None:
                     continue
-                if k == "state" and st.state == JobState.PAUSED and v in {JobState.QUEUED, JobState.RUNNING}:
-                    continue
-                if k == "state" and v in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}:
+                if k == "state" and str(v) in {JobState.DONE.value, JobState.ERROR.value, JobState.CANCELLED.value}:
                     self._paused.discard(job_id)
                 setattr(st, k, v)
-            if st.state != JobState.PAUSED:
-                st.wait_reason = None
             self._mark_dirty_locked(job_id)
             flush_now = st.state in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}
         if flush_now:

@@ -1,6 +1,6 @@
 
 import { state, UI_STATE_FIELDS } from './state.js';
-import { actionAvailability, primaryActionKey } from './workflow.js';
+import { actionAvailability, primaryActionKey, snapshotLabel, snapshotTone } from './workflow.js';
 
 // DOM Elements Cache
 export const elements = {};
@@ -340,33 +340,6 @@ export function setJobCard(job) {
     if (elements.jobInputName) elements.jobInputName.textContent = j?.input_filename ? String(j.input_filename) : '-';
 }
 
-function _stateLabel(s) {
-    const v = String(s || '').toLowerCase();
-    const map = { queued: '排队中', running: '运行中', idle: '空闲', done: '已完成', cancelled: '已删除', error: '出错' };
-    return map[v] || (v || '-');
-}
-
-function _snapshotLabel(job) {
-    const execution = String(job?.execution_state || '').toLowerCase();
-    const wait = job?.wait_reason == null ? null : String(job.wait_reason).toLowerCase();
-    const terminal = job?.terminal_state == null ? null : String(job.terminal_state).toLowerCase();
-
-    if (terminal) {
-        const labels = { done: '已完成', error: '出错', cancelled: '已删除' };
-        return labels[terminal] || `未知终态:${terminal}`;
-    }
-    if (execution === 'queued' || execution === 'running') return _stateLabel(execution);
-    if (execution !== 'idle') return `未知执行态:${execution || '-'}`;
-    if (!wait) return '空闲';
-    const waitLabels = {
-        ready_to_process: '等待开始校对',
-        user_paused: '已暂停',
-        ready_to_merge: '等待合并输出',
-        server_recovered: '服务重启后等待继续',
-    };
-    return waitLabels[wait] || `未知等待原因:${wait}`;
-}
-
 export function setProgressFromJob(job) {
     if (!job) {
         if (elements.progress) elements.progress.classList.add('hidden');
@@ -392,7 +365,7 @@ export function setProgressFromJob(job) {
         else elements.bar.classList.add('bg-ink');
     }
 
-    let left = _snapshotLabel(job);
+    let left = snapshotLabel(job);
     if (execution === 'queued' && phase === 'validate') left = '预处理排队中…';
     if (execution === 'running' && phase === 'validate') left = '正在预处理…';
     if (wait === 'ready_to_process') left = '预处理完成，等待开始校对';
@@ -440,7 +413,8 @@ const LLM_FIELDS = [
 
 export function refreshLocks(job) {
     const hasJob = !!job;
-    const llmLocked = hasJob && ['queued', 'running'].includes(String(job.execution_state || ''));
+    const execution = String(job?.execution_state || '').toLowerCase();
+    const llmLocked = hasJob && ['queued', 'running'].includes(execution);
 
     _setFieldsDisabled(SLICE_FIELDS, hasJob);
     if (elements.sliceLockHint) {
@@ -516,13 +490,15 @@ export function refreshWorkflowStepper(job) {
         let badgeText = '未开始';
         let badgeCls = 'text-xs text-slate-400';
         if (hasJob) {
-            badgeText = _snapshotLabel(job);
-            if (wait) badgeCls = 'text-xs text-amber-600';
-            else if (terminal === 'error') badgeCls = 'text-xs text-red-600';
-            else if (terminal === 'done') badgeCls = 'text-xs text-emerald-600';
-            else if (terminal === 'cancelled') badgeCls = 'text-xs text-slate-600';
-            else if (execution === 'queued' || execution === 'running') badgeCls = 'text-xs text-slate-500';
-            else badgeCls = 'text-xs text-slate-500';
+            const tone = snapshotTone(job);
+            badgeText = snapshotLabel(job);
+            badgeCls = {
+                wait: 'text-xs text-amber-600',
+                error: 'text-xs text-red-600',
+                success: 'text-xs text-emerald-600',
+                active: 'text-xs text-slate-500',
+                neutral: 'text-xs text-slate-500',
+            }[tone] || 'text-xs text-slate-500';
         }
         elements.wfStateBadge.textContent = badgeText;
         elements.wfStateBadge.className = badgeCls;

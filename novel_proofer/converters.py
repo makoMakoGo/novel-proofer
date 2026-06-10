@@ -25,7 +25,7 @@ from novel_proofer.models import (
     LLMSettings,
 )
 from novel_proofer.paths import _rel_debug_dir, _rel_output_path
-from novel_proofer.states import ExecutionState, JobCommand, JobPhase, JobState, TerminalState
+from novel_proofer.states import ExecutionState, JobCommand, JobPhase, JobState, TerminalState, WaitReason
 
 _INTERNAL_ERROR_MESSAGE = "internal server error"
 
@@ -143,30 +143,7 @@ def _job_summary_to_out(st: JobStatus) -> JobSummaryOut:
     )
 
 
-def _job_snapshot_fields(st: JobStatus) -> _JobSnapshotFields:
-    state = JobState(st.state)
-    phase = JobPhase(st.phase)
-    execution_state = ExecutionState.IDLE
-    terminal_state: TerminalState | None = None
-    wait_reason: str | None = None
-
-    if state == JobState.QUEUED:
-        execution_state = ExecutionState.QUEUED
-    elif state == JobState.RUNNING:
-        execution_state = ExecutionState.RUNNING
-    elif state == JobState.PAUSED:
-        wait_reason = str(st.wait_reason or "")
-        if not wait_reason:
-            raise ValueError("paused job snapshot requires wait_reason")
-    elif state == JobState.DONE:
-        terminal_state = TerminalState.DONE
-    elif state == JobState.ERROR:
-        terminal_state = TerminalState.ERROR
-    elif state == JobState.CANCELLED:
-        terminal_state = TerminalState.CANCELLED
-    else:
-        raise ValueError(f"unknown job state: {state}")
-
+def _available_commands(st: JobStatus, *, state: JobState, phase: JobPhase) -> list[str]:
     commands: list[JobCommand] = []
     chunk_counts = dict(st.chunk_counts or {})
     failed_chunks = int(chunk_counts.get("error", 0) or 0)
@@ -189,12 +166,37 @@ def _job_snapshot_fields(st: JobStatus) -> _JobSnapshotFields:
     if state == JobState.DONE:
         commands.append(JobCommand.DOWNLOAD)
 
+    return [command.value for command in commands]
+
+
+def _terminal_state_for(state: JobState) -> TerminalState | None:
+    if state in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}:
+        return TerminalState(state.value)
+    return None
+
+
+def _job_snapshot_fields(st: JobStatus) -> _JobSnapshotFields:
+    state = JobState(st.state)
+    phase = JobPhase(st.phase)
+    execution_state = ExecutionState.IDLE
+    terminal_state = _terminal_state_for(state)
+    wait_reason: str | None = None
+
+    if state == JobState.QUEUED:
+        execution_state = ExecutionState.QUEUED
+    elif state == JobState.RUNNING:
+        execution_state = ExecutionState.RUNNING
+    elif state == JobState.PAUSED:
+        if st.wait_reason is None:
+            raise ValueError("paused job snapshot requires wait_reason")
+        wait_reason = WaitReason(st.wait_reason).value
+
     return _JobSnapshotFields(
         workflow_phase=phase.value,
         execution_state=execution_state.value,
         wait_reason=wait_reason,
         terminal_state=terminal_state.value if terminal_state is not None else None,
-        available_commands=[command.value for command in commands],
+        available_commands=_available_commands(st, state=state, phase=phase),
     )
 
 

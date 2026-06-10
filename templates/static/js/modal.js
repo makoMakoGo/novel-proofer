@@ -1,6 +1,8 @@
 
 // Modal logic
 
+import { snapshotLabel, snapshotTone } from './workflow.js';
+
 let modalCloseCallback = null;
 let modalCloseTimer = null;
 let modalToken = 0;
@@ -104,24 +106,18 @@ export function showJobPicker(jobs, { hasCurrentJob = false } = {}) {
         const listHtml = jobs.slice(0, 20).map((j) => {
             const jobId = escapeHtml(j?.id ? String(j.id) : '');
             const id8 = escapeHtml(j?.id ? String(j.id).slice(0, 8) : '-');
-            const execution = String(j?.execution_state || '').toLowerCase();
-            const terminal = j?.terminal_state == null ? null : String(j.terminal_state).toLowerCase();
-            const wait = j?.wait_reason == null ? null : String(j.wait_reason).toLowerCase();
             const phase = escapeHtml(j?.workflow_phase || '-');
-            const statusText = escapeHtml(terminal || wait || execution || '-');
+            const statusText = escapeHtml(snapshotLabel(j));
             const prog = escapeHtml(`${j?.progress?.done_chunks || 0}/${j?.progress?.total_chunks || 0}`);
             const name = escapeHtml(j?.input_filename ? String(j.input_filename) : '');
             
-            const statusKey = terminal || wait || execution;
-            const stColor = { 
-                done: 'bg-emerald-100 text-emerald-700', 
-                error: 'bg-red-100 text-red-700', 
-                ready_to_process: 'bg-amber-100 text-amber-700',
-                user_paused: 'bg-amber-100 text-amber-700',
-                ready_to_merge: 'bg-amber-100 text-amber-700',
-                server_recovered: 'bg-amber-100 text-amber-700',
-                cancelled: 'bg-slate-200 text-slate-600',
-            }[statusKey] || 'bg-slate-100 text-slate-600';
+            const stColor = {
+                wait: 'bg-amber-100 text-amber-700',
+                error: 'bg-red-100 text-red-700',
+                success: 'bg-emerald-100 text-emerald-700',
+                active: 'bg-slate-100 text-slate-600',
+                neutral: 'bg-slate-200 text-slate-600',
+            }[snapshotTone(j)] || 'bg-slate-100 text-slate-600';
 
             return `<button type="button" data-job-id="${jobId}" class="job-item w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 border border-slate-100 hover:border-slate-200 transition-colors flex items-center gap-3">
             <span class="font-mono text-xs text-slate-400">${id8}</span>

@@ -3,12 +3,54 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import JobStore, _job_from_dict
 from novel_proofer.states import ChunkState, JobPhase, JobState, WaitReason
+
+
+def _raw_job_snapshot(
+    *,
+    state: JobState | str = JobState.PAUSED,
+    phase: JobPhase | str = JobPhase.PROCESS,
+    wait_reason: WaitReason | str | None = WaitReason.USER_PAUSED,
+) -> dict[str, Any]:
+    return {
+        "version": 3,
+        "job": {
+            "job_id": "a" * 32,
+            "state": state,
+            "phase": phase,
+            "wait_reason": wait_reason,
+            "created_at": 1.0,
+            "started_at": None,
+            "finished_at": None,
+            "input_filename": "in.txt",
+            "output_filename": "out.txt",
+            "total_chunks": 0,
+            "done_chunks": 0,
+            "format": json.loads(json.dumps(FormatConfig().__dict__)),
+            "last_error_code": None,
+            "last_retry_count": 0,
+            "last_llm_model": None,
+            "stats": {},
+            "chunk_statuses": [],
+            "chunk_counts": {
+                "pending": 0,
+                "processing": 0,
+                "retrying": 0,
+                "done": 0,
+                "error": 0,
+            },
+            "error": None,
+            "output_path": None,
+            "work_dir": None,
+            "cleanup_debug_dir": True,
+        },
+    }
 
 
 def test_job_store_update_respects_started_at_and_pause_rules() -> None:
@@ -31,6 +73,10 @@ def test_job_store_update_respects_started_at_and_pause_rules() -> None:
     st2 = js.get(job_id)
     assert st2 is not None
     assert st2.state == "paused"
+    assert st2.wait_reason == WaitReason.USER_PAUSED
+
+    with pytest.raises(ValueError, match="wait_reason must be one of"):
+        js.update(job_id, wait_reason="bogus")
 
     # Marking terminal state should clear paused flag.
     js.update(job_id, state="done", finished_at=time.time())
@@ -214,40 +260,24 @@ def test_job_store_persistence_is_throttled_and_flushable(tmp_path: Path) -> Non
 
 
 def test_job_from_dict_rejects_missing_phase() -> None:
-    raw = {
-        "version": 3,
-        "job": {
-            "job_id": "a" * 32,
-            "state": "paused",
-            "wait_reason": WaitReason.USER_PAUSED,
-            "created_at": 1.0,
-            "started_at": None,
-            "finished_at": None,
-            "input_filename": "in.txt",
-            "output_filename": "out.txt",
-            "total_chunks": 0,
-            "done_chunks": 0,
-            "format": json.loads(json.dumps(FormatConfig().__dict__)),
-            "last_error_code": None,
-            "last_retry_count": 0,
-            "last_llm_model": None,
-            "stats": {},
-            "chunk_statuses": [],
-            "chunk_counts": {
-                "pending": 0,
-                "processing": 0,
-                "retrying": 0,
-                "done": 0,
-                "error": 0,
-            },
-            "error": None,
-            "output_path": None,
-            "work_dir": None,
-            "cleanup_debug_dir": True,
-        },
-    }
+    raw = _raw_job_snapshot()
+    del raw["job"]["phase"]
 
     with pytest.raises(ValueError, match="missing field 'phase'"):
+        _job_from_dict(raw)
+
+
+def test_job_from_dict_rejects_paused_without_wait_reason() -> None:
+    raw = _raw_job_snapshot(wait_reason=None)
+
+    with pytest.raises(ValueError, match="wait_reason is required"):
+        _job_from_dict(raw)
+
+
+def test_job_from_dict_rejects_non_paused_with_wait_reason() -> None:
+    raw = _raw_job_snapshot(state=JobState.RUNNING, phase=JobPhase.VALIDATE, wait_reason=WaitReason.USER_PAUSED)
+
+    with pytest.raises(ValueError, match="wait_reason must be null"):
         _job_from_dict(raw)
 
 

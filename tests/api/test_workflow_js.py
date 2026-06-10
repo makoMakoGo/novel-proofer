@@ -8,7 +8,7 @@ def test_frontend_workflow_actions_use_snapshot_commands() -> None:
     script = textwrap.dedent(
         """
         import assert from 'node:assert/strict';
-        import { actionAvailability, primaryActionKey } from './templates/static/js/workflow.js';
+        import { actionAvailability, primaryActionKey, snapshotLabel, snapshotTone } from './templates/static/js/workflow.js';
 
         const readyToProcess = {
             id: 'job1',
@@ -29,6 +29,8 @@ def test_frontend_workflow_actions_use_snapshot_commands() -> None:
         };
         assert.equal(actionAvailability(userPaused).canProcess, true);
         assert.equal(actionAvailability(userPaused).canPause, false);
+        assert.equal(snapshotLabel(userPaused), '已暂停');
+        assert.equal(snapshotTone(userPaused), 'wait');
 
         const running = {
             id: 'job2',
@@ -67,6 +69,8 @@ def test_frontend_workflow_actions_use_snapshot_commands() -> None:
         };
         assert.equal(actionAvailability(done).canDownload, true);
         assert.equal(primaryActionKey(done), 'download');
+        assert.equal(snapshotLabel(done), '已完成');
+        assert.equal(snapshotTone(done), 'success');
 
         const cancelled = {
             id: 'job5',
