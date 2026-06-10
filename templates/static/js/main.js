@@ -726,8 +726,13 @@ function bindLifecycleEvents() {
         stopPolling();
         state.pollInFlight = false;
     };
+    const resumeUiObserver = (event) => {
+        if (!event.persisted || !state.currentJobId) return;
+        refreshJobOnce(state.currentJobId);
+    };
     window.addEventListener('pagehide', stopUiObserver);
     window.addEventListener('beforeunload', stopUiObserver);
+    window.addEventListener('pageshow', resumeUiObserver);
 }
 
 function restoreLastAttachedJob() {

@@ -28,7 +28,7 @@
 
 | Test case | 说明 |
 | --- | --- |
-| `tests/api/test_lifecycle_js.py::test_browser_lifecycle_handlers_do_not_mutate_jobs` | 验证浏览器 `pagehide/beforeunload` 生命周期只停止本地 UI observer，不会调用 best-effort pause、beacon、keepalive、pause/reset 等后端任务变更逻辑。 |
+| `tests/api/test_lifecycle_js.py::test_browser_lifecycle_handlers_do_not_mutate_jobs` | 验证浏览器 `pagehide/beforeunload` 生命周期只停止本地 UI observer，不会调用 best-effort pause、beacon、keepalive、pause/reset 等后端任务变更逻辑；从 bfcache `pageshow` 返回时只重新拉取快照恢复 observer。 |
 
 ## tests/formatting/test_chunking.py
 
