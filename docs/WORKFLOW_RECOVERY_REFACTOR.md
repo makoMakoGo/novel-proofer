@@ -14,7 +14,7 @@ The current implementation overloads `job.state`, especially `paused`, with seve
 - the server restarted after a job used to be queued or running;
 - the UI is detached but the backend job still exists.
 
-The frontend also attempts a best-effort pause during `pagehide` and `beforeunload`, while localStorage reattaches the last job on reload. That makes refresh behavior nondeterministic: the same refresh may pause the job if the unload request arrives, or leave it running if it does not.
+The previous frontend attempted a best-effort pause during `pagehide` and `beforeunload`, while localStorage reattached the last job on reload. That made refresh behavior nondeterministic: the same refresh could pause the job if the unload request arrived, or leave it running if it did not.
 
 ## Decision
 

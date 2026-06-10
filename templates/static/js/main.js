@@ -722,8 +722,12 @@ function bindJobActionEvents() {
 }
 
 function bindLifecycleEvents() {
-    window.addEventListener('pagehide', () => api.bestEffortPauseJob(state.currentJobId));
-    window.addEventListener('beforeunload', () => api.bestEffortPauseJob(state.currentJobId));
+    const stopUiObserver = () => {
+        stopPolling();
+        state.pollInFlight = false;
+    };
+    window.addEventListener('pagehide', stopUiObserver);
+    window.addEventListener('beforeunload', stopUiObserver);
 }
 
 function restoreLastAttachedJob() {
