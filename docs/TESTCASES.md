@@ -171,6 +171,7 @@
 | Test case | 说明 |
 | --- | --- |
 | `tests/runner/test_run_job.py::test_run_job_missing_paths_sets_error` | `run_job()` 若 job 缺少 `work_dir/output_path` 必须置为 error 并提供错误信息。 |
+| `tests/runner/test_run_job.py::test_run_job_pause_during_validation_stays_in_validate_phase` | validation 分片前收到 pause 时，任务保持 `paused + validate + user_paused`，不会错误触发执行停止事件。 |
 | `tests/runner/test_run_job.py::test_run_job_local_mode_cleans_up_by_default` | 本地模式（LLM 关闭）默认在任务 done 后清理调试目录（`cleanup_debug_dir=True`）。 |
 | `tests/runner/test_run_job.py::test_run_job_local_mode_keeps_debug_dir_when_opted_out` | 显式关闭清理时应保留调试目录结构（`README.txt/pre/out`），且不应生成 `req/`、`error/` 目录。 |
 
