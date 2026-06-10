@@ -582,7 +582,7 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
             GLOBAL_JOBS.update(
                 job_id,
                 state=JobState.PAUSED,
-                phase=JobPhase.VALIDATE,
+                phase=JobPhase.PROCESS,
                 wait_reason=WaitReason.USER_PAUSED,
                 finished_at=None,
             )

@@ -104,16 +104,32 @@ function ensurePolling(jobId, intervalMs) {
     state.pollTimer = setInterval(() => refreshJobOnce(jobId), ms);
 }
 
-function detachUi({ clearFile = true } = {}) {
-    stopPolling();
-    state.pollInFlight = false;
-
-    state.currentJobId = null;
+function clearCurrentJobSnapshot() {
     state.currentJobExecutionState = null;
     state.currentJobWorkflowPhase = null;
     state.currentJobWaitReason = null;
     state.currentJobTerminalState = null;
     state.currentJobCommands = [];
+}
+
+function jobLoadingSnapshot(jobId) {
+    return {
+        id: jobId,
+        execution_state: null,
+        workflow_phase: null,
+        wait_reason: null,
+        terminal_state: null,
+        available_commands: [],
+        progress: { done_chunks: 0, total_chunks: 0 },
+    };
+}
+
+function detachUi({ clearFile = true } = {}) {
+    stopPolling();
+    state.pollInFlight = false;
+
+    state.currentJobId = null;
+    clearCurrentJobSnapshot();
     setAttachedJobId(null);
 
     state.chunksData = [];
@@ -234,6 +250,12 @@ async function refreshJobOnce(jobId) {
 async function attachJob(jobId) {
     const jid = String(jobId || '').trim();
     if (!jid) return;
+    const switchingJob = state.currentJobId !== jid;
+    if (switchingJob) {
+        stopPolling();
+        state.pollInFlight = false;
+        clearCurrentJobSnapshot();
+    }
     state.currentJobId = jid;
     setAttachedJobId(jid);
 
@@ -244,6 +266,12 @@ async function attachJob(jobId) {
     state.lastChunksFetchAtMs = 0;
     ui.updateStats();
     ui.renderChunksTable();
+    const loadingJob = jobLoadingSnapshot(jid);
+    ui.setJobCard(loadingJob);
+    ui.setProgressFromJob(null);
+    ui.refreshLocks(loadingJob);
+    ui.refreshActionButtons(loadingJob);
+    ui.refreshSourcePanelFromJob(loadingJob);
 
     ensurePolling(jid, PROCESS_POLL_MS);
     await refreshJobOnce(jid);
