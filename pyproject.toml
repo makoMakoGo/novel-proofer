@@ -26,7 +26,6 @@ target-version = "py312"
 line-length = 120
 extend-exclude = [
   "output",
-  "openspec",
   ".venv",
   ".pytest_cache",
   ".playwright-mcp",
