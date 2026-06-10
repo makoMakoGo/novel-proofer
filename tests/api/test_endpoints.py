@@ -454,7 +454,7 @@ def test_job_input_stats_endpoint(monkeypatch: pytest.MonkeyPatch):
         job4_dir = jobs_dir / job4.job_id
         job4_dir.mkdir(parents=True, exist_ok=True)
         (job4_dir / "x.txt").write_text("x", encoding="utf-8")
-        GLOBAL_JOBS.update(job4.job_id, state="done")
+        GLOBAL_JOBS.update(job4.job_id, state="done", phase="done")
 
         input_cache = out_dir / ".inputs" / f"{job4.job_id}.txt"
         input_cache.parent.mkdir(parents=True, exist_ok=True)

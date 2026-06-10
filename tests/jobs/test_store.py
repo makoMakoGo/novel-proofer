@@ -79,7 +79,7 @@ def test_job_store_update_respects_started_at_and_pause_rules() -> None:
         js.update(job_id, wait_reason="bogus")
 
     # Marking terminal state should clear paused flag.
-    js.update(job_id, state="done", finished_at=time.time())
+    js.update(job_id, state="done", phase="done", finished_at=time.time())
     assert js.is_paused(job_id) is False
 
 

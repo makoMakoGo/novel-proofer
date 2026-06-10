@@ -64,6 +64,26 @@
 | `tests/jobs/test_store.py::test_job_store_ignores_unknown_jobs_and_cancelled_updates` | 对未知 job 的操作应无副作用；对已标记为 `cancelled` 的 job 的 `update()/update_chunk()` 应 no-op，避免状态被“复活”。 |
 | `tests/jobs/test_store.py::test_job_store_persistence_is_throttled_and_flushable` | 持久化写盘不应发生在每次 `update_chunk()` 的热路径；dirty 更新应被节流并可通过 `flush_persistence()` 主动触发落盘。 |
 
+## tests/test_workflow.py
+
+| Test case | 说明 |
+| --- | --- |
+| `tests/test_workflow.py::test_pause_guard_is_process_only_and_in_flight_only` | 兼容层校验 pause 只允许在 `process` 阶段且执行中。 |
+| `tests/test_workflow.py::test_resume_guard_selects_validate_or_process_target` | 兼容层校验 resume 会按当前 phase 选择 `validate` 或 `process` 目标。 |
+| `tests/test_workflow.py::test_retry_guard_requires_error_state_with_failed_chunks` | 兼容层校验 retry failed 只允许 error job 且存在失败分片。 |
+| `tests/test_workflow.py::test_processing_final_state_depends_only_on_chunk_states` | 校验处理阶段最终状态只由分片 error/done 汇总决定。 |
+| `tests/test_workflow.py::test_merge_guard_requires_paused_merge_phase_and_complete_chunks` | 兼容层校验 merge 只允许 paused + merge phase + 分片全 done。 |
+| `tests/test_workflow.py::test_persisted_phase_invariants_are_centralized` | 校验持久化 phase/state/chunk invariant 统一由 workflow 模块暴露。 |
+| `tests/test_workflow.py::test_command_decisions_return_explicit_next_state_and_target` | 表驱动校验合法命令返回明确 next workflow state 与 resume target。 |
+| `tests/test_workflow.py::test_illegal_commands_return_typed_rejections` | 表驱动校验非法命令返回 typed rejection code/message，而不是静默 no-op。 |
+| `tests/test_workflow.py::test_workflow_events_are_table_driven` | 表驱动校验 validation/process/retry/merge/reset/restart 等事件转移。 |
+| `tests/test_workflow.py::test_illegal_events_return_typed_rejections` | 表驱动校验非法 workflow event 返回 typed rejection code/message。 |
+| `tests/test_workflow.py::test_pause_is_legal_only_for_in_flight_process_phase` | 遍历所有 phase，校验 pause 只在运行中的 process phase 合法。 |
+| `tests/test_workflow.py::test_process_resume_allows_process_wait_reasons` | 遍历 process 可恢复 wait reason，校验 process command 合法性。 |
+| `tests/test_workflow.py::test_wait_reasons_are_phase_specific` | 校验 wait reason 与 phase 必须匹配，非法组合响亮失败。 |
+| `tests/test_workflow.py::test_available_commands_are_derived_from_workflow_decisions` | 校验 UI/API 使用的 `available_commands` 来自 workflow command decision。 |
+| `tests/test_workflow.py::test_create_validation_state_is_the_only_new_job_workflow_entry` | 校验新 job 的唯一入口状态为 queued + validate。 |
+
 ## tests/llm/test_client.py
 
 | Test case | 说明 |

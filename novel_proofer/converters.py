@@ -25,7 +25,8 @@ from novel_proofer.models import (
     LLMSettings,
 )
 from novel_proofer.paths import _rel_debug_dir, _rel_output_path
-from novel_proofer.states import ExecutionState, JobCommand, JobPhase, JobState, TerminalState, WaitReason
+from novel_proofer.states import ExecutionState, JobPhase, JobState, TerminalState, WaitReason
+from novel_proofer.workflow import WorkflowContext, available_commands
 
 _INTERNAL_ERROR_MESSAGE = "internal server error"
 
@@ -144,29 +145,22 @@ def _job_summary_to_out(st: JobStatus) -> JobSummaryOut:
 
 
 def _available_commands(st: JobStatus, *, state: JobState, phase: JobPhase) -> list[str]:
-    commands: list[JobCommand] = []
-    chunk_counts = dict(st.chunk_counts or {})
-    failed_chunks = int(chunk_counts.get("error", 0) or 0)
-    all_chunks_done = st.total_chunks > 0 and int(chunk_counts.get("done", 0) or 0) == st.total_chunks
-
-    if state == JobState.PAUSED and phase == JobPhase.VALIDATE:
-        commands.append(JobCommand.VALIDATE)
-    if state == JobState.PAUSED and phase == JobPhase.PROCESS:
-        commands.append(JobCommand.PROCESS)
-    if state in {JobState.QUEUED, JobState.RUNNING} and phase == JobPhase.PROCESS:
-        commands.append(JobCommand.PAUSE)
-    if state == JobState.ERROR and failed_chunks > 0:
-        commands.append(JobCommand.RETRY_FAILED)
-    if state == JobState.PAUSED and phase == JobPhase.MERGE and all_chunks_done:
-        commands.append(JobCommand.MERGE)
-    if state not in {JobState.QUEUED, JobState.RUNNING, JobState.CANCELLED}:
-        commands.append(JobCommand.DETACH)
-    if state != JobState.CANCELLED:
-        commands.append(JobCommand.RESET)
-    if state == JobState.DONE:
-        commands.append(JobCommand.DOWNLOAD)
-
-    return [command.value for command in commands]
+    if st.chunk_counts:
+        context = WorkflowContext.from_counts(
+            state=state,
+            phase=phase,
+            wait_reason=st.wait_reason,
+            total_chunks=st.total_chunks,
+            chunk_counts=dict(st.chunk_counts),
+        )
+    else:
+        context = WorkflowContext.from_values(
+            state=state,
+            phase=phase,
+            wait_reason=st.wait_reason,
+            chunks=[chunk.state for chunk in st.chunk_statuses],
+        )
+    return [command.value for command in available_commands(context)]
 
 
 def _terminal_state_for(state: JobState) -> TerminalState | None:

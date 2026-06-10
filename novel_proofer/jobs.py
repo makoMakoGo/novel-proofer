@@ -15,7 +15,14 @@ from typing import Any
 from novel_proofer.env import env_float
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.states import ChunkState, JobPhase, JobState, WaitReason
-from novel_proofer.workflow import WorkflowInvariantError, validate_job_phase_invariants
+from novel_proofer.workflow import (
+    WorkflowContext,
+    WorkflowEvent,
+    WorkflowInvariantError,
+    WorkflowState,
+    require_event,
+    validate_job_phase_invariants,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -607,8 +614,19 @@ class JobStore:
         changed = False
         if st.state in {JobState.QUEUED, JobState.RUNNING}:
             logger.warning("restoring in-flight job as paused after restart: job_id=%s state=%s", st.job_id, st.state)
-            st.state = JobState.PAUSED
-            st.wait_reason = WaitReason.SERVER_RECOVERED
+            transition = require_event(
+                WorkflowContext.from_values(
+                    state=st.state,
+                    phase=st.phase,
+                    wait_reason=st.wait_reason,
+                    chunks=[chunk.state for chunk in st.chunk_statuses],
+                ),
+                WorkflowEvent.RESTART_RECOVERY,
+            )
+            assert transition.next_state is not None
+            st.state = transition.next_state.state
+            st.phase = transition.next_state.phase
+            st.wait_reason = transition.next_state.wait_reason
             st.finished_at = None
             changed = True
 
@@ -628,7 +646,6 @@ class JobStore:
                     old_cs.state,
                 )
                 changed = True
-        return st, changed
         return st, changed
 
     def load_persisted_jobs(self) -> int:
@@ -795,6 +812,11 @@ class JobStore:
                 raise ValueError("JobStore.update: wait_reason is required when state is paused")
             if target_state != JobState.PAUSED.value and target_wait_reason is not None:
                 raise ValueError("JobStore.update: wait_reason must be None unless state is paused")
+            target_phase = str(kwargs.get("phase", st.phase))
+            try:
+                WorkflowState.from_values(target_state, target_phase, target_wait_reason)
+            except WorkflowInvariantError as e:
+                raise ValueError(f"JobStore.update: {e}") from e
             normalized = dict(kwargs)
             if "state" in normalized:
                 normalized["state"] = target_state
