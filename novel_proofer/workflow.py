@@ -12,7 +12,9 @@ class WorkflowInvariantError(ValueError):
 
 
 class WorkflowTransitionError(ValueError):
-    pass
+    def __init__(self, message: str, *, code: WorkflowRejectionCode | None = None) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class ResumeTarget(StrEnum):
@@ -44,6 +46,7 @@ class WorkflowRejectionCode(StrEnum):
     CANCELLED = "cancelled"
     CHUNKS_INCOMPLETE = "chunks_incomplete"
     DONE = "done"
+    FAILED_CHUNKS = "failed_chunks"
     INVALID_PHASE = "invalid_phase"
     INVALID_STATE = "invalid_state"
     INVALID_WAIT_REASON = "invalid_wait_reason"
@@ -393,7 +396,7 @@ def require_command(context: WorkflowContext, command: JobCommand | str) -> Comm
     decision = decide_command(context, command)
     if not decision.allowed:
         assert decision.rejection is not None
-        raise WorkflowTransitionError(decision.rejection.message)
+        raise WorkflowTransitionError(decision.rejection.message, code=decision.rejection.code)
     return decision
 
 
@@ -402,7 +405,11 @@ def resume_decision(context: WorkflowContext) -> CommandDecision:
         return decide_command(context, JobCommand.VALIDATE)
     if context.workflow.phase == JobPhase.PROCESS:
         return decide_command(context, JobCommand.PROCESS)
-    return decide_command(context, JobCommand.PROCESS)
+    if context.workflow.phase == JobPhase.MERGE:
+        return CommandDecision.reject(JobCommand.PROCESS, WorkflowRejectionCode.INVALID_PHASE, "job is ready to merge")
+    if context.workflow.phase == JobPhase.DONE:
+        return CommandDecision.reject(JobCommand.PROCESS, WorkflowRejectionCode.DONE, "job is already done")
+    raise WorkflowTransitionError(f"unhandled resume phase: {context.workflow.phase.value}")
 
 
 def available_commands(context: WorkflowContext) -> list[JobCommand]:
@@ -463,7 +470,7 @@ def apply_event(context: WorkflowContext, event: WorkflowEvent | str) -> EventTr
                 evt, WorkflowRejectionCode.INVALID_PHASE, f"process cannot complete in phase={phase.value}"
             )
         if context.chunks.has_failed:
-            return _event_reject(evt, WorkflowRejectionCode.NO_FAILED_CHUNKS, "process has failed chunks")
+            return _event_reject(evt, WorkflowRejectionCode.FAILED_CHUNKS, "process has failed chunks")
         if not context.chunks.all_done:
             return _event_reject(evt, WorkflowRejectionCode.CHUNKS_INCOMPLETE, "process chunks are incomplete")
         return EventTransition.allow(evt, WorkflowState(JobState.PAUSED, JobPhase.MERGE, WaitReason.READY_TO_MERGE))
@@ -529,7 +536,7 @@ def require_event(context: WorkflowContext, event: WorkflowEvent | str) -> Event
     transition = apply_event(context, event)
     if not transition.allowed:
         assert transition.rejection is not None
-        raise WorkflowTransitionError(transition.rejection.message)
+        raise WorkflowTransitionError(transition.rejection.message, code=transition.rejection.code)
     return transition
 
 

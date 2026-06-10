@@ -614,15 +614,22 @@ class JobStore:
         changed = False
         if st.state in {JobState.QUEUED, JobState.RUNNING}:
             logger.warning("restoring in-flight job as paused after restart: job_id=%s state=%s", st.job_id, st.state)
-            transition = require_event(
-                WorkflowContext.from_values(
+            if st.chunk_counts:
+                context = WorkflowContext.from_counts(
+                    state=st.state,
+                    phase=st.phase,
+                    wait_reason=st.wait_reason,
+                    total_chunks=st.total_chunks,
+                    chunk_counts=dict(st.chunk_counts),
+                )
+            else:
+                context = WorkflowContext.from_values(
                     state=st.state,
                     phase=st.phase,
                     wait_reason=st.wait_reason,
                     chunks=[chunk.state for chunk in st.chunk_statuses],
-                ),
-                WorkflowEvent.RESTART_RECOVERY,
-            )
+                )
+            transition = require_event(context, WorkflowEvent.RESTART_RECOVERY)
             assert transition.next_state is not None
             st.state = transition.next_state.state
             st.phase = transition.next_state.phase

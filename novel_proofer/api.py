@@ -57,29 +57,21 @@ from novel_proofer.models import (
 )
 from novel_proofer.runner import merge_outputs, resume_paused_job, retry_failed_chunks, run_job
 from novel_proofer.states import ChunkState, JobCommand, JobPhase, JobState
-from novel_proofer.workflow import CommandDecision, ResumeTarget, WorkflowContext, decide_command, resume_decision
+from novel_proofer.workflow import CommandDecision, ResumeTarget, decide_command, resume_decision
+from novel_proofer.workflow_context import workflow_context_for_job
 
 logger = logging.getLogger(__name__)
 
 
-def _workflow_context_for_job(st: JobStatus) -> WorkflowContext:
-    return WorkflowContext.from_values(
-        state=st.state,
-        phase=st.phase,
-        wait_reason=st.wait_reason,
-        chunks=[chunk.state for chunk in st.chunk_statuses],
-    )
-
-
 def _require_workflow_command(st: JobStatus, command: JobCommand) -> CommandDecision:
-    decision = decide_command(_workflow_context_for_job(st), command)
+    decision = decide_command(workflow_context_for_job(st), command)
     if not decision.allowed:
         raise HTTPException(status_code=409, detail=decision.reason)
     return decision
 
 
 def _require_resume_workflow(st: JobStatus) -> CommandDecision:
-    decision = resume_decision(_workflow_context_for_job(st))
+    decision = resume_decision(workflow_context_for_job(st))
     if not decision.allowed:
         raise HTTPException(status_code=409, detail=decision.reason)
     return decision
@@ -658,9 +650,11 @@ async def reset_job(job_id: str = Depends(paths._job_id_dep)) -> JobActionRespon
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    _require_workflow_command(st, JobCommand.RESET)
+    reset_decision = _require_workflow_command(st, JobCommand.RESET)
+    assert reset_decision.next_state is not None
 
-    GLOBAL_JOBS.cancel(job_id)
+    if reset_decision.next_state.state == JobState.CANCELLED:
+        GLOBAL_JOBS.cancel(job_id)
 
     def _cleanup_and_delete() -> None:
         steps: tuple[tuple[str, Callable[[], object]], ...] = (

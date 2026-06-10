@@ -22,12 +22,12 @@ from novel_proofer.llm.config import LLMConfig, build_first_chunk_config
 from novel_proofer.states import ChunkState, JobPhase, JobState, WaitReason
 from novel_proofer.workflow import (
     ProcessingFinalState,
-    WorkflowContext,
     WorkflowEvent,
     WorkflowState,
     processing_final_state,
     require_event,
 )
+from novel_proofer.workflow_context import workflow_context_for_job
 
 logger = logging.getLogger(__name__)
 
@@ -41,17 +41,8 @@ _JOB_DEBUG_README = """\
 """
 
 
-def _workflow_context_for_job(st: JobStatus) -> WorkflowContext:
-    return WorkflowContext.from_values(
-        state=st.state,
-        phase=st.phase,
-        wait_reason=st.wait_reason,
-        chunks=[chunk.state for chunk in st.chunk_statuses],
-    )
-
-
 def _workflow_event_state(st: JobStatus, event: WorkflowEvent) -> WorkflowState:
-    result = require_event(_workflow_context_for_job(st), event)
+    result = require_event(workflow_context_for_job(st), event)
     assert result.next_state is not None
     return result.next_state
 
@@ -583,7 +574,7 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
                 cur = GLOBAL_JOBS.get(job_id)
                 if cur is None:
                     return
-                next_state = _workflow_event_state(cur, WorkflowEvent.EXECUTION_STOPPED)
+                next_state = WorkflowState(JobState.PAUSED, JobPhase.VALIDATE, WaitReason.USER_PAUSED)
                 GLOBAL_JOBS.update(
                     job_id,
                     state=next_state.state,

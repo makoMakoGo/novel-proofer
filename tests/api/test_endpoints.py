@@ -525,6 +525,26 @@ def test_reset_job_deletes_job() -> None:
         GLOBAL_JOBS.delete(job.job_id)
 
 
+def test_reset_completed_job_deletes_without_forcing_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(api.app)
+
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    GLOBAL_JOBS.update(job.job_id, state="done", phase="done")
+
+    def fail_cancel(job_id: str) -> bool:
+        raise AssertionError(f"cancel should not be called for completed reset: {job_id}")
+
+    monkeypatch.setattr(api.GLOBAL_JOBS, "cancel", fail_cancel)
+
+    try:
+        r = client.post(f"/api/v1/jobs/{job.job_id}/reset")
+        assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
+        assert GLOBAL_JOBS.get(job.job_id) is None
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
+
+
 def test_resume_job_returns_409_when_background_submit_rejects(monkeypatch: pytest.MonkeyPatch):
     client = TestClient(api.app)
 

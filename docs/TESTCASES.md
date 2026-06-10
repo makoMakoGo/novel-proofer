@@ -20,6 +20,7 @@
 | `tests/api/test_endpoints.py::test_job_actions_pause_resume` | 覆盖任务动作接口：`pause/resume` 的返回值与状态流转（通过 monkeypatch 避免真实 runner 副作用）。 |
 | `tests/api/test_endpoints.py::test_pause_only_allowed_in_process_phase` | `pause` 仅允许在 `phase=process` 时执行；其他阶段返回 `409`。 |
 | `tests/api/test_endpoints.py::test_reset_job_deletes_job` | 覆盖 `reset`：任务会从任务列表中被删除（但不会删除 `output/` 下已生成的最终输出）。 |
+| `tests/api/test_endpoints.py::test_reset_completed_job_deletes_without_forcing_cancel` | 覆盖完成态 `reset`：按 workflow decision 直接清理删除，不额外写入 `cancelled` 状态。 |
 | `tests/api/test_endpoints.py::test_llm_settings_get_put_preserves_unknown_lines` | 覆盖 LLM 默认配置接口：`GET/PUT /api/v1/settings/llm`；验证写入 `.env` 时保留未知键/注释，并能读回保存的 LLM 字段。 |
 | `tests/api/test_endpoints.py::test_rerun_all_creates_new_job_without_reupload` | 覆盖 `POST /api/v1/jobs/{job_id}/rerun-all`：基于输入缓存创建新任务并从头跑完整流程，且不需要重新上传文件。 |
 | `tests/api/test_endpoints.py::test_job_input_stats_endpoint` | 覆盖 `GET /api/v1/jobs/{job_id}/input-stats`：基于输入缓存统计“非空白字符数”（UI 字数口径）。 |
@@ -57,6 +58,7 @@
 | Test case | 说明 |
 | --- | --- |
 | `tests/jobs/test_store.py::test_job_store_update_respects_started_at_and_pause_rules` | `started_at` 只接受首次写入；暂停状态不应被 `update(state="running")` 覆盖；进入终态（`done`）后清除 paused 标记。 |
+| `tests/jobs/test_store.py::test_job_store_update_rejects_invalid_workflow_combinations` | `JobStore.update()` 会拒绝非法 state/phase/wait_reason 组合，错误由 workflow invariant 统一给出。 |
 | `tests/jobs/test_store.py::test_job_store_update_chunk_tracks_done_chunks` | `done_chunks` 随分片状态在 `done/pending` 间切换而增减；越界 index 更新应被忽略。 |
 | `tests/jobs/test_store.py::test_job_store_add_retry_updates_job_and_chunk` | `add_retry()` 同时更新 job 级与 chunk 级重试/错误信息；无效 index 仍应累加 job 级计数。 |
 | `tests/jobs/test_store.py::test_job_store_cancel_resets_processing_chunks` | 触发“删除任务（reset）”的终止信号后：任务变为 `cancelled` 且写入 `finished_at`，正在处理/重试的 chunk 重置为 `pending` 并清空时间戳。 |
@@ -73,14 +75,17 @@
 | `tests/test_workflow.py::test_retry_guard_requires_error_state_with_failed_chunks` | 兼容层校验 retry failed 只允许 error job 且存在失败分片。 |
 | `tests/test_workflow.py::test_processing_final_state_depends_only_on_chunk_states` | 校验处理阶段最终状态只由分片 error/done 汇总决定。 |
 | `tests/test_workflow.py::test_merge_guard_requires_paused_merge_phase_and_complete_chunks` | 兼容层校验 merge 只允许 paused + merge phase + 分片全 done。 |
-| `tests/test_workflow.py::test_persisted_phase_invariants_are_centralized` | 校验持久化 phase/state/chunk invariant 统一由 workflow 模块暴露。 |
+| `tests/test_workflow.py::test_persisted_phase_invariants_are_centralized` | 校验持久化 phase/state/chunk invariants 统一由 workflow 模块暴露。 |
 | `tests/test_workflow.py::test_command_decisions_return_explicit_next_state_and_target` | 表驱动校验合法命令返回明确 next workflow state 与 resume target。 |
 | `tests/test_workflow.py::test_illegal_commands_return_typed_rejections` | 表驱动校验非法命令返回 typed rejection code/message，而不是静默 no-op。 |
+| `tests/test_workflow.py::test_require_command_preserves_rejection_message_and_code` | 校验 exception 调用路径保留 command rejection 的 message 与 code。 |
 | `tests/test_workflow.py::test_workflow_events_are_table_driven` | 表驱动校验 validation/process/retry/merge/reset/restart 等事件转移。 |
 | `tests/test_workflow.py::test_illegal_events_return_typed_rejections` | 表驱动校验非法 workflow event 返回 typed rejection code/message。 |
+| `tests/test_workflow.py::test_require_event_preserves_rejection_message_and_code` | 校验 exception 调用路径保留 event rejection 的 message 与 code。 |
+| `tests/test_workflow.py::test_resume_decision_rejects_merge_and_done_without_process_fallthrough` | 校验 resume decision 不会把 merge/done phase 错误地落回 process command。 |
 | `tests/test_workflow.py::test_pause_is_legal_only_for_in_flight_process_phase` | 遍历所有 phase，校验 pause 只在运行中的 process phase 合法。 |
 | `tests/test_workflow.py::test_process_resume_allows_process_wait_reasons` | 遍历 process 可恢复 wait reason，校验 process command 合法性。 |
-| `tests/test_workflow.py::test_wait_reasons_are_phase_specific` | 校验 wait reason 与 phase 必须匹配，非法组合响亮失败。 |
+| `tests/test_workflow.py::test_wait_reasons_are_phase_specific` | 校验 wait reason 与 phase 必须匹配，非法组合会明确失败。 |
 | `tests/test_workflow.py::test_available_commands_are_derived_from_workflow_decisions` | 校验 UI/API 使用的 `available_commands` 来自 workflow command decision。 |
 | `tests/test_workflow.py::test_create_validation_state_is_the_only_new_job_workflow_entry` | 校验新 job 的唯一入口状态为 queued + validate。 |
 

@@ -83,6 +83,24 @@ def test_job_store_update_respects_started_at_and_pause_rules() -> None:
     assert js.is_paused(job_id) is False
 
 
+def test_job_store_update_rejects_invalid_workflow_combinations() -> None:
+    js = JobStore()
+    st = js.create("in.txt", "out.txt", total_chunks=0)
+    job_id = st.job_id
+
+    with pytest.raises(ValueError, match="job\\.phase must be 'done'"):
+        js.update(job_id, state="done", phase="process")
+
+    with pytest.raises(ValueError, match="job\\.state must be 'done'"):
+        js.update(job_id, state="running", phase="done")
+
+    with pytest.raises(ValueError, match="wait_reason is required when state is paused"):
+        js.update(job_id, state="paused")
+
+    with pytest.raises(ValueError, match="wait_reason=ready_to_merge is invalid for phase=process"):
+        js.update(job_id, state="paused", phase="process", wait_reason="ready_to_merge")
+
+
 def test_job_store_update_chunk_tracks_done_chunks() -> None:
     js = JobStore()
     st = js.create("in.txt", "out.txt", total_chunks=2)

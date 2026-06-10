@@ -10,6 +10,7 @@ from novel_proofer.workflow import (
     WorkflowEvent,
     WorkflowInvariantError,
     WorkflowRejectionCode,
+    WorkflowTransitionError,
     apply_event,
     available_commands,
     can_merge,
@@ -19,6 +20,9 @@ from novel_proofer.workflow import (
     create_validation_state,
     decide_command,
     processing_final_state,
+    require_command,
+    require_event,
+    resume_decision,
     validate_job_phase_invariants,
 )
 
@@ -235,6 +239,18 @@ def test_illegal_commands_return_typed_rejections(
     assert decision.rejection.message == reason
 
 
+def test_require_command_preserves_rejection_message_and_code() -> None:
+    context = WorkflowContext.from_values(state=JobState.RUNNING, phase=JobPhase.PROCESS)
+    decision = decide_command(context, JobCommand.PROCESS)
+
+    with pytest.raises(WorkflowTransitionError) as exc_info:
+        require_command(context, JobCommand.PROCESS)
+
+    assert str(exc_info.value) == decision.reason
+    assert decision.rejection is not None
+    assert exc_info.value.code == decision.rejection.code
+
+
 @pytest.mark.parametrize(
     ("context", "event", "next_state"),
     [
@@ -347,6 +363,16 @@ def test_workflow_events_are_table_driven(
         ),
         (
             WorkflowContext.from_values(
+                state=JobState.RUNNING,
+                phase=JobPhase.PROCESS,
+                chunks=[ChunkState.DONE, ChunkState.ERROR],
+            ),
+            WorkflowEvent.PROCESS_COMPLETE,
+            WorkflowRejectionCode.FAILED_CHUNKS,
+            "process has failed chunks",
+        ),
+        (
+            WorkflowContext.from_values(
                 state=JobState.PAUSED,
                 phase=JobPhase.PROCESS,
                 wait_reason=WaitReason.USER_PAUSED,
@@ -375,6 +401,44 @@ def test_illegal_events_return_typed_rejections(
     assert transition.rejection is not None
     assert transition.rejection.code == code
     assert transition.rejection.message == reason
+
+
+def test_require_event_preserves_rejection_message_and_code() -> None:
+    context = WorkflowContext.from_values(
+        state=JobState.RUNNING,
+        phase=JobPhase.PROCESS,
+        chunks=[ChunkState.DONE, ChunkState.ERROR],
+    )
+    transition = apply_event(context, WorkflowEvent.PROCESS_COMPLETE)
+
+    with pytest.raises(WorkflowTransitionError) as exc_info:
+        require_event(context, WorkflowEvent.PROCESS_COMPLETE)
+
+    assert str(exc_info.value) == transition.reason
+    assert transition.rejection is not None
+    assert exc_info.value.code == transition.rejection.code
+
+
+def test_resume_decision_rejects_merge_and_done_without_process_fallthrough() -> None:
+    merge_context = WorkflowContext.from_values(
+        state=JobState.PAUSED,
+        phase=JobPhase.MERGE,
+        wait_reason=WaitReason.READY_TO_MERGE,
+        chunks=[ChunkState.DONE],
+    )
+    done_context = WorkflowContext.from_values(state=JobState.DONE, phase=JobPhase.DONE, chunks=[ChunkState.DONE])
+
+    merge_decision = resume_decision(merge_context)
+    done_decision = resume_decision(done_context)
+
+    assert merge_decision.allowed is False
+    assert merge_decision.rejection is not None
+    assert merge_decision.rejection.code == WorkflowRejectionCode.INVALID_PHASE
+    assert merge_decision.rejection.message == "job is ready to merge"
+    assert done_decision.allowed is False
+    assert done_decision.rejection is not None
+    assert done_decision.rejection.code == WorkflowRejectionCode.DONE
+    assert done_decision.rejection.message == "job is already done"
 
 
 @pytest.mark.parametrize("phase", list(JobPhase))
