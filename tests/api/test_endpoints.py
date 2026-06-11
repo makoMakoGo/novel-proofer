@@ -334,6 +334,117 @@ def test_job_actions_pause_resume(monkeypatch: pytest.MonkeyPatch):
         GLOBAL_JOBS.delete(job2.job_id)
 
 
+def test_retry_failed_command_schedules_only_failed_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(api.app)
+    captured: dict[str, object] = {}
+
+    def fake_submit(job_id: str, command: object, fn: object, *args: object, **kwargs: object) -> None:
+        captured["job_id"] = job_id
+        captured["command"] = command
+        captured["fn"] = fn
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(api, "submit_background_job", fake_submit)
+
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    try:
+        GLOBAL_JOBS.update(job.job_id, phase="process")
+        GLOBAL_JOBS.init_chunks(job.job_id, total_chunks=3)
+        GLOBAL_JOBS.update_chunk(job.job_id, 0, state="done")
+        GLOBAL_JOBS.update_chunk(job.job_id, 1, state="error", last_error_message="bad")
+        GLOBAL_JOBS.update(job.job_id, state="error", error="some chunks failed")
+
+        r = client.post(
+            f"/api/v1/jobs/{job.job_id}/retry-failed",
+            json={"llm": {"base_url": "http://example.com", "model": "retry-model"}},
+        )
+
+        assert r.status_code == 200, r.text
+        assert captured["job_id"] == job.job_id
+        assert captured["command"] == "retry_failed"
+        assert captured["fn"] is api.retry_failed_chunks
+        args = captured["args"]
+        assert isinstance(args, tuple)
+        assert args[0] == job.job_id
+        assert args[2] == (1,)
+
+        st = GLOBAL_JOBS.get(job.job_id)
+        assert st is not None
+        assert st.state == "queued"
+        assert st.phase == "process"
+        assert st.last_llm_model == "retry-model"
+        assert [c.state for c in st.chunk_statuses] == ["done", "pending", "pending"]
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
+
+
+@pytest.mark.parametrize(
+    ("chunk_states", "expected_detail"),
+    [
+        (["done", "error"], "job is not ready to merge (chunks failed)"),
+        (["done", "pending"], "job is not ready to merge (chunks incomplete)"),
+    ],
+)
+def test_merge_command_rejects_failed_or_incomplete_chunks_before_background_submit(
+    monkeypatch: pytest.MonkeyPatch, chunk_states: list[str], expected_detail: str
+) -> None:
+    client = TestClient(api.app)
+    submitted = False
+
+    def fake_submit(*_args: object, **_kwargs: object) -> None:
+        nonlocal submitted
+        submitted = True
+
+    monkeypatch.setattr(api, "submit_background_job", fake_submit)
+
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    try:
+        GLOBAL_JOBS.init_chunks(job.job_id, total_chunks=len(chunk_states))
+        for index, state in enumerate(chunk_states):
+            GLOBAL_JOBS.update_chunk(job.job_id, index, state=state)
+        GLOBAL_JOBS.update(job.job_id, state="paused", phase="merge", wait_reason="ready_to_merge")
+
+        r = client.post(f"/api/v1/jobs/{job.job_id}/merge", json={"cleanup_debug_dir": True})
+
+        assert r.status_code == 409, r.text
+        assert expected_detail in r.text
+        assert submitted is False
+        st = GLOBAL_JOBS.get(job.job_id)
+        assert st is not None
+        assert st.state == "paused"
+        assert st.phase == "merge"
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
+
+
+@pytest.mark.parametrize(
+    ("command", "phase"),
+    [
+        ("retry_failed", "process"),
+        ("merge", "merge"),
+    ],
+)
+def test_reset_active_retry_or_merge_execution_requests_delete(command: str, phase: str) -> None:
+    client = TestClient(api.app)
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    execution = GLOBAL_EXECUTIONS.begin(job.job_id, command)
+    try:
+        GLOBAL_JOBS.update(job.job_id, state="queued", phase=phase)
+
+        r = client.post(f"/api/v1/jobs/{job.job_id}/reset")
+
+        assert r.status_code == 200, r.text
+        assert GLOBAL_EXECUTIONS.stop_reason(job.job_id) == "delete"
+        st = GLOBAL_JOBS.get(job.job_id)
+        assert st is not None
+        assert st.state == "cancelled"
+        assert st.phase == phase
+    finally:
+        GLOBAL_EXECUTIONS.finish(execution.attempt_id)
+        GLOBAL_JOBS.delete(job.job_id)
+
+
 def test_job_snapshot_contract_covers_running_user_paused_and_cancelled() -> None:
     client = TestClient(api.app)
     job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)

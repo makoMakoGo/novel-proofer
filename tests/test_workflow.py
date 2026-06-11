@@ -23,6 +23,7 @@ from novel_proofer.workflow import (
     require_command,
     require_event,
     resume_decision,
+    retry_failed_chunk_indices,
     validate_job_phase_invariants,
 )
 
@@ -79,6 +80,18 @@ def test_processing_final_state_depends_only_on_chunk_states() -> None:
     assert ready == ProcessingFinalState.READY_TO_MERGE
 
 
+def test_retry_failed_chunk_indices_selects_only_failed_chunks() -> None:
+    assert retry_failed_chunk_indices(
+        [
+            (0, ChunkState.DONE),
+            (1, ChunkState.ERROR),
+            (2, ChunkState.PENDING),
+            (3, ChunkState.RETRYING),
+            (4, "error"),
+        ]
+    ) == (1, 4)
+
+
 def test_merge_guard_requires_paused_merge_phase_and_complete_chunks() -> None:
     ok = can_merge(JobState.PAUSED, JobPhase.MERGE, [ChunkState.DONE, ChunkState.DONE])
     assert ok.allowed is True
@@ -94,6 +107,10 @@ def test_merge_guard_requires_paused_merge_phase_and_complete_chunks() -> None:
     incomplete = can_merge(JobState.PAUSED, JobPhase.MERGE, [ChunkState.DONE, ChunkState.PENDING])
     assert incomplete.allowed is False
     assert incomplete.reason == "job is not ready to merge (chunks incomplete)"
+
+    failed = can_merge(JobState.PAUSED, JobPhase.MERGE, [ChunkState.DONE, ChunkState.ERROR])
+    assert failed.allowed is False
+    assert failed.reason == "job is not ready to merge (chunks failed)"
 
 
 def test_persisted_phase_invariants_are_centralized() -> None:
@@ -205,6 +222,17 @@ def test_command_decisions_return_explicit_next_state_and_target(
             JobCommand.RETRY_FAILED,
             WorkflowRejectionCode.NO_FAILED_CHUNKS,
             "no failed chunks to retry",
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.PAUSED,
+                phase=JobPhase.MERGE,
+                wait_reason=WaitReason.READY_TO_MERGE,
+                chunks=[ChunkState.DONE, ChunkState.ERROR],
+            ),
+            JobCommand.MERGE,
+            WorkflowRejectionCode.FAILED_CHUNKS,
+            "job is not ready to merge (chunks failed)",
         ),
         (
             WorkflowContext.from_values(
@@ -386,6 +414,16 @@ def test_workflow_events_are_table_driven(
             WorkflowEvent.MERGE_STARTED,
             WorkflowRejectionCode.INVALID_PHASE,
             "merge cannot start in phase=process",
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.QUEUED,
+                phase=JobPhase.MERGE,
+                chunks=[ChunkState.DONE, ChunkState.ERROR],
+            ),
+            WorkflowEvent.MERGE_STARTED,
+            WorkflowRejectionCode.FAILED_CHUNKS,
+            "merge chunks failed",
         ),
     ],
 )

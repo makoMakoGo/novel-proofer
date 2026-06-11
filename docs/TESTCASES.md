@@ -18,6 +18,9 @@
 | `tests/api/test_endpoints.py::test_job_id_is_normalized_to_lowercase_for_lookup` | `job_id` 大小写不敏感：服务端应在路由层将 path 参数标准化为小写后再查询任务。 |
 | `tests/api/test_endpoints.py::test_create_job_llm_enabled_requires_base_url_and_model` | LLM 配置缺失（`base_url/model` 为空）时，创建任务仍返回 `201`，但任务最终进入 `error` 状态。 |
 | `tests/api/test_endpoints.py::test_job_actions_pause_resume` | 覆盖任务动作接口：`pause/resume` 的返回值与状态流转（通过 monkeypatch 避免真实 runner 副作用）。 |
+| `tests/api/test_endpoints.py::test_retry_failed_command_schedules_only_failed_chunks` | 覆盖 retry-failed 命令边界：API 先经 workflow command 校验，再只把 failed chunk indices 传给后台 runner，不让 runner 自行猜测 pending/retrying 分片。 |
+| `tests/api/test_endpoints.py::test_merge_command_rejects_failed_or_incomplete_chunks_before_background_submit` | 覆盖 merge 命令拒绝：failed/incomplete chunks 会在 workflow command 层返回 `409`，且不会提交后台 merge execution。 |
+| `tests/api/test_endpoints.py::test_reset_active_retry_or_merge_execution_requests_delete` | 覆盖 retry/merge 执行中 reset：通过 execution registry 发送 `delete` stop 请求，并把 durable job 标记为 cancelled。 |
 | `tests/api/test_endpoints.py::test_pause_only_allowed_in_process_phase` | `pause` 仅允许在 `phase=process` 时执行；其他阶段返回 `409`。 |
 | `tests/api/test_endpoints.py::test_reset_job_deletes_job` | 覆盖 `reset`：任务会从任务列表中被删除（但不会删除 `output/` 下已生成的最终输出）。 |
 | `tests/api/test_endpoints.py::test_reset_completed_job_deletes_without_forcing_cancel` | 覆盖完成态 `reset`：按 workflow decision 直接清理删除，不额外写入 `cancelled` 状态。 |
@@ -115,6 +118,7 @@
 | `tests/test_workflow.py::test_resume_guard_selects_validate_or_process_target` | 校验 resume 会按当前 phase 选择 `validate` 或 `process` 目标。 |
 | `tests/test_workflow.py::test_retry_guard_requires_error_state_with_failed_chunks` | 校验 retry failed 只允许 error job 且存在失败分片。 |
 | `tests/test_workflow.py::test_processing_final_state_depends_only_on_chunk_states` | 校验处理阶段最终状态只由分片 error/done 汇总决定。 |
+| `tests/test_workflow.py::test_retry_failed_chunk_indices_selects_only_failed_chunks` | 校验 retry command 的目标选择只包含当前 failed chunks，不包含 pending/retrying/done。 |
 | `tests/test_workflow.py::test_merge_guard_requires_paused_merge_phase_and_complete_chunks` | 校验 merge 只允许 paused + merge phase + 分片全 done。 |
 | `tests/test_workflow.py::test_persisted_phase_invariants_are_centralized` | 校验持久化 phase/state/chunk invariants 统一由 workflow 模块暴露。 |
 | `tests/test_workflow.py::test_command_decisions_return_explicit_next_state_and_target` | 表驱动校验合法命令返回明确 next workflow state 与 resume target。 |
@@ -196,7 +200,7 @@
 | `tests/runner/test_extra_coverage.py::test_llm_worker_ratio_validation_errors` | 输出长度校验：除首 chunk 外，过短/过长输出应标记 chunk 为 error 并写入错误信息。 |
 | `tests/runner/test_extra_coverage.py::test_run_llm_for_indices_paused_cancelled_and_worker_exception` | `_run_llm_for_indices()` 收到 execution registry 的 pause/delete stop 请求时直接返回；worker 抛异常时不应导致整体失败（最终返回 done）。 |
 | `tests/runner/test_extra_coverage.py::test_run_job_cancellation_llm_outcomes_and_exception` | `run_job()` 对 registry stop 的多阶段分支（预处理/输出）与 LLM outcome（paused/cancelled）处理正确；异常应把 job 置为 error 并记录信息。 |
-| `tests/runner/test_extra_coverage.py::test_retry_failed_and_resume_paused_branches` | 覆盖 `retry_failed_chunks()/resume_paused_job()` 的缺失配置分支、无失败分支、以及 paused/cancelled outcome 分支与收尾 done 分支。 |
+| `tests/runner/test_extra_coverage.py::test_retry_failed_and_resume_paused_branches` | 覆盖 `retry_failed_chunks()/resume_paused_job()` 的缺失配置分支、显式空 retry target 错误、paused/cancelled outcome 分支与收尾 done 分支。 |
 
 ## tests/runner/test_jobs_logs.py
 
@@ -205,6 +209,7 @@
 | `tests/runner/test_jobs_logs.py::test_llm_worker_success_writes_resp_only_when_enabled` | 成功时默认不写 `resp/`；启用保留时仅写入按 index 命名的 `resp/000000.txt`，且不产生旧的 `req/`、`error/` 目录。 |
 | `tests/runner/test_jobs_logs.py::test_llm_worker_error_does_not_create_error_dir` | 失败时不创建 `error/` 目录，且 chunk 状态应为 error 并记录 `last_error_code/message`。 |
 | `tests/runner/test_jobs_logs.py::test_retry_failed_chunks_overwrites_resp` | 失败后重试应覆盖旧 `resp` 文件并最终写出合并输出，同时 job/chunk 状态收敛为 done。 |
+| `tests/runner/test_jobs_logs.py::test_retry_failed_chunks_keeps_error_when_retry_still_fails` | 覆盖 failed chunk 重试后仍失败的收敛：job 保持 process error，chunk 保持 error 并记录新错误。 |
 | `tests/runner/test_jobs_logs.py::test_resume_paused_job_overwrites_existing_resp` | 恢复暂停任务时，如已有旧 `resp`，也应被覆盖为新响应并生成最终输出。 |
 
 ## tests/runner/test_run_job.py

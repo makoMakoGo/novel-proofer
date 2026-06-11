@@ -154,7 +154,7 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
             runner._llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=False)
             assert (work_dir / "resp" / "000000.txt").read_text(encoding="utf-8") == "RAW-FAIL"
 
-            runner.retry_failed_chunks(job_id, cfg)
+            runner.retry_failed_chunks(job_id, cfg, (0,))
 
             _assert_no_legacy_log_dirs(work_dir)
             _assert_resp_files(work_dir, expect=True)
@@ -171,6 +171,47 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
             assert st2 is not None
             assert st2.state == "done"
             assert out_path.read_text(encoding="utf-8") == "修正后内容\n"
+        finally:
+            GLOBAL_JOBS.delete(job_id)
+
+
+def test_retry_failed_chunks_keeps_error_when_retry_still_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_call_llm_text_resilient_with_meta_and_raw(
+        cfg: LLMConfig,
+        input_text: str,
+        *,
+        should_stop=None,
+        on_retry=None,
+    ):
+        return LLMTextResult(text="", raw_text="RAW-FAIL"), 0, None, None
+
+    monkeypatch.setattr(
+        runner, "call_llm_text_resilient_with_meta_and_raw", fake_call_llm_text_resilient_with_meta_and_raw
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        work_dir = Path(td) / "work"
+        out_path = Path(td) / "final.txt"
+        (work_dir / "pre").mkdir(parents=True, exist_ok=True)
+        (work_dir / "pre" / "000000.txt").write_text("原始内容\n", encoding="utf-8")
+
+        job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1)
+        job_id = job.job_id
+        try:
+            GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
+            GLOBAL_JOBS.update(job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
+            GLOBAL_JOBS.update_chunk(job_id, 0, state="error", last_error_message="old failure")
+            cfg = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
+
+            runner.retry_failed_chunks(job_id, cfg, (0,))
+
+            st = GLOBAL_JOBS.get(job_id)
+            assert st is not None
+            assert st.state == "error"
+            assert st.phase == "process"
+            assert "some chunks still failed" in (st.error or "")
+            assert st.chunk_statuses[0].state == "error"
+            assert "LLM output empty" in (st.chunk_statuses[0].last_error_message or "")
         finally:
             GLOBAL_JOBS.delete(job_id)
 

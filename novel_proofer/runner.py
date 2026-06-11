@@ -25,6 +25,7 @@ from novel_proofer.workflow import (
     ProcessingFinalState,
     WorkflowEvent,
     WorkflowState,
+    WorkflowTransitionError,
     processing_final_state,
     require_event,
 )
@@ -685,7 +686,11 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
         GLOBAL_JOBS.update(job_id, state=JobState.ERROR, finished_at=time.time(), error=str(e))
 
 
-def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
+def retry_failed_chunks(job_id: str, llm: LLMConfig, target_indices: tuple[int, ...]) -> None:
+    targets = tuple(int(index) for index in target_indices)
+    if not targets:
+        raise ValueError("retry target indices are required")
+
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         return
@@ -708,12 +713,9 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
         return
 
     total = len(st.chunk_statuses)
-    targets = [
-        c.index for c in st.chunk_statuses if c.state in {ChunkState.ERROR, ChunkState.PENDING, ChunkState.RETRYING}
-    ]
-    if not targets:
-        _finalize_processing(job_id, total, "some chunks still failed; update LLM config and retry again")
-        return
+    for index in targets:
+        if index < 0 or index >= total:
+            raise ValueError(f"retry target index out of range: {index}")
 
     GLOBAL_JOBS.update(
         job_id, state=JobState.QUEUED, phase=JobPhase.PROCESS, finished_at=None, error=None, last_llm_model=llm.model
@@ -730,7 +732,7 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
             output_chars=None,
         )
 
-    outcome = _run_llm_for_indices(job_id, targets, work_dir, llm)
+    outcome = _run_llm_for_indices(job_id, list(targets), work_dir, llm)
     if outcome == "cancelled" or _delete_requested(job_id):
         _mark_reset_requested(job_id, phase=JobPhase.PROCESS)
         return
@@ -813,26 +815,11 @@ def merge_outputs(job_id: str, *, cleanup_debug_dir: bool | None = None) -> None
     out_path = Path(st.output_path)
     total = len(st.chunk_statuses)
 
-    if any(c.state == ChunkState.ERROR for c in st.chunk_statuses):
-        GLOBAL_JOBS.update(
-            job_id,
-            state=JobState.ERROR,
-            phase=JobPhase.PROCESS,
-            finished_at=time.time(),
-            error="cannot merge: chunks failed",
-        )
+    try:
+        next_state = _workflow_event_state(st, WorkflowEvent.MERGE_STARTED)
+    except WorkflowTransitionError as e:
+        GLOBAL_JOBS.update(job_id, state=JobState.ERROR, phase=st.phase, finished_at=time.time(), error=str(e))
         return
-    if any(c.state != ChunkState.DONE for c in st.chunk_statuses):
-        GLOBAL_JOBS.update(
-            job_id,
-            state=JobState.ERROR,
-            phase=JobPhase.MERGE,
-            finished_at=time.time(),
-            error="cannot merge: chunks not complete",
-        )
-        return
-
-    next_state = _workflow_event_state(st, WorkflowEvent.MERGE_STARTED)
     GLOBAL_JOBS.update(
         job_id,
         state=next_state.state,
