@@ -63,6 +63,7 @@ novel_proofer/
 | `api.py` | REST 端点、请求验证 | `create_job()`, `get_job()`, `pause_job()` |
 | `background.py` | 后台任务线程池（job 级并发） | `submit()`, `shutdown()` |
 | `dotenv_store.py` | 本地 `.env` 读写（保留未知键/注释） | `read_llm_defaults()`, `update_llm_defaults()` |
+| `job_records.py` | 严格 `JobRecord` 持久化 schema 与解析 | `job_record_to_payload()`, `job_record_from_payload()` |
 | `logging_setup.py` | 文件日志初始化 | `ensure_file_logging()` |
 | `jobs.py` | 线程安全状态管理（含持久化） | `configure_persistence()`, `load_persisted_jobs()`, `get_summary()`, `get_chunks_page()` |
 | `runner.py` | 流程编排 | `run_job()`, `_llm_worker()`, `_finalize_job()` |

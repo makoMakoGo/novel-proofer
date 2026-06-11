@@ -65,6 +65,15 @@
 | `tests/jobs/test_store.py::test_job_store_pause_resume_and_delete` | `pause/resume/delete` 的幂等性与返回值（重复操作返回 `False`）以及 paused 状态开关。 |
 | `tests/jobs/test_store.py::test_job_store_ignores_unknown_jobs_and_cancelled_updates` | 对未知 job 的操作应无副作用；对已标记为 `cancelled` 的 job 的 `update()/update_chunk()` 应 no-op，避免状态被“复活”。 |
 | `tests/jobs/test_store.py::test_job_store_persistence_is_throttled_and_flushable` | 持久化写盘不应发生在每次 `update_chunk()` 的热路径；dirty 更新应被节流并可通过 `flush_persistence()` 主动触发落盘。 |
+| `tests/jobs/test_store.py::test_job_record_rejects_missing_phase` | `JobRecord` schema 缺少 workflow phase 时明确失败。 |
+| `tests/jobs/test_store.py::test_job_record_rejects_unknown_root_fields` | `JobRecord` 根对象不允许混入旧 schema 字段。 |
+| `tests/jobs/test_store.py::test_job_record_rejects_paused_without_wait_reason` | `JobRecord` 中 paused workflow 必须带 durable wait reason。 |
+| `tests/jobs/test_store.py::test_job_record_rejects_non_paused_with_wait_reason` | `JobRecord` 中非 paused workflow 不允许携带 wait reason。 |
+| `tests/jobs/test_store.py::test_job_store_persists_job_record_without_volatile_execution` | 持久化文件写入 v4 `job_record`，不会把 running job 或 processing chunk 当作 durable truth 落盘。 |
+| `tests/jobs/test_store.py::test_job_store_load_persisted_jobs_loads_clean_record` | 加载干净 `JobRecord` 后恢复为对应 runtime `JobStatus`。 |
+| `tests/jobs/test_store.py::test_job_store_load_persisted_jobs_preserves_server_recovered_record` | 已经 server-recovered 的 record 会保持明确恢复态。 |
+| `tests/jobs/test_store.py::test_job_store_load_persisted_jobs_rejects_corrupt_record` | 非法 `JobRecord` 会中止加载并给出显式错误，不跳过或降级。 |
+| `tests/jobs/test_store.py::test_job_store_load_persisted_jobs_restores_in_flight_record_as_paused` | 若 record 中仍出现 in-flight 状态，加载时恢复为 `server_recovered` 且 chunk 回到 `pending`。 |
 
 ## tests/test_workflow.py
 
