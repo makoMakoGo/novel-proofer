@@ -10,6 +10,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from novel_proofer.dotenv_store import LLMDefaults
+from novel_proofer.executions import ExecutionSnapshot, StopReason
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import ChunkStatus, JobStatus
 from novel_proofer.llm.config import LLMConfig
@@ -25,7 +26,7 @@ from novel_proofer.models import (
     LLMSettings,
 )
 from novel_proofer.paths import _rel_debug_dir, _rel_output_path
-from novel_proofer.states import ExecutionState, JobPhase, JobState, TerminalState, WaitReason
+from novel_proofer.states import ExecutionState, JobCommand, JobPhase, JobState, TerminalState, WaitReason
 from novel_proofer.workflow import available_commands
 from novel_proofer.workflow_context import workflow_context_for_job
 
@@ -76,7 +77,7 @@ def _request_id_from_request(request: Request) -> str:
     return request_id
 
 
-def _job_to_out(st: JobStatus) -> JobOut:
+def _job_to_out(st: JobStatus, execution: ExecutionSnapshot | None) -> JobOut:
     pct = 0
     if st.total_chunks > 0:
         pct = int((st.done_chunks / st.total_chunks) * 100)
@@ -86,7 +87,7 @@ def _job_to_out(st: JobStatus) -> JobOut:
         output_path = _rel_output_path(Path(st.output_path))
 
     fmt = st.format
-    snapshot = _job_snapshot_fields(st)
+    snapshot = _job_snapshot_fields(st, execution)
     return JobOut(
         id=st.job_id,
         workflow_phase=snapshot.workflow_phase,
@@ -123,12 +124,12 @@ def _job_to_out(st: JobStatus) -> JobOut:
     )
 
 
-def _job_summary_to_out(st: JobStatus) -> JobSummaryOut:
+def _job_summary_to_out(st: JobStatus, execution: ExecutionSnapshot | None) -> JobSummaryOut:
     pct = 0
     if st.total_chunks > 0:
         pct = int((st.done_chunks / st.total_chunks) * 100)
 
-    snapshot = _job_snapshot_fields(st)
+    snapshot = _job_snapshot_fields(st, execution)
     return JobSummaryOut(
         id=st.job_id,
         workflow_phase=snapshot.workflow_phase,
@@ -145,8 +146,18 @@ def _job_summary_to_out(st: JobStatus) -> JobSummaryOut:
     )
 
 
-def _available_commands(st: JobStatus) -> list[str]:
-    return [command.value for command in available_commands(workflow_context_for_job(st))]
+def _available_commands(st: JobStatus, execution: ExecutionSnapshot | None) -> list[str]:
+    commands = [command.value for command in available_commands(workflow_context_for_job(st))]
+    if execution is None:
+        if JobState(st.state) in {JobState.QUEUED, JobState.RUNNING}:
+            return [command for command in commands if command == JobCommand.RESET.value]
+        return commands
+    if execution.stop_requested == StopReason.DELETE.value:
+        return []
+    if execution.stop_requested == StopReason.PAUSE.value:
+        return [command for command in commands if command == JobCommand.RESET.value]
+    active_commands = {JobCommand.PAUSE.value, JobCommand.RESET.value}
+    return [command for command in commands if command in active_commands]
 
 
 def _terminal_state_for(state: JobState) -> TerminalState | None:
@@ -155,18 +166,15 @@ def _terminal_state_for(state: JobState) -> TerminalState | None:
     return None
 
 
-def _job_snapshot_fields(st: JobStatus) -> _JobSnapshotFields:
+def _job_snapshot_fields(st: JobStatus, execution: ExecutionSnapshot | None) -> _JobSnapshotFields:
     state = JobState(st.state)
     phase = JobPhase(st.phase)
-    execution_state = ExecutionState.IDLE
     terminal_state = _terminal_state_for(state)
+    active_execution = None if terminal_state is not None else execution
+    execution_state = ExecutionState.IDLE if active_execution is None else ExecutionState(active_execution.state)
     wait_reason: str | None = None
 
-    if state == JobState.QUEUED:
-        execution_state = ExecutionState.QUEUED
-    elif state == JobState.RUNNING:
-        execution_state = ExecutionState.RUNNING
-    elif state == JobState.PAUSED:
+    if state == JobState.PAUSED:
         if st.wait_reason is None:
             raise ValueError("paused job snapshot requires wait_reason")
         wait_reason = WaitReason(st.wait_reason).value
@@ -176,7 +184,7 @@ def _job_snapshot_fields(st: JobStatus) -> _JobSnapshotFields:
         execution_state=execution_state.value,
         wait_reason=wait_reason,
         terminal_state=terminal_state.value if terminal_state is not None else None,
-        available_commands=_available_commands(st),
+        available_commands=_available_commands(st, active_execution),
     )
 
 

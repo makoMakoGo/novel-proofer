@@ -25,7 +25,7 @@ UI 1s 轮询
 
 - 新增 `get_summary()` / `list_summaries()`，仅返回任务级信息。
 - 新增 `get_chunks_page()`，按过滤与分页返回 chunk 明细。
-- `JobStatus` 增加 `chunk_counts`，在 `update_chunk()` / `init_chunks()` / `cancel()` 中增量维护。
+- `JobStatus` 增加 `chunk_counts`，在 `update_chunk()` / `init_chunks()` / `mark_reset_requested()` 中增量维护。
 
 ### 2.2 API 读路径优化
 

@@ -3,7 +3,7 @@
 本文描述 novel-proofer 的内部状态模型与公开 API 快照：
 
 - **内部 Job 阶段（`JobStatus.phase`）**：任务处于哪一段 workflow（`validate|process|merge|done`）；API 暴露为 `workflow_phase`。
-- **内部 Job 运行态（`JobStatus.state`）**：持久化记录的底层生命周期（`queued|running|paused|done|error|cancelled`）；API 不再把它作为 `state` 字段公开。
+- **内部 Job 运行态（`JobStatus.state`）**：workflow 记录的底层生命周期（`queued|running|paused|done|error|cancelled`）；API 不再把它作为 `state` 字段公开，也不把它当作当前线程/Future 仍存在的证明。
 - **API Job 快照**：UI 使用 `workflow_phase`、`execution_state`、`wait_reason`、`terminal_state` 与 `available_commands` 渲染，不从内部 `paused` 推断业务语义。
 - **Chunk 状态**：任务内每个分片的生命周期（`pending|processing|retrying|done|error`）。
 
@@ -60,8 +60,8 @@ stateDiagram-v2
 
 ### 内部 Job 运行态语义（`JobStatus.state`）
 
-- `queued`：已提交任务/准备开始（等待后台线程池调度）。
-- `running`：正在运行（校验/处理/合并任一阶段的后台任务正在执行）。
+- `queued`：workflow 已提交到执行路径/准备开始；当前进程是否真的有排队 Future 以 `execution_state` 为准。
+- `running`：workflow 正处于执行阶段；当前进程是否真的有运行中的 worker 以 `execution_state` 为准。
 - `paused`：已暂停/待用户操作：用于表示“可恢复且当前未运行”。
 - `error`：任务失败（通常是处理阶段存在 `chunk=error`；或合并阶段异常）。
 - `done`：任务完成（已合并生成输出）。
@@ -70,10 +70,10 @@ stateDiagram-v2
 ### API Job 快照语义
 
 - `workflow_phase`：公开的 workflow 阶段，取代旧响应中的 `phase`。
-- `execution_state`：当前后端进程内的执行状态。`queued|running` 表示有执行尝试；`idle` 表示当前没有后台执行在跑。
+- `execution_state`：来自当前后端进程内的 volatile execution registry。`queued|running` 表示有执行尝试；`idle` 表示当前没有后台执行在跑。终态 job 总是投影为 `idle`，即使后台完成回调仍在收尾。
 - `wait_reason`：解释一个可恢复 idle 任务为什么停住，只在内部 `paused` 状态下非空。当前取值包括 `ready_to_process`、`user_paused`、`ready_to_merge`、`server_recovered`。
 - `terminal_state`：终态投影。未结束时为 `null`；结束后为 `done|error|cancelled`。
-- `available_commands`：后端给 UI 的显式命令列表。UI 按这个列表决定按钮可用性，不再手写 `state=paused && phase=...` 之类的猜测。
+- `available_commands`：后端给 UI 的显式命令列表。UI 按这个列表决定按钮可用性，不再手写 `state=paused && phase=...` 之类的猜测；有活跃 execution 时会隐藏会撞车的启动类命令。
 
 ### Mermaid（Job）
 
@@ -96,7 +96,8 @@ stateDiagram-v2
   queued --> cancelled: /reset
   running --> cancelled: /reset
   paused --> cancelled: /reset
-  error --> cancelled: /reset
+  error --> [*]: /reset 删除记录
+  done --> [*]: /reset 删除记录
 ```
 
 ### 关键字段（Job）
@@ -109,8 +110,10 @@ stateDiagram-v2
 
 - `novel_proofer.workflow`：集中表达状态转移守卫与持久化 invariant，例如 `can_pause()`、`can_resume()`、`can_retry_failed()`、`can_merge()`、`processing_final_state()`、`validate_job_phase_invariants()`。
 - `novel_proofer.api`：只负责把 guard 结果转换成 HTTP 响应与提交后台任务，不再拥有独立的 workflow 判断规则。
+- `novel_proofer.executions`：只保存当前进程内的 execution attempt、command、queued/running 状态与 pause/delete stop 请求；不落盘，进程重启后为空。
+- `novel_proofer.background`：负责把后台 Future 生命周期绑定到 execution registry，worker 崩溃时把 durable job 收敛为显式 error，完成后移除 execution entry。
 - `novel_proofer.runner`：只负责执行阶段，并在阶段结束时调用 workflow helper 判定最终进入 `error` 还是 `merge`。
-- `novel_proofer.jobs`：只负责存储/持久化/恢复，并复用 workflow invariant 校验落盘状态是否自洽。
+- `novel_proofer.jobs`：只负责存储/持久化/恢复，并复用 workflow invariant 校验落盘状态是否自洽；不保存线程、Future、pause flag 或 cancel flag。
 
 ## UI 展示约定（推荐）
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import novel_proofer.runner as runner
+from novel_proofer.executions import GLOBAL_EXECUTIONS
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMError, LLMTextResult
 from novel_proofer.llm.config import LLMConfig
@@ -76,15 +77,18 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
 
         # Cancel before worker starts -> early return.
         job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
+        execution = GLOBAL_EXECUTIONS.begin(job_id, "process")
         try:
-            assert GLOBAL_JOBS.cancel(job_id) is True
+            assert GLOBAL_EXECUTIONS.request_stop(job_id, "delete") is True
             runner._llm_worker(job_id, 0, work_dir, LLMConfig(base_url="", model=""), write_llm_resp=True)
             assert not (work_dir / "resp").exists()
         finally:
+            GLOBAL_EXECUTIONS.finish(execution.attempt_id)
             GLOBAL_JOBS.delete(job_id)
 
         # Cancel after LLM returns -> return before writing resp/out.
         job_id2 = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
+        execution2 = GLOBAL_EXECUTIONS.begin(job_id2, "process")
         try:
 
             def fake_cancel_then_return(
@@ -94,7 +98,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
                 should_stop=None,
                 on_retry=None,
             ):
-                GLOBAL_JOBS.cancel(job_id2)
+                GLOBAL_EXECUTIONS.request_stop(job_id2, "delete")
                 return LLMTextResult(text="OK\n", raw_text="RAW"), 0, None, None
 
             monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_cancel_then_return)
@@ -103,10 +107,12 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
             assert not (work_dir / "resp").exists()
             assert not (work_dir / "out").exists()
         finally:
+            GLOBAL_EXECUTIONS.finish(execution2.attempt_id)
             GLOBAL_JOBS.delete(job_id2)
 
         # Cancelled inside LLMError handler -> early return (no chunk error state set).
         job_id3 = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
+        execution3 = GLOBAL_EXECUTIONS.begin(job_id3, "process")
         try:
 
             def fake_cancel_then_raise(
@@ -116,7 +122,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
                 should_stop=None,
                 on_retry=None,
             ):
-                GLOBAL_JOBS.cancel(job_id3)
+                GLOBAL_EXECUTIONS.request_stop(job_id3, "delete")
                 raise LLMError("x", status_code=500)
 
             monkeypatch.setattr(runner, "call_llm_text_resilient_with_meta_and_raw", fake_cancel_then_raise)
@@ -126,6 +132,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
             assert st is not None
             assert st.chunk_statuses[0].state == "pending"
         finally:
+            GLOBAL_EXECUTIONS.finish(execution3.attempt_id)
             GLOBAL_JOBS.delete(job_id3)
 
 
@@ -179,20 +186,24 @@ def test_run_llm_for_indices_paused_cancelled_and_worker_exception(monkeypatch: 
 
         # Paused: no work launched.
         job_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=2).job_id
+        execution = GLOBAL_EXECUTIONS.begin(job_id, "process")
         try:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=2)
-            assert GLOBAL_JOBS.pause(job_id) is True
+            assert GLOBAL_EXECUTIONS.request_stop(job_id, "pause") is True
             assert runner._run_llm_for_indices(job_id, [0, 1], work_dir, cfg) == "paused"
         finally:
+            GLOBAL_EXECUTIONS.finish(execution.attempt_id)
             GLOBAL_JOBS.delete(job_id)
 
         # Cancelled: no work launched.
         job2_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=2).job_id
+        execution2 = GLOBAL_EXECUTIONS.begin(job2_id, "process")
         try:
             GLOBAL_JOBS.init_chunks(job2_id, total_chunks=2)
-            assert GLOBAL_JOBS.cancel(job2_id) is True
+            assert GLOBAL_EXECUTIONS.request_stop(job2_id, "delete") is True
             assert runner._run_llm_for_indices(job2_id, [0, 1], work_dir, cfg) == "cancelled"
         finally:
+            GLOBAL_EXECUTIONS.finish(execution2.attempt_id)
             GLOBAL_JOBS.delete(job2_id)
 
         # Worker exception should be surfaced as a chunk error instead of being swallowed.
@@ -220,6 +231,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
 
         # Cancelled during preprocessing loop (second chunk).
         job_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0).job_id
+        execution = GLOBAL_EXECUTIONS.begin(job_id, "validate")
         try:
             work_dir = base / "w1"
             out_path = base / "o1.txt"
@@ -232,7 +244,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
                 nonlocal calls
                 calls += 1
                 if calls == 1:
-                    GLOBAL_JOBS.cancel(job_id)
+                    GLOBAL_EXECUTIONS.request_stop(job_id, "delete")
                 return chunk, {}
 
             monkeypatch.setattr(runner, "apply_rules", cancel_after_first)
@@ -240,10 +252,12 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
             st = GLOBAL_JOBS.get(job_id)
             assert st is not None and st.state == "cancelled"
         finally:
+            GLOBAL_EXECUTIONS.finish(execution.attempt_id)
             GLOBAL_JOBS.delete(job_id)
 
         # Cancelled after preprocessing loop.
         job2_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0).job_id
+        execution2 = GLOBAL_EXECUTIONS.begin(job2_id, "validate")
         try:
             work_dir = base / "w2"
             out_path = base / "o2.txt"
@@ -251,7 +265,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
             GLOBAL_JOBS.update(job2_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
 
             def cancel_during_apply(chunk: str, _cfg):
-                GLOBAL_JOBS.cancel(job2_id)
+                GLOBAL_EXECUTIONS.request_stop(job2_id, "delete")
                 return chunk, {}
 
             monkeypatch.setattr(runner, "apply_rules", cancel_during_apply)
@@ -259,6 +273,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
             st = GLOBAL_JOBS.get(job2_id)
             assert st is not None and st.state == "cancelled"
         finally:
+            GLOBAL_EXECUTIONS.finish(execution2.attempt_id)
             GLOBAL_JOBS.delete(job2_id)
 
         # Processing stage: outcome paused/cancelled.
@@ -297,6 +312,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
 
         # Cancelled during LLM output write.
         job5_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0).job_id
+        execution5 = GLOBAL_EXECUTIONS.begin(job5_id, "process")
         try:
             work_dir = base / "w5"
             out_path = base / "o5.txt"
@@ -322,7 +338,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
                 orig_atomic(path, content)
                 if not cancelled and path.parent.name == "out" and path.name == "000000.txt":
                     cancelled = True
-                    GLOBAL_JOBS.cancel(job5_id)
+                    GLOBAL_EXECUTIONS.request_stop(job5_id, "delete")
 
             monkeypatch.setattr(runner, "_atomic_write_text", atomic_and_cancel)
             runner.run_job(job5_id, input_path, fmt, llm)
@@ -330,6 +346,7 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
             st = GLOBAL_JOBS.get(job5_id)
             assert st is not None and st.state == "cancelled"
         finally:
+            GLOBAL_EXECUTIONS.finish(execution5.attempt_id)
             GLOBAL_JOBS.delete(job5_id)
 
         # Exception handler sets job error.

@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import logging
-import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from novel_proofer.env import env_int
+from novel_proofer.executions import GLOBAL_EXECUTIONS
+from novel_proofer.states import JobCommand
 
 logger = logging.getLogger(__name__)
-
-_lock = threading.Lock()
-_in_flight: dict[str, Future[Any]] = {}
 
 
 def _max_workers_from_env() -> int:
@@ -27,33 +25,54 @@ _EXECUTOR = ThreadPoolExecutor(
 )
 
 
-def submit(job_id: str, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> None:
+def submit(
+    job_id: str,
+    command: JobCommand | str,
+    fn: Callable[..., Any],
+    /,
+    *args: Any,
+    on_crash: Callable[[BaseException], Any] | None = None,
+    **kwargs: Any,
+) -> None:
     """Run a job function in a bounded background thread pool.
 
     Notes:
-    - We intentionally do not expose the Future to callers. Job status is tracked via GLOBAL_JOBS.
-    - Exceptions are logged, but job code is responsible for updating job/chunk states.
+    - We intentionally do not expose the Future to callers.
+    - Execution lifecycle is tracked through GLOBAL_EXECUTIONS, not the durable job record.
     """
 
-    jid = str(job_id or "").strip()
-    if not jid:
-        raise ValueError("job_id is required")
+    execution = GLOBAL_EXECUTIONS.begin(job_id, command)
 
-    with _lock:
-        if jid in _in_flight:
-            raise ValueError(f"job_id '{jid}' is already in flight")
-        fut = _EXECUTOR.submit(fn, *args, **kwargs)
-        _in_flight[jid] = fut
+    def _run() -> Any:
+        GLOBAL_EXECUTIONS.mark_running(execution.attempt_id)
+        return fn(*args, **kwargs)
+
+    try:
+        fut = _EXECUTOR.submit(_run)
+    except Exception:
+        GLOBAL_EXECUTIONS.finish(execution.attempt_id)
+        raise
 
     def _done(f: Future[Any]) -> None:
-        with _lock:
-            # Only remove if this callback matches the currently tracked future.
-            if _in_flight.get(jid) is f:
-                _in_flight.pop(jid, None)
         try:
             f.result()
-        except Exception:
-            logger.exception("background job crashed: job_id=%s", jid)
+        except Exception as e:
+            logger.exception("background job crashed: job_id=%s attempt_id=%s", execution.job_id, execution.attempt_id)
+            if on_crash is not None:
+                try:
+                    on_crash(e)
+                except Exception:
+                    logger.exception(
+                        "background crash reconciler failed: job_id=%s attempt_id=%s",
+                        execution.job_id,
+                        execution.attempt_id,
+                    )
+        callbacks = GLOBAL_EXECUTIONS.finish(execution.attempt_id)
+        for cb in callbacks:
+            try:
+                cb()
+            except Exception:
+                logger.exception("background post-callback crashed: job_id=%s", execution.job_id)
 
     fut.add_done_callback(_done)
 
@@ -68,20 +87,8 @@ def add_done_callback(job_id: str, cb: Callable[[], Any]) -> None:
     if not jid:
         raise ValueError("job_id is required")
 
-    with _lock:
-        fut = _in_flight.get(jid)
-
-    if fut is None:
+    if not GLOBAL_EXECUTIONS.add_done_callback(jid, cb):
         cb()
-        return
-
-    def _wrap(_f: Future[Any]) -> None:
-        try:
-            cb()
-        except Exception:
-            logger.exception("background post-callback crashed: job_id=%s", jid)
-
-    fut.add_done_callback(_wrap)
 
 
 def shutdown(*, wait: bool = False) -> None:

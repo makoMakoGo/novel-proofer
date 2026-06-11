@@ -203,8 +203,7 @@ def test_resume_paused_job_overwrites_existing_resp(monkeypatch: pytest.MonkeyPa
             # This test focuses on resp overwrite; disable paragraph indentation for stable expectations.
             GLOBAL_JOBS.update(job_id, format=runner.FormatConfig(paragraph_indent=False))
 
-            assert GLOBAL_JOBS.pause(job_id) is True
-            assert GLOBAL_JOBS.resume(job_id) is True
+            assert GLOBAL_JOBS.mark_execution_stopped(job_id, phase="process") is True
 
             # Simulate an existing resp file from an earlier run.
             (work_dir / "resp").mkdir(parents=True, exist_ok=True)

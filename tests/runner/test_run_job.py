@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import novel_proofer.runner as runner
+from novel_proofer.executions import GLOBAL_EXECUTIONS
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import GLOBAL_JOBS
 from novel_proofer.llm.client import LLMTextResult
@@ -34,9 +35,10 @@ def test_run_job_pause_during_validation_stays_in_validate_phase(monkeypatch: py
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
         job_id = job.job_id
+        execution = GLOBAL_EXECUTIONS.begin(job_id, "validate")
 
         def pause_before_first_chunk(*args: object, **kwargs: object):
-            assert GLOBAL_JOBS.pause(job_id) is True
+            assert GLOBAL_EXECUTIONS.request_stop(job_id, "pause") is True
             yield "第1章\n\n你好。"
 
         monkeypatch.setattr(runner, "iter_chunks_by_lines_with_first_chunk_max_from_file", pause_before_first_chunk)
@@ -57,6 +59,7 @@ def test_run_job_pause_during_validation_stays_in_validate_phase(monkeypatch: py
             assert st.wait_reason == "user_paused"
             assert st.error is None
         finally:
+            GLOBAL_EXECUTIONS.finish(execution.attempt_id)
             GLOBAL_JOBS.delete(job_id)
 
 
@@ -122,11 +125,12 @@ def test_run_job_pause_after_chunk_initialization_stays_in_process_phase(monkeyp
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
         job_id = job.job_id
+        execution = GLOBAL_EXECUTIONS.begin(job_id, "validate")
         original_init_chunks = GLOBAL_JOBS.init_chunks
 
         def pause_after_init_chunks(target_job_id: str, *args: object, **kwargs: object) -> None:
             original_init_chunks(target_job_id, *args, **kwargs)
-            assert GLOBAL_JOBS.pause(target_job_id) is True
+            assert GLOBAL_EXECUTIONS.request_stop(target_job_id, "pause") is True
 
         monkeypatch.setattr(GLOBAL_JOBS, "init_chunks", pause_after_init_chunks)
         try:
@@ -145,6 +149,7 @@ def test_run_job_pause_after_chunk_initialization_stays_in_process_phase(monkeyp
             assert st.phase == "process"
             assert st.wait_reason == "user_paused"
         finally:
+            GLOBAL_EXECUTIONS.finish(execution.attempt_id)
             GLOBAL_JOBS.delete(job_id)
 
 

@@ -134,7 +134,7 @@ The implementation is split into vertical GitHub issues:
 - #77 removes browser lifecycle job mutations.
 - #78 adds the pure workflow transition module.
 - #79 persists JobRecord and honest restart recovery.
-- #80 separates the execution registry from JobRecord.
+- #80 separates the execution registry from JobRecord: active attempts, running command, and pause/delete stop requests now live in a volatile in-process registry; persisted records never claim that a Future survived restart.
 - #81 rebuilds Load and automatic UI reattachment.
 - #82 renders settings locks from the snapshot.
 - #83 moves retry and merge onto the command model.

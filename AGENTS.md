@@ -59,6 +59,7 @@ novel_proofer/
 ├── server.py       # Entry point: uvicorn CLI wrapper
 ├── api.py          # FastAPI app, REST endpoints, request validation
 ├── jobs.py         # JobStore: thread-safe job/chunk state management
+├── executions.py   # In-process execution registry and stop requests
 ├── workflow.py     # Workflow guards and invariants
 ├── runner.py       # Orchestrator: chunking -> local rules -> LLM -> merge
 ├── background.py   # Bounded job-level thread pool
@@ -96,14 +97,15 @@ Keep generated/runtime data out of commits: `.env*` except examples, `output/`, 
 ## Key Concepts
 
 - Job states: `queued`, `running`, `paused`, `done`, `error`, `cancelled`.
+- Execution state is volatile and process-local; it lives in `executions.py`, not in persisted job records.
 - Job phases: `validate`, `process`, `merge`, `done`.
 - Chunk states: `pending`, `processing`, `retrying`, `done`, `error`.
 - `retrying` is an automatic retry/backoff state within a single chunk processing attempt, not a manual retry queue.
 - `reset` is the hard delete/cleanup action for a job. It should not be confused with UI detach/new task.
 
-## Workflow Recovery Refactor
+## Workflow Recovery Architecture
 
-Future workflow recovery work is tracked through GitHub issues/PRs. See `docs/WORKFLOW_RECOVERY_REFACTOR.md` for the approved breaking vocabulary:
+Workflow recovery work is tracked through GitHub issues/PRs. See `docs/WORKFLOW_RECOVERY_REFACTOR.md` for the approved breaking vocabulary:
 
 - `JobRecord`: durable task and artifact truth.
 - `JobExecution`: volatile in-process worker attempt.
