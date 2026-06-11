@@ -42,6 +42,13 @@
 | `tests/api/test_lifecycle_js.py::test_restore_and_missing_job_only_change_ui_attachment` | 验证页面启动恢复只读取浏览器侧 attachment 并重新 attach；已删除/不存在任务只清 UI attachment，不触发 pause/reset。 |
 | `tests/api/test_lifecycle_js.py::test_new_task_detaches_without_backend_mutation` | 验证“新任务”按钮只解除 UI attachment 与本地文件选择，不调用 pause/reset/purge 等后端任务变更。 |
 
+## tests/api/test_workflow_js.py
+
+| Test case | 说明 |
+| --- | --- |
+| `tests/api/test_workflow_js.py::test_frontend_workflow_actions_use_snapshot_commands` | 覆盖前端 action availability、primary action、状态文案与状态色调都来自 API snapshot 的命令/阶段/执行态。 |
+| `tests/api/test_workflow_js.py::test_frontend_settings_locks_use_snapshot_state` | 覆盖设置锁从 snapshot 派生：detached 不锁，process/merge/done 后锁格式设置，只有 queued/running execution 锁 LLM 设置，idle/error/retry/merge 等状态允许修改 LLM。 |
+
 ## tests/formatting/test_chunking.py
 
 | Test case | 说明 |

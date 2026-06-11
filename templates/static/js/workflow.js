@@ -72,6 +72,24 @@ export function actionAvailability(job, { hasLocalFile = false, createJobInFligh
     };
 }
 
+export function settingsLockState(job) {
+    const view = normalizeJobState(job);
+    const formatLocked = view.hasJob && ['process', 'merge', 'done'].includes(view.workflowPhase);
+    const llmLocked = view.hasJob && isInFlight(view.executionState);
+
+    return {
+        ...view,
+        formatLocked,
+        llmLocked,
+        formatLockReason: formatLocked
+            ? '任务已完成预处理，切片与格式设置已写入当前任务。'
+            : '',
+        llmLockReason: llmLocked
+            ? '任务正在执行，LLM 设置会在暂停、出错或等待下一步时解锁。'
+            : '',
+    };
+}
+
 export function primaryActionKey(job, options = {}) {
     const availability = actionAvailability(job, options);
     if (!availability.hasJob || availability.canResumeValidate) return 'validate';

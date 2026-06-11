@@ -1,6 +1,6 @@
 
 import { attachedJobId, state, UI_STATE_FIELDS } from './state.js';
-import { actionAvailability, primaryActionKey, snapshotLabel, snapshotTone } from './workflow.js';
+import { actionAvailability, primaryActionKey, settingsLockState, snapshotLabel, snapshotTone } from './workflow.js';
 
 // DOM Elements Cache
 export const elements = {};
@@ -412,20 +412,18 @@ const LLM_FIELDS = [
 ];
 
 export function refreshLocks(job) {
-    const hasJob = !!job;
-    const execution = String(job?.execution_state || '').toLowerCase();
-    const llmLocked = hasJob && ['queued', 'running'].includes(execution);
+    const locks = settingsLockState(job);
 
-    _setFieldsDisabled(SLICE_FIELDS, hasJob);
+    _setFieldsDisabled(SLICE_FIELDS, locks.formatLocked);
     if (elements.sliceLockHint) {
-        elements.sliceLockHint.classList.toggle('hidden', !hasJob);
-        if (hasJob) elements.sliceLockHint.textContent = '当前已关联任务，切片设置已锁定（要修改请先点“新任务”解除关联，或删除任务后重新创建）。';
+        elements.sliceLockHint.classList.toggle('hidden', !locks.formatLocked);
+        elements.sliceLockHint.textContent = locks.formatLockReason;
     }
 
-    _setFieldsDisabled(LLM_FIELDS, llmLocked);
+    _setFieldsDisabled(LLM_FIELDS, locks.llmLocked);
     if (elements.llmLockHint) {
-        elements.llmLockHint.classList.toggle('hidden', !llmLocked);
-        if (llmLocked) elements.llmLockHint.textContent = '任务运行中，LLM 配置已锁定（暂停/出错后可修改并用于继续/重试）。';
+        elements.llmLockHint.classList.toggle('hidden', !locks.llmLocked);
+        elements.llmLockHint.textContent = locks.llmLockReason;
     }
 }
 
