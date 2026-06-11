@@ -103,7 +103,9 @@ def test_frontend_settings_locks_use_snapshot_state() -> None:
 
         const detached = settingsLockState(null);
         assert.equal(detached.formatLocked, false);
+        assert.equal(detached.formatLockReason, '');
         assert.equal(detached.llmLocked, false);
+        assert.equal(detached.llmLockReason, '');
 
         const readyToProcess = {
             id: 'job1',
@@ -114,8 +116,11 @@ def test_frontend_settings_locks_use_snapshot_state() -> None:
             available_commands: ['process', 'detach', 'reset'],
             progress: { done_chunks: 0, total_chunks: 2 },
         };
-        assert.equal(settingsLockState(readyToProcess).formatLocked, true);
-        assert.equal(settingsLockState(readyToProcess).llmLocked, false);
+        const readyToProcessLocks = settingsLockState(readyToProcess);
+        assert.equal(readyToProcessLocks.formatLocked, true);
+        assert.notEqual(readyToProcessLocks.formatLockReason, '');
+        assert.equal(readyToProcessLocks.llmLocked, false);
+        assert.equal(readyToProcessLocks.llmLockReason, '');
         assert.equal(actionAvailability(readyToProcess).canProcess, true);
 
         const userPaused = {
@@ -126,14 +131,30 @@ def test_frontend_settings_locks_use_snapshot_state() -> None:
         assert.equal(settingsLockState(userPaused).formatLocked, true);
         assert.equal(settingsLockState(userPaused).llmLocked, false);
 
+        const queued = {
+            ...readyToProcess,
+            execution_state: 'queued',
+            wait_reason: null,
+            available_commands: [],
+        };
+        const queuedLocks = settingsLockState(queued);
+        assert.equal(queuedLocks.formatLocked, true);
+        assert.notEqual(queuedLocks.formatLockReason, '');
+        assert.equal(queuedLocks.llmLocked, true);
+        assert.notEqual(queuedLocks.llmLockReason, '');
+        assert.equal(actionAvailability(queued).canProcess, false);
+
         const running = {
             ...readyToProcess,
             execution_state: 'running',
             wait_reason: null,
             available_commands: ['pause', 'reset'],
         };
-        assert.equal(settingsLockState(running).formatLocked, true);
-        assert.equal(settingsLockState(running).llmLocked, true);
+        const runningLocks = settingsLockState(running);
+        assert.equal(runningLocks.formatLocked, true);
+        assert.notEqual(runningLocks.formatLockReason, '');
+        assert.equal(runningLocks.llmLocked, true);
+        assert.notEqual(runningLocks.llmLockReason, '');
         assert.equal(actionAvailability(running).canProcess, false);
 
         const retryableError = {
@@ -142,9 +163,27 @@ def test_frontend_settings_locks_use_snapshot_state() -> None:
             wait_reason: null,
             available_commands: ['retry_failed', 'detach', 'reset'],
         };
-        assert.equal(settingsLockState(retryableError).formatLocked, true);
-        assert.equal(settingsLockState(retryableError).llmLocked, false);
+        const retryableErrorLocks = settingsLockState(retryableError);
+        assert.equal(retryableErrorLocks.formatLocked, true);
+        assert.notEqual(retryableErrorLocks.formatLockReason, '');
+        assert.equal(retryableErrorLocks.llmLocked, false);
+        assert.equal(retryableErrorLocks.llmLockReason, '');
         assert.equal(actionAvailability(retryableError).canRetry, true);
+
+        const done = {
+            ...readyToProcess,
+            workflow_phase: 'done',
+            wait_reason: null,
+            terminal_state: 'done',
+            available_commands: ['download', 'detach', 'reset'],
+            progress: { done_chunks: 2, total_chunks: 2 },
+        };
+        const doneLocks = settingsLockState(done);
+        assert.equal(doneLocks.formatLocked, true);
+        assert.notEqual(doneLocks.formatLockReason, '');
+        assert.equal(doneLocks.llmLocked, false);
+        assert.equal(doneLocks.llmLockReason, '');
+        assert.equal(actionAvailability(done).canProcess, false);
 
         const readyToMerge = {
             ...readyToProcess,
@@ -153,10 +192,13 @@ def test_frontend_settings_locks_use_snapshot_state() -> None:
             available_commands: ['merge', 'detach', 'reset'],
             progress: { done_chunks: 2, total_chunks: 2 },
         };
-        assert.equal(settingsLockState(readyToMerge).formatLocked, true);
-        assert.equal(settingsLockState(readyToMerge).llmLocked, false);
-        assert.equal(settingsLockState(readyToMerge).formatLockReason.includes('api/'), false);
-        assert.equal(settingsLockState(running).llmLockReason.includes('/'), false);
+        const readyToMergeLocks = settingsLockState(readyToMerge);
+        assert.equal(readyToMergeLocks.formatLocked, true);
+        assert.notEqual(readyToMergeLocks.formatLockReason, '');
+        assert.equal(readyToMergeLocks.llmLocked, false);
+        assert.equal(readyToMergeLocks.llmLockReason, '');
+        assert.equal(readyToMergeLocks.formatLockReason.includes('api/'), false);
+        assert.equal(runningLocks.llmLockReason.includes('/'), false);
         """
     )
 
