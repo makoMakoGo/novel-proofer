@@ -28,11 +28,19 @@
 | `tests/api/test_endpoints.py::test_rerun_all_creates_new_job_without_reupload` | 覆盖 `POST /api/v1/jobs/{job_id}/rerun-all`：基于输入缓存创建新任务并从头跑完整流程，且不需要重新上传文件。 |
 | `tests/api/test_endpoints.py::test_job_input_stats_endpoint` | 覆盖 `GET /api/v1/jobs/{job_id}/input-stats`：基于输入缓存统计“非空白字符数”（UI 字数口径）。 |
 
+## tests/api/test_attachment_js.py
+
+| Test case | 说明 |
+| --- | --- |
+| `tests/api/test_attachment_js.py::test_ui_attachment_helpers_are_browser_local_only` | 覆盖浏览器侧 `UiAttachment` helper：job id 归一化、localStorage 持久化、恢复、清除，以及空 job id 的显式错误。 |
+
 ## tests/api/test_lifecycle_js.py
 
 | Test case | 说明 |
 | --- | --- |
 | `tests/api/test_lifecycle_js.py::test_browser_lifecycle_handlers_do_not_mutate_jobs` | 验证浏览器 `pagehide/beforeunload` 生命周期只停止本地 UI observer，不会在页面卸载时调用任何后端任务变更逻辑；从 bfcache `pageshow` 返回时只重新拉取快照恢复 observer。 |
+| `tests/api/test_lifecycle_js.py::test_restore_and_missing_job_only_change_ui_attachment` | 验证页面启动恢复只读取浏览器侧 attachment 并重新 attach；已删除/不存在任务只清 UI attachment，不触发 pause/reset。 |
+| `tests/api/test_lifecycle_js.py::test_new_task_detaches_without_backend_mutation` | 验证“新任务”按钮只解除 UI attachment 与本地文件选择，不调用 pause/reset/purge 等后端任务变更。 |
 
 ## tests/formatting/test_chunking.py
 

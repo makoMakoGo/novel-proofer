@@ -1,8 +1,17 @@
 
 // State management
 
+import {
+    clearPersistedAttachment,
+    normalizeAttachedJobId,
+    persistAttachment,
+    readPersistedAttachment,
+} from './attachment.js';
+
 export const state = {
-    currentJobId: null,
+    uiAttachment: {
+        jobId: null,
+    },
     currentJobExecutionState: null,
     currentJobWorkflowPhase: null,
     currentJobWaitReason: null,
@@ -37,7 +46,6 @@ export const state = {
 };
 
 const UI_STATE_KEY = 'novel_proofer.ui_state.v1';
-const ATTACHED_JOB_KEY = 'novel_proofer.attached_job_id.v2';
 
 export const UI_STATE_FIELDS = [
     'suffix',
@@ -96,19 +104,33 @@ export function saveUiState(formElement) {
     } catch (e) {}
 }
 
-export function getAttachedJobId() {
-    try {
-        return localStorage.getItem(ATTACHED_JOB_KEY);
-    } catch (e) {
-        return null;
-    }
+export function attachedJobId() {
+    return state.uiAttachment.jobId;
 }
 
-export function setAttachedJobId(id) {
-    try {
-        if (id) localStorage.setItem(ATTACHED_JOB_KEY, id);
-        else localStorage.removeItem(ATTACHED_JOB_KEY);
-    } catch (e) {}
+export function hasUiAttachment() {
+    return !!state.uiAttachment.jobId;
+}
+
+export function attachUiToJob(jobId) {
+    const normalized = persistAttachment(localStorage, jobId);
+    state.uiAttachment.jobId = normalized;
+    return normalized;
+}
+
+export function detachUiFromJob() {
+    clearPersistedAttachment(localStorage);
+    state.uiAttachment.jobId = null;
+}
+
+export function restoreUiAttachment() {
+    const jobId = readPersistedAttachment(localStorage);
+    state.uiAttachment.jobId = jobId;
+    return jobId;
+}
+
+export function attachmentMatches(jobId) {
+    return state.uiAttachment.jobId === normalizeAttachedJobId(jobId);
 }
 
 export function saveActiveTab(tabName) {

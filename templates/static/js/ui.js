@@ -1,5 +1,5 @@
 
-import { state, UI_STATE_FIELDS } from './state.js';
+import { attachedJobId, state, UI_STATE_FIELDS } from './state.js';
 import { actionAvailability, primaryActionKey, snapshotLabel, snapshotTone } from './workflow.js';
 
 // DOM Elements Cache
@@ -275,7 +275,7 @@ export function renderChunksTable() {
     if (!state.chunksData || state.chunksData.length === 0) {
         elements.noChunksHint.classList.remove('hidden');
         elements.chunksTableWrap.classList.add('hidden');
-        if (state.currentJobId) {
+        if (attachedJobId()) {
             if (state.currentFilter === 'all') {
                 elements.noChunksHint.textContent = '暂无分片数据（可切换到调试信息页以加载）。';
             } else {

@@ -2,8 +2,12 @@ import {
     state,
     loadUiState,
     saveUiState,
-    getAttachedJobId,
-    setAttachedJobId,
+    attachedJobId,
+    attachUiToJob,
+    attachmentMatches,
+    detachUiFromJob,
+    hasUiAttachment,
+    restoreUiAttachment,
     UI_STATE_FIELDS,
     getSavedActiveTab,
     saveActiveTab
@@ -29,7 +33,7 @@ async function ensureJobInputChars(jobId) {
         if (!res.ok) {
             const marker = (res.status === 404) ? state.INPUT_CHARS_MISSING : state.INPUT_CHARS_ERROR;
             state.inputCharsCache.set(jid, marker);
-            if (state.currentJobId === jid && ui.elements.fileWordCount) {
+            if (attachmentMatches(jid) && ui.elements.fileWordCount) {
                 ui.elements.fileWordCount.textContent = (marker === state.INPUT_CHARS_MISSING) ? '-' : '读取失败';
             }
             return;
@@ -38,7 +42,7 @@ async function ensureJobInputChars(jobId) {
         const n = Number(res.data?.input_chars);
         if (!Number.isFinite(n) || n < 0) {
             state.inputCharsCache.set(jid, state.INPUT_CHARS_ERROR);
-            if (state.currentJobId === jid && ui.elements.fileWordCount) {
+            if (attachmentMatches(jid) && ui.elements.fileWordCount) {
                 ui.elements.fileWordCount.textContent = '读取失败';
             }
             return;
@@ -46,12 +50,12 @@ async function ensureJobInputChars(jobId) {
 
         const count = Math.floor(n);
         state.inputCharsCache.set(jid, count);
-        if (state.currentJobId === jid && ui.elements.fileWordCount) {
+        if (attachmentMatches(jid) && ui.elements.fileWordCount) {
             ui.elements.fileWordCount.textContent = count.toLocaleString();
         }
     } catch (e) {
         state.inputCharsCache.set(jid, state.INPUT_CHARS_ERROR);
-        if (state.currentJobId === jid && ui.elements.fileWordCount) {
+        if (attachmentMatches(jid) && ui.elements.fileWordCount) {
             ui.elements.fileWordCount.textContent = '读取失败';
         }
     } finally {
@@ -128,9 +132,8 @@ function detachUi({ clearFile = true } = {}) {
     stopPolling();
     state.pollInFlight = false;
 
-    state.currentJobId = null;
+    detachUiFromJob();
     clearCurrentJobSnapshot();
-    setAttachedJobId(null);
 
     state.chunksData = [];
     state.chunkCounts = null;
@@ -153,12 +156,12 @@ function detachUi({ clearFile = true } = {}) {
 }
 
 async function refreshJobOnce(jobId) {
-    if (!jobId || state.currentJobId !== jobId) return;
+    if (!jobId || !attachmentMatches(jobId)) return;
     if (state.pollInFlight) return;
     state.pollInFlight = true;
     try {
         const r = await api.fetchJobSummary(jobId);
-        if (!jobId || state.currentJobId !== jobId) return;
+        if (!jobId || !attachmentMatches(jobId)) return;
         if (!r.ok) {
             if (r.status === 404) {
                 detachUi();
@@ -250,14 +253,13 @@ async function refreshJobOnce(jobId) {
 async function attachJob(jobId) {
     const jid = String(jobId || '').trim();
     if (!jid) return;
-    const switchingJob = state.currentJobId !== jid;
+    const switchingJob = !attachmentMatches(jid);
     if (switchingJob) {
         stopPolling();
         state.pollInFlight = false;
         clearCurrentJobSnapshot();
     }
-    state.currentJobId = jid;
-    setAttachedJobId(jid);
+    attachUiToJob(jid);
 
     state.chunksData = [];
     state.chunkCounts = null;
@@ -402,7 +404,7 @@ function bindUiStateInputs() {
 function bindFileInputEvents() {
     ui.elements.fileInput?.addEventListener('change', () => {
         ui.refreshFileName();
-        if (!state.currentJobId) ui.refreshActionButtons(null);
+        if (!hasUiAttachment()) ui.refreshActionButtons(null);
     });
 
     if (ui.elements.fileInput && ui.elements.fileDrop) {
@@ -418,7 +420,7 @@ function bindFileInputEvents() {
             rmDrag();
             setTimeout(() => {
                 ui.refreshFileName();
-                if (!state.currentJobId) ui.refreshActionButtons(null);
+                if (!hasUiAttachment()) ui.refreshActionButtons(null);
             }, 0);
         });
     }
@@ -429,8 +431,9 @@ function bindTabAndFilterEvents() {
         btn.addEventListener('click', () => {
             ui.switchTab(btn.dataset.tab, () => {
                 saveActiveTab(btn.dataset.tab);
-                if (btn.dataset.tab === 'debug' && state.currentJobId) {
-                    refreshChunksNow(state.currentJobId, { force: true });
+                const jobId = attachedJobId();
+                if (btn.dataset.tab === 'debug' && jobId) {
+                    refreshChunksNow(jobId, { force: true });
                 }
             });
         });
@@ -442,8 +445,9 @@ function bindTabAndFilterEvents() {
         btn.addEventListener('click', () => {
             state.currentFilter = btn.dataset.filter;
             ui.elements.filterBtns.forEach(b => b.classList.toggle('active', b === btn));
-            if (state.activeTab === 'debug' && state.currentJobId) {
-                refreshChunksNow(state.currentJobId, { force: true });
+            const jobId = attachedJobId();
+            if (state.activeTab === 'debug' && jobId) {
+                refreshChunksNow(jobId, { force: true });
             } else {
                 ui.renderChunksTable();
             }
@@ -506,7 +510,7 @@ function bindLlmSettingsEvents() {
 
 function bindJobActionEvents() {
     ui.elements.btnPause?.addEventListener('click', async () => {
-        const jobId = state.currentJobId;
+        const jobId = attachedJobId();
         if (!jobId) return;
         ui.elements.btnPause.disabled = true;
         ui.elements.btnPause.classList.add('opacity-50', 'cursor-not-allowed');
@@ -522,7 +526,7 @@ function bindJobActionEvents() {
     });
 
     ui.elements.btnRetry?.addEventListener('click', async () => {
-        const jobId = state.currentJobId;
+        const jobId = attachedJobId();
         if (!jobId) return;
         ui.show('准备重试失败分片…');
 
@@ -537,7 +541,7 @@ function bindJobActionEvents() {
     });
 
     ui.elements.btnProcess?.addEventListener('click', async () => {
-        const jobId = state.currentJobId;
+        const jobId = attachedJobId();
         if (!jobId) return;
         ui.show('开始校对…');
 
@@ -552,7 +556,7 @@ function bindJobActionEvents() {
     });
 
     ui.elements.btnMerge?.addEventListener('click', async () => {
-        const jobId = state.currentJobId;
+        const jobId = attachedJobId();
         if (!jobId) return;
         ui.show('开始合并输出…');
 
@@ -565,16 +569,16 @@ function bindJobActionEvents() {
     });
 
     ui.elements.btnDownload?.addEventListener('click', () => {
-        api.downloadJobOutput(state.currentJobId);
+        api.downloadJobOutput(attachedJobId());
     });
 
     ui.elements.btnValidate?.addEventListener('click', async () => {
-        if (!state.currentJobId) {
+        if (!hasUiAttachment()) {
             ui.elements.form.requestSubmit();
             return;
         }
         if (state.currentJobCommands.includes('validate')) {
-            const jobId = state.currentJobId;
+            const jobId = attachedJobId();
             ui.show('继续预处理…');
 
             const fd = new FormData(ui.elements.form);
@@ -589,7 +593,7 @@ function bindJobActionEvents() {
     });
 
     ui.elements.btnCancel?.addEventListener('click', async () => {
-        const jobId = state.currentJobId;
+        const jobId = attachedJobId();
         if (!jobId) return;
         const execution = String(state.currentJobExecutionState || '').toLowerCase();
         const phase = String(state.currentJobWorkflowPhase || '').toLowerCase();
@@ -604,7 +608,7 @@ function bindJobActionEvents() {
     });
 
     ui.elements.btnReset?.addEventListener('click', async () => {
-        const jobId = state.currentJobId;
+        const jobId = attachedJobId();
         if (!jobId) return;
         const execution = String(state.currentJobExecutionState || '').toLowerCase();
         const phase = String(state.currentJobWorkflowPhase || '').toLowerCase();
@@ -641,9 +645,10 @@ function bindJobActionEvents() {
         const r = await api.fetchJobList();
         if (!r.ok) { ui.show(r.error); return; }
         const allJobs = Array.isArray(r?.data?.jobs) ? r.data.jobs : [];
-        const hasCurrentJob = !!state.currentJobId;
+        const currentAttachedJobId = attachedJobId();
+        const hasCurrentJob = !!currentAttachedJobId;
         const jobs = hasCurrentJob
-            ? allJobs.filter(j => j?.id !== state.currentJobId)
+            ? allJobs.filter(j => j?.id !== currentAttachedJobId)
             : allJobs;
         if (!jobs.length) {
             ui.show(allJobs.length ? '当前没有其他可加载的任务。' : '暂无可加载任务。');
@@ -658,7 +663,7 @@ function bindJobActionEvents() {
                 : '确认清理全部任务？\n所有历史任务的中间产物与状态记录将被删除且不可恢复（不会删除 output/ 下已生成的最终输出文件）。';
             if (!(await modal.showConfirm(confirmMsg))) return;
             ui.show('正在清理任务…');
-            const exclude = hasCurrentJob ? [state.currentJobId] : [];
+            const exclude = hasCurrentJob ? [currentAttachedJobId] : [];
             const pr = await api.purgeAllJobs({ exclude });
             if (!pr.ok) { ui.show(pr.error || '清理失败'); return; }
             if (!hasCurrentJob) detachUi({ clearFile: true });
@@ -670,7 +675,7 @@ function bindJobActionEvents() {
 
     ui.elements.form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        if (state.currentJobId) return;
+        if (hasUiAttachment()) return;
         if (state.createJobInFlight) return;
         detachUi({ clearFile: false });
 
@@ -716,7 +721,7 @@ function bindJobActionEvents() {
             ui.show('创建任务失败：网络或服务异常。');
         } finally {
             state.createJobInFlight = false;
-            if (!state.currentJobId) ui.refreshActionButtons(null);
+            if (!hasUiAttachment()) ui.refreshActionButtons(null);
         }
     });
 }
@@ -727,8 +732,9 @@ function bindLifecycleEvents() {
         state.pollInFlight = false;
     };
     const resumeUiObserver = (event) => {
-        if (!event.persisted || !state.currentJobId) return;
-        refreshJobOnce(state.currentJobId);
+        const jobId = attachedJobId();
+        if (!event.persisted || !jobId) return;
+        refreshJobOnce(jobId);
     };
     window.addEventListener('pagehide', stopUiObserver);
     window.addEventListener('beforeunload', stopUiObserver);
@@ -736,7 +742,7 @@ function bindLifecycleEvents() {
 }
 
 function restoreLastAttachedJob() {
-    const last = getAttachedJobId();
+    const last = restoreUiAttachment();
     if (last) attachJob(last);
 }
 
