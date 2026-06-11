@@ -648,7 +648,8 @@ async def retry_failed(
     retry_targets = retry_failed_chunk_indices((chunk.index, chunk.state) for chunk in st.chunk_statuses)
     if not retry_targets:
         raise HTTPException(status_code=500, detail="workflow retry targets missing")
-    previous_chunks = {chunk.index: chunk for chunk in st.chunk_statuses if chunk.index in retry_targets}
+    retry_targets_set = set(retry_targets)
+    previous_chunks = {chunk.index: chunk for chunk in st.chunk_statuses if chunk.index in retry_targets_set}
 
     _JobCommandService.apply_command_state(
         job_id,
