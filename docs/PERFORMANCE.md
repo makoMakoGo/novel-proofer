@@ -1,6 +1,6 @@
 # 性能说明（2026-02-21）
 
-本文记录本次性能治理的目标、改动点与实测结果，便于后续回归与二次优化。
+本文记录性能治理的目标、改动点与实测结果，便于回归验证。
 
 ## 1. 关键瓶颈
 
@@ -25,7 +25,7 @@ UI 1s 轮询
 
 - 新增 `get_summary()` / `list_summaries()`，仅返回任务级信息。
 - 新增 `get_chunks_page()`，按过滤与分页返回 chunk 明细。
-- `JobStatus` 增加 `chunk_counts`，在 `update_chunk()` / `init_chunks()` / `cancel()` 中增量维护。
+- `JobStatus` 增加 `chunk_counts`，在 `update_chunk()` / `init_chunks()` / `mark_reset_requested()` 中增量维护。
 
 ### 2.2 API 读路径优化
 
@@ -78,7 +78,6 @@ UI 1s 轮询
 
 ## 4. 回归验证
 
-已执行：
+验证性能相关变更时至少执行：
 
 - `uv run --frozen --no-sync python -m pytest -q`
-- 结果：`124 passed`

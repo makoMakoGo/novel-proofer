@@ -21,6 +21,9 @@
 | `tests/api/test_endpoints.py::test_pause_only_allowed_in_process_phase` | `pause` 仅允许在 `phase=process` 时执行；其他阶段返回 `409`。 |
 | `tests/api/test_endpoints.py::test_reset_job_deletes_job` | 覆盖 `reset`：任务会从任务列表中被删除（但不会删除 `output/` 下已生成的最终输出）。 |
 | `tests/api/test_endpoints.py::test_reset_completed_job_deletes_without_forcing_cancel` | 覆盖完成态 `reset`：按 workflow decision 直接清理删除，不额外写入 `cancelled` 状态。 |
+| `tests/api/test_endpoints.py::test_resume_rejects_duplicate_active_execution` | 已有 active execution 时，`resume` 明确返回 `409` 并回滚 durable workflow 状态。 |
+| `tests/api/test_endpoints.py::test_resume_worker_crash_reconciles_error_and_clears_execution` | 后台 worker 崩溃时会把 job 收敛为显式 `error`，并移除 execution registry entry。 |
+| `tests/api/test_endpoints.py::test_reset_active_execution_requests_delete_and_cleans_after_done` | active execution 上执行 `reset` 会发送 `delete` stop 请求，并在 execution 完成回调后删除 job 记录与中间产物。 |
 | `tests/api/test_endpoints.py::test_llm_settings_get_put_preserves_unknown_lines` | 覆盖 LLM 默认配置接口：`GET/PUT /api/v1/settings/llm`；验证写入 `.env` 时保留未知键/注释，并能读回保存的 LLM 字段。 |
 | `tests/api/test_endpoints.py::test_rerun_all_creates_new_job_without_reupload` | 覆盖 `POST /api/v1/jobs/{job_id}/rerun-all`：基于输入缓存创建新任务并从头跑完整流程，且不需要重新上传文件。 |
 | `tests/api/test_endpoints.py::test_job_input_stats_endpoint` | 覆盖 `GET /api/v1/jobs/{job_id}/input-stats`：基于输入缓存统计“非空白字符数”（UI 字数口径）。 |
@@ -29,7 +32,7 @@
 
 | Test case | 说明 |
 | --- | --- |
-| `tests/api/test_lifecycle_js.py::test_browser_lifecycle_handlers_do_not_mutate_jobs` | 验证浏览器 `pagehide/beforeunload` 生命周期只停止本地 UI observer，不会调用 best-effort pause、beacon、keepalive、pause/reset 等后端任务变更逻辑；从 bfcache `pageshow` 返回时只重新拉取快照恢复 observer。 |
+| `tests/api/test_lifecycle_js.py::test_browser_lifecycle_handlers_do_not_mutate_jobs` | 验证浏览器 `pagehide/beforeunload` 生命周期只停止本地 UI observer，不会在页面卸载时调用任何后端任务变更逻辑；从 bfcache `pageshow` 返回时只重新拉取快照恢复 observer。 |
 
 ## tests/formatting/test_chunking.py
 
@@ -63,12 +66,12 @@
 
 | Test case | 说明 |
 | --- | --- |
-| `tests/jobs/test_store.py::test_job_store_update_respects_started_at_and_pause_rules` | `started_at` 只接受首次写入；暂停状态不应被 `update(state="running")` 覆盖；进入终态（`done`）后清除 paused 标记。 |
+| `tests/jobs/test_store.py::test_job_store_update_respects_started_at_and_explicit_workflow_state` | `started_at` 只接受首次写入；paused/queued 等 workflow 状态必须显式写入，不再依赖 hidden pause flag。 |
 | `tests/jobs/test_store.py::test_job_store_update_rejects_invalid_workflow_combinations` | `JobStore.update()` 会拒绝非法 state/phase/wait_reason 组合，错误由 workflow invariant 统一给出。 |
 | `tests/jobs/test_store.py::test_job_store_update_chunk_tracks_done_chunks` | `done_chunks` 随分片状态在 `done/pending` 间切换而增减；越界 index 更新应被忽略。 |
 | `tests/jobs/test_store.py::test_job_store_add_retry_updates_job_and_chunk` | `add_retry()` 同时更新 job 级与 chunk 级重试/错误信息；无效 index 仍应累加 job 级计数。 |
-| `tests/jobs/test_store.py::test_job_store_cancel_resets_processing_chunks` | 触发“删除任务（reset）”的终止信号后：任务变为 `cancelled` 且写入 `finished_at`，正在处理/重试的 chunk 重置为 `pending` 并清空时间戳。 |
-| `tests/jobs/test_store.py::test_job_store_pause_resume_and_delete` | `pause/resume/delete` 的幂等性与返回值（重复操作返回 `False`）以及 paused 状态开关。 |
+| `tests/jobs/test_store.py::test_job_store_cancel_resets_processing_chunks` | 触发“删除任务（reset）”的 durable 投影后：任务变为 `cancelled` 且写入 `finished_at`，正在处理/重试的 chunk 重置为 `pending` 并清空时间戳。 |
+| `tests/jobs/test_store.py::test_job_store_execution_stop_projection_and_delete` | pause stop 的 durable 投影会写入 `paused + user_paused`，并可再显式切回 queued；delete 删除内存与持久化记录。 |
 | `tests/jobs/test_store.py::test_job_store_ignores_unknown_jobs_and_cancelled_updates` | 对未知 job 的操作应无副作用；对已标记为 `cancelled` 的 job 的 `update()/update_chunk()` 应 no-op，避免状态被“复活”。 |
 | `tests/jobs/test_store.py::test_job_store_persistence_is_throttled_and_flushable` | 持久化写盘不应发生在每次 `update_chunk()` 的热路径；dirty 更新应被节流并可通过 `flush_persistence()` 主动触发落盘。 |
 | `tests/jobs/test_store.py::test_job_record_rejects_missing_phase` | `JobRecord` schema 缺少 workflow phase 时明确失败。 |
@@ -82,15 +85,22 @@
 | `tests/jobs/test_store.py::test_job_store_load_persisted_jobs_rejects_corrupt_record` | 非法 `JobRecord` 会中止加载并给出显式错误，不跳过或降级。 |
 | `tests/jobs/test_store.py::test_job_store_load_persisted_jobs_restores_in_flight_record_as_paused` | 若 record 中仍出现 in-flight 状态，加载时恢复为 `server_recovered` 且 chunk 回到 `pending`。 |
 
+## tests/test_executions.py
+
+| Test case | 说明 |
+| --- | --- |
+| `tests/test_executions.py::test_execution_registry_tracks_attempt_stop_and_callbacks` | 覆盖 volatile execution registry：active attempt、duplicate rejection、queued/running、pause/delete stop 请求、done callback 与 finish 清理。 |
+| `tests/test_executions.py::test_background_submit_cleans_up_execution_on_base_exception` | 覆盖后台 worker 抛出 `BaseException` 时也会清理 execution entry 并执行 done callback；`on_crash` 仍只处理普通 `Exception`。 |
+
 ## tests/test_workflow.py
 
 | Test case | 说明 |
 | --- | --- |
-| `tests/test_workflow.py::test_pause_guard_is_process_only_and_in_flight_only` | 兼容层校验 pause 只允许在 `process` 阶段且执行中。 |
-| `tests/test_workflow.py::test_resume_guard_selects_validate_or_process_target` | 兼容层校验 resume 会按当前 phase 选择 `validate` 或 `process` 目标。 |
-| `tests/test_workflow.py::test_retry_guard_requires_error_state_with_failed_chunks` | 兼容层校验 retry failed 只允许 error job 且存在失败分片。 |
+| `tests/test_workflow.py::test_pause_guard_is_process_only_and_in_flight_only` | 校验 pause 只允许在 `process` 阶段且执行中。 |
+| `tests/test_workflow.py::test_resume_guard_selects_validate_or_process_target` | 校验 resume 会按当前 phase 选择 `validate` 或 `process` 目标。 |
+| `tests/test_workflow.py::test_retry_guard_requires_error_state_with_failed_chunks` | 校验 retry failed 只允许 error job 且存在失败分片。 |
 | `tests/test_workflow.py::test_processing_final_state_depends_only_on_chunk_states` | 校验处理阶段最终状态只由分片 error/done 汇总决定。 |
-| `tests/test_workflow.py::test_merge_guard_requires_paused_merge_phase_and_complete_chunks` | 兼容层校验 merge 只允许 paused + merge phase + 分片全 done。 |
+| `tests/test_workflow.py::test_merge_guard_requires_paused_merge_phase_and_complete_chunks` | 校验 merge 只允许 paused + merge phase + 分片全 done。 |
 | `tests/test_workflow.py::test_persisted_phase_invariants_are_centralized` | 校验持久化 phase/state/chunk invariants 统一由 workflow 模块暴露。 |
 | `tests/test_workflow.py::test_command_decisions_return_explicit_next_state_and_target` | 表驱动校验合法命令返回明确 next workflow state 与 resume target。 |
 | `tests/test_workflow.py::test_illegal_commands_return_typed_rejections` | 表驱动校验非法命令返回 typed rejection code/message，而不是静默 no-op。 |
@@ -169,8 +179,8 @@
 | `tests/runner/test_extra_coverage.py::test_llm_worker_records_retries_and_aligns_newlines` | LLM 路径下：记录重试次数与错误码；在启用 raw 响应保留时写入 `resp/`；并对齐输出尾部换行（如补空行）。 |
 | `tests/runner/test_extra_coverage.py::test_llm_worker_cancel_behaviors` | 覆盖多种终止时机：开始前/LLM 返回后/异常处理中触发终止时，worker 应提前退出且避免落盘副作用。 |
 | `tests/runner/test_extra_coverage.py::test_llm_worker_ratio_validation_errors` | 输出长度校验：除首 chunk 外，过短/过长输出应标记 chunk 为 error 并写入错误信息。 |
-| `tests/runner/test_extra_coverage.py::test_run_llm_for_indices_paused_cancelled_and_worker_exception` | `_run_llm_for_indices()` 在 job paused/cancelled 时直接返回；worker 抛异常时不应导致整体失败（最终返回 done）。 |
-| `tests/runner/test_extra_coverage.py::test_run_job_cancellation_llm_outcomes_and_exception` | `run_job()` 对终止的多阶段分支（预处理/输出）与 LLM outcome（paused/cancelled）处理正确；异常应把 job 置为 error 并记录信息。 |
+| `tests/runner/test_extra_coverage.py::test_run_llm_for_indices_paused_cancelled_and_worker_exception` | `_run_llm_for_indices()` 收到 execution registry 的 pause/delete stop 请求时直接返回；worker 抛异常时不应导致整体失败（最终返回 done）。 |
+| `tests/runner/test_extra_coverage.py::test_run_job_cancellation_llm_outcomes_and_exception` | `run_job()` 对 registry stop 的多阶段分支（预处理/输出）与 LLM outcome（paused/cancelled）处理正确；异常应把 job 置为 error 并记录信息。 |
 | `tests/runner/test_extra_coverage.py::test_retry_failed_and_resume_paused_branches` | 覆盖 `retry_failed_chunks()/resume_paused_job()` 的缺失配置分支、无失败分支、以及 paused/cancelled outcome 分支与收尾 done 分支。 |
 
 ## tests/runner/test_jobs_logs.py

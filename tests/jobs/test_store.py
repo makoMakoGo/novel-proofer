@@ -104,7 +104,7 @@ def _raw_job_record(
     }
 
 
-def test_job_store_update_respects_started_at_and_pause_rules() -> None:
+def test_job_store_update_respects_started_at_and_explicit_workflow_state() -> None:
     js = JobStore()
     st = js.create("in.txt", "out.txt", total_chunks=0)
     job_id = st.job_id
@@ -115,23 +115,25 @@ def test_job_store_update_respects_started_at_and_pause_rules() -> None:
     assert st is not None
     assert st.started_at == 123.0
 
-    assert js.pause(job_id) is True
+    assert js.mark_execution_stopped(job_id, phase=JobPhase.PROCESS) is True
     paused = js.get(job_id)
     assert paused is not None
     assert paused.wait_reason == WaitReason.USER_PAUSED
-    # update() should not move paused -> running/queued.
-    js.update(job_id, state="running")
+    assert paused.state == "paused"
+
+    js.update(job_id, state="queued", phase="process", wait_reason=None)
     st2 = js.get(job_id)
     assert st2 is not None
-    assert st2.state == "paused"
-    assert st2.wait_reason == WaitReason.USER_PAUSED
+    assert st2.state == "queued"
+    assert st2.wait_reason is None
 
     with pytest.raises(ValueError, match="wait_reason must be one of"):
         js.update(job_id, wait_reason="bogus")
 
-    # Marking terminal state should clear paused flag.
     js.update(job_id, state="done", phase="done", finished_at=time.time())
-    assert js.is_paused(job_id) is False
+    done = js.get(job_id)
+    assert done is not None
+    assert done.state == "done"
 
 
 def test_job_store_update_rejects_invalid_workflow_combinations() -> None:
@@ -238,7 +240,7 @@ def test_job_store_cancel_resets_processing_chunks() -> None:
     js.update_chunk(job_id, 0, state="processing", started_at=1.0)
     js.update_chunk(job_id, 1, state="retrying", started_at=2.0, last_error_message=None)
 
-    assert js.cancel(job_id) is True
+    assert js.mark_reset_requested(job_id) is True
 
     got = js.get(job_id)
     assert got is not None
@@ -250,21 +252,24 @@ def test_job_store_cancel_resets_processing_chunks() -> None:
     assert got.chunk_statuses[1].last_error_message == "cancelled"
 
 
-def test_job_store_pause_resume_and_delete() -> None:
+def test_job_store_execution_stop_projection_and_delete() -> None:
     js = JobStore()
     st = js.create("in.txt", "out.txt", total_chunks=0)
     job_id = st.job_id
 
-    assert js.resume(job_id) is False
-    assert js.pause(job_id) is True
-    assert js.pause(job_id) is False
-    assert js.is_paused(job_id) is True
+    assert js.mark_execution_stopped("missing", phase=JobPhase.PROCESS) is False
+    assert js.mark_execution_stopped(job_id, phase=JobPhase.PROCESS) is True
+    paused = js.get(job_id)
+    assert paused is not None
+    assert paused.state == "paused"
+    assert paused.phase == "process"
+    assert paused.wait_reason == "user_paused"
 
-    assert js.resume(job_id) is True
-    assert js.is_paused(job_id) is False
-    resumed = js.get(job_id)
-    assert resumed is not None
-    assert resumed.wait_reason is None
+    js.update(job_id, state="queued", phase="process", wait_reason=None)
+    queued = js.get(job_id)
+    assert queued is not None
+    assert queued.state == "queued"
+    assert queued.wait_reason is None
 
     assert js.delete(job_id) is True
     assert js.delete(job_id) is False
@@ -278,14 +283,13 @@ def test_job_store_ignores_unknown_jobs_and_cancelled_updates() -> None:
     js.update_chunk("missing", 0, state="done")
     js.add_retry("missing", 0, 1, None, None)
     js.add_stat("missing", "x", 1)
-    assert js.cancel("missing") is False
-    assert js.pause("missing") is False
-    assert js.resume("missing") is False
+    assert js.mark_reset_requested("missing") is False
+    assert js.mark_execution_stopped("missing", phase=JobPhase.PROCESS) is False
 
     st = js.create("in.txt", "out.txt", total_chunks=1)
     job_id = st.job_id
     js.init_chunks(job_id, total_chunks=1)
-    assert js.cancel(job_id) is True
+    assert js.mark_reset_requested(job_id) is True
 
     # update() should no-op for cancelled jobs.
     js.update(job_id, state="running")

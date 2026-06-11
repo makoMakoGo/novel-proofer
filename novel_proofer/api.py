@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -35,6 +36,7 @@ from novel_proofer.dotenv_store import (
 from novel_proofer.dotenv_store import (
     dotenv_path as dotenv_path,
 )
+from novel_proofer.executions import GLOBAL_EXECUTIONS, ExecutionAlreadyActive, StopReason
 from novel_proofer.formatting.config import FormatConfig
 from novel_proofer.jobs import GLOBAL_JOBS, JobStatus
 from novel_proofer.llm.config import LLMConfig
@@ -46,6 +48,7 @@ from novel_proofer.models import (
     JobGetResponse,
     JobListResponse,
     JobOptions,
+    JobOut,
     JobSummaryOut,
     LLMOptions,
     LLMSettingsPutRequest,
@@ -56,11 +59,19 @@ from novel_proofer.models import (
     RetryFailedRequest,
 )
 from novel_proofer.runner import merge_outputs, resume_paused_job, retry_failed_chunks, run_job
-from novel_proofer.states import ChunkState, JobCommand, JobPhase, JobState
+from novel_proofer.states import ChunkState, JobCommand, JobPhase, JobState, WaitReason
 from novel_proofer.workflow import CommandDecision, ResumeTarget, decide_command, resume_decision
 from novel_proofer.workflow_context import workflow_context_for_job
 
 logger = logging.getLogger(__name__)
+
+
+def _job_response(st: JobStatus) -> JobOut:
+    return _job_to_out(st, GLOBAL_EXECUTIONS.get(st.job_id))
+
+
+def _job_summary_response(st: JobStatus) -> JobSummaryOut:
+    return _job_summary_to_out(st, GLOBAL_EXECUTIONS.get(st.job_id))
 
 
 def _require_workflow_command(st: JobStatus, command: JobCommand) -> CommandDecision:
@@ -124,14 +135,28 @@ class _JobCommandService:
     def submit_background(
         *,
         job_id: str,
+        command: JobCommand,
         fn: Callable[..., Any],
         args: tuple[Any, ...] = (),
         kwargs: dict[str, Any] | None = None,
         on_submit_failure: Callable[[], None] | None = None,
     ) -> None:
+        def _mark_worker_crashed(exc: BaseException) -> None:
+            st = GLOBAL_JOBS.get(job_id)
+            if st is None:
+                return
+            if st.state in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}:
+                return
+            GLOBAL_JOBS.update(
+                job_id,
+                state=JobState.ERROR,
+                finished_at=time.time(),
+                error=f"{command.value} worker crashed: {exc}",
+            )
+
         try:
-            submit_background_job(job_id, fn, *args, **(kwargs or {}))
-        except ValueError as e:
+            submit_background_job(job_id, command, fn, *args, on_crash=_mark_worker_crashed, **(kwargs or {}))
+        except (ExecutionAlreadyActive, ValueError) as e:
             if on_submit_failure is not None:
                 on_submit_failure()
             raise HTTPException(status_code=409, detail=str(e)) from e
@@ -151,6 +176,7 @@ class _JobCommandService:
         GLOBAL_JOBS.update(job_id, phase=JobPhase.VALIDATE, format=fmt, last_llm_model=llm.model)
         _JobCommandService.submit_background(
             job_id=job_id,
+            command=JobCommand.VALIDATE,
             fn=run_job,
             args=(job_id, paths._input_cache_path(job_id), fmt, llm),
             on_submit_failure=on_submit_failure,
@@ -299,7 +325,7 @@ async def create_job(file: UploadFile = File(...), options: str = Form(...)) -> 
     )
 
     st = _JobCommandService.get_job_or_500(job_id)
-    return JobCreateResponse(job=_job_to_out(st))
+    return JobCreateResponse(job=_job_response(st))
 
 
 @app.post("/api/v1/jobs/{job_id}/rerun-all", response_model=JobCreateResponse, status_code=201)
@@ -342,7 +368,7 @@ async def rerun_all(job_id: str = Depends(paths._job_id_dep), options: JobOption
     )
 
     st = _JobCommandService.get_job_or_500(new_job_id)
-    return JobCreateResponse(job=_job_to_out(st))
+    return JobCreateResponse(job=_job_response(st))
 
 
 @app.get("/api/v1/jobs/{job_id}", response_model=JobGetResponse)
@@ -358,7 +384,7 @@ async def get_job(
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
 
-    payload = JobGetResponse(job=_job_to_out(st))
+    payload = JobGetResponse(job=_job_response(st))
     if chunks != 1:
         return payload
 
@@ -475,7 +501,10 @@ async def purge_all_jobs(body: PurgeAllRequest = Body(default_factory=PurgeAllRe
         if jid in exclude_set:
             continue
         try:
-            GLOBAL_JOBS.cancel(jid)
+            if GLOBAL_EXECUTIONS.get(jid) is not None:
+                GLOBAL_EXECUTIONS.request_stop(jid, StopReason.DELETE)
+            if st.state not in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}:
+                GLOBAL_JOBS.mark_reset_requested(jid, phase=st.phase)
 
             def _cleanup(job_id: str = jid) -> None:
                 _JobCommandService.cleanup_failed_new_job(job_id)
@@ -510,7 +539,7 @@ async def list_jobs(
         st_phase = st.phase.lower()
         if wanted_phases and st_phase not in wanted_phases:
             continue
-        out.append(_job_summary_to_out(st))
+        out.append(_job_summary_response(st))
 
     if offset:
         out = out[offset:]
@@ -525,11 +554,18 @@ async def pause_job(job_id: str = Depends(paths._job_id_dep)) -> JobActionRespon
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    _require_workflow_command(st, JobCommand.PAUSE)
-    if not GLOBAL_JOBS.pause(job_id):
+    decision = _require_workflow_command(st, JobCommand.PAUSE)
+    assert decision.next_state is not None
+    if not GLOBAL_EXECUTIONS.request_stop(job_id, StopReason.PAUSE):
+        raise HTTPException(status_code=409, detail="job execution is not active")
+    if not GLOBAL_JOBS.mark_execution_stopped(
+        job_id,
+        phase=decision.next_state.phase,
+        wait_reason=decision.next_state.wait_reason or WaitReason.USER_PAUSED,
+    ):
         raise HTTPException(status_code=409, detail="failed to pause job")
     st2 = GLOBAL_JOBS.get(job_id) or st
-    return JobActionResponse(ok=True, job=_job_to_out(st2))
+    return JobActionResponse(ok=True, job=_job_response(st2))
 
 
 @app.post("/api/v1/jobs/{job_id}/resume", response_model=JobActionResponse)
@@ -540,8 +576,15 @@ async def resume_job(
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
     resume_command = _require_resume_workflow(st)
-    if not GLOBAL_JOBS.resume(job_id):
-        raise HTTPException(status_code=409, detail="failed to resume job")
+    if resume_command.next_state is None:
+        raise HTTPException(status_code=500, detail="workflow command state missing")
+    GLOBAL_JOBS.update(
+        job_id,
+        state=resume_command.next_state.state,
+        phase=resume_command.next_state.phase,
+        wait_reason=resume_command.next_state.wait_reason,
+        finished_at=None,
+    )
 
     llm = _llm_from_options(body.llm or LLMOptions())
     prev_llm_model = st.last_llm_model
@@ -561,17 +604,24 @@ async def resume_job(
         raise HTTPException(status_code=500, detail="workflow command target mismatch")
 
     def _rollback_resume_state() -> None:
-        GLOBAL_JOBS.pause(job_id)
-        GLOBAL_JOBS.update(job_id, last_llm_model=prev_llm_model)
+        GLOBAL_JOBS.update(
+            job_id,
+            state=st.state,
+            phase=st.phase,
+            wait_reason=st.wait_reason,
+            finished_at=st.finished_at,
+            last_llm_model=prev_llm_model,
+        )
 
     _JobCommandService.submit_background(
         job_id=job_id,
+        command=JobCommand.PROCESS if resume_command.target == ResumeTarget.PROCESS else JobCommand.VALIDATE,
         fn=fn,
         args=args,
         on_submit_failure=_rollback_resume_state,
     )
 
-    return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
+    return JobActionResponse(ok=True, job=_job_response(GLOBAL_JOBS.get(job_id) or st))
 
 
 @app.post("/api/v1/jobs/{job_id}/retry-failed", response_model=JobActionResponse)
@@ -611,12 +661,13 @@ async def retry_failed(
 
     _JobCommandService.submit_background(
         job_id=job_id,
+        command=JobCommand.RETRY_FAILED,
         fn=retry_failed_chunks,
         args=(job_id, llm),
         on_submit_failure=_rollback_retry_state,
     )
 
-    return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
+    return JobActionResponse(ok=True, job=_job_response(GLOBAL_JOBS.get(job_id) or st))
 
 
 @app.post("/api/v1/jobs/{job_id}/merge", response_model=JobActionResponse)
@@ -626,23 +677,37 @@ async def merge_job(
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    _require_workflow_command(st, JobCommand.MERGE)
+    merge_decision = _require_workflow_command(st, JobCommand.MERGE)
+    if merge_decision.next_state is None:
+        raise HTTPException(status_code=500, detail="workflow command state missing")
 
-    if not GLOBAL_JOBS.resume(job_id):
-        raise HTTPException(status_code=409, detail="failed to start merge")
+    GLOBAL_JOBS.update(
+        job_id,
+        state=merge_decision.next_state.state,
+        phase=merge_decision.next_state.phase,
+        wait_reason=merge_decision.next_state.wait_reason,
+        finished_at=None,
+    )
 
     def _rollback_merge_state() -> None:
-        GLOBAL_JOBS.pause(job_id)
+        GLOBAL_JOBS.update(
+            job_id,
+            state=st.state,
+            phase=st.phase,
+            wait_reason=st.wait_reason,
+            finished_at=st.finished_at,
+        )
 
     _JobCommandService.submit_background(
         job_id=job_id,
+        command=JobCommand.MERGE,
         fn=merge_outputs,
         args=(job_id,),
         kwargs={"cleanup_debug_dir": body.cleanup_debug_dir},
         on_submit_failure=_rollback_merge_state,
     )
 
-    return JobActionResponse(ok=True, job=_job_to_out(GLOBAL_JOBS.get(job_id) or st))
+    return JobActionResponse(ok=True, job=_job_response(GLOBAL_JOBS.get(job_id) or st))
 
 
 @app.post("/api/v1/jobs/{job_id}/reset", response_model=JobActionResponse)
@@ -654,7 +719,9 @@ async def reset_job(job_id: str = Depends(paths._job_id_dep)) -> JobActionRespon
     assert reset_decision.next_state is not None
 
     if reset_decision.next_state.state == JobState.CANCELLED:
-        GLOBAL_JOBS.cancel(job_id)
+        if GLOBAL_EXECUTIONS.get(job_id) is not None:
+            GLOBAL_EXECUTIONS.request_stop(job_id, StopReason.DELETE)
+        GLOBAL_JOBS.mark_reset_requested(job_id, phase=reset_decision.next_state.phase)
 
     def _cleanup_and_delete() -> None:
         steps: tuple[tuple[str, Callable[[], object]], ...] = (
@@ -686,6 +753,8 @@ async def cleanup_debug(job_id: str = Depends(paths._job_id_dep)) -> JobActionRe
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
+    if GLOBAL_EXECUTIONS.get(job_id) is not None:
+        raise HTTPException(status_code=409, detail="job execution is active")
     if st.state in {JobState.QUEUED, JobState.RUNNING}:
         raise HTTPException(status_code=409, detail="job is running")
     if st.state == JobState.CANCELLED:
@@ -701,4 +770,4 @@ async def cleanup_debug(job_id: str = Depends(paths._job_id_dep)) -> JobActionRe
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     deleted = GLOBAL_JOBS.delete(job_id)
-    return JobActionResponse(ok=True, job=_job_to_out(st) if deleted else None)
+    return JobActionResponse(ok=True, job=_job_response(st) if deleted else None)

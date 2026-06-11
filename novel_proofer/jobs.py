@@ -274,8 +274,6 @@ class JobStore:
         self._persist_cv = threading.Condition(self._lock)
         self._persist_lock = threading.Lock()
         self._jobs: dict[str, JobStatus] = {}
-        self._cancelled: set[str] = set()
-        self._paused: set[str] = set()
         # In-memory store for pre-processed chunk texts to eliminate small file I/O.
         # Not persisted to disk; cleared per-chunk after LLM processing or when jobs are deleted.
         self._pre_texts: dict[str, dict[int, str]] = {}
@@ -515,10 +513,6 @@ class JobStore:
         with self._lock:
             for st, _needs_rewrite in loaded:
                 self._jobs[st.job_id] = st
-                if st.state == JobState.CANCELLED:
-                    self._cancelled.add(st.job_id)
-                if st.state == JobState.PAUSED:
-                    self._paused.add(st.job_id)
 
         for st, needs_rewrite in loaded:
             if needs_rewrite:
@@ -644,12 +638,7 @@ class JobStore:
             requested_state = str(kwargs.get("state", st.state))
             if requested_state not in _JOB_STATES:
                 raise ValueError(f"JobStore.update: state must be one of {sorted(_JOB_STATES)!r}")
-            target_state = (
-                str(st.state)
-                if str(st.state) == JobState.PAUSED.value
-                and requested_state in {JobState.QUEUED.value, JobState.RUNNING.value}
-                else requested_state
-            )
+            target_state = requested_state
             raw_wait_reason = kwargs.get(
                 "wait_reason", st.wait_reason if target_state == JobState.PAUSED.value else None
             )
@@ -672,8 +661,6 @@ class JobStore:
             for k, v in normalized.items():
                 if k == "started_at" and st.started_at is not None and v is not None:
                     continue
-                if k == "state" and str(v) in {JobState.DONE.value, JobState.ERROR.value, JobState.CANCELLED.value}:
-                    self._paused.discard(job_id)
                 setattr(st, k, v)
             self._mark_dirty_locked(job_id)
             flush_now = st.state in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}
@@ -703,7 +690,7 @@ class JobStore:
             st = self._jobs.get(job_id)
             if st is None:
                 return
-            if st.state == JobState.CANCELLED or job_id in self._cancelled:
+            if st.state == JobState.CANCELLED:
                 return
             if index < 0 or index >= len(st.chunk_statuses):
                 return
@@ -750,66 +737,58 @@ class JobStore:
             st.stats[key] = st.stats.get(key, 0) + inc
         # Stats are non-critical diagnostics; avoid persisting on every increment for performance.
 
-    def cancel(self, job_id: str) -> bool:
+    def _reset_active_chunks_locked(self, st: JobStatus, *, last_error_message: str | None = None) -> None:
+        for i, cs in enumerate(st.chunk_statuses):
+            if cs.state not in {ChunkState.PROCESSING, ChunkState.RETRYING}:
+                continue
+            st.chunk_counts[cs.state] = max(0, st.chunk_counts.get(cs.state, 0) - 1)
+            st.chunk_counts[ChunkState.PENDING] = st.chunk_counts.get(ChunkState.PENDING, 0) + 1
+            st.chunk_statuses[i] = replace(
+                cs,
+                state=ChunkState.PENDING,
+                started_at=None,
+                finished_at=None,
+                last_error_message=cs.last_error_message or last_error_message,
+            )
+
+    def mark_execution_stopped(
+        self,
+        job_id: str,
+        *,
+        phase: JobPhase | str,
+        wait_reason: WaitReason | str = WaitReason.USER_PAUSED,
+    ) -> bool:
+        next_state = WorkflowState.from_values(JobState.PAUSED, phase, wait_reason)
+        with self._lock:
+            st = self._jobs.get(job_id)
+            if st is None:
+                return False
+            if st.state in {JobState.DONE, JobState.ERROR, JobState.CANCELLED}:
+                return False
+
+            st.state = next_state.state
+            st.phase = next_state.phase
+            st.wait_reason = next_state.wait_reason
+            st.finished_at = None
+            self._reset_active_chunks_locked(st)
+            self._mark_dirty_locked(job_id)
+        return True
+
+    def mark_reset_requested(self, job_id: str, *, phase: JobPhase | str | None = None) -> bool:
         with self._lock:
             st = self._jobs.get(job_id)
             if st is None:
                 return False
 
-            now = time.time()
-            self._cancelled.add(job_id)
-            self._paused.discard(job_id)
-
-            # Update visible state immediately so clients can stop polling.
-            if st.state not in {JobState.DONE, JobState.ERROR}:
-                st.state = JobState.CANCELLED
-                st.wait_reason = None
-                st.finished_at = now
-
-            for i, cs in enumerate(st.chunk_statuses):
-                if cs.state in {ChunkState.PROCESSING, ChunkState.RETRYING}:
-                    st.chunk_counts[cs.state] = max(0, st.chunk_counts.get(cs.state, 0) - 1)
-                    st.chunk_counts[ChunkState.PENDING] = st.chunk_counts.get(ChunkState.PENDING, 0) + 1
-                    st.chunk_statuses[i] = replace(
-                        cs,
-                        state=ChunkState.PENDING,
-                        started_at=None,
-                        finished_at=None,
-                        last_error_message=cs.last_error_message or "cancelled",
-                    )
+            next_phase = st.phase if phase is None else phase
+            next_state = WorkflowState.from_values(JobState.CANCELLED, next_phase)
+            st.state = next_state.state
+            st.phase = next_state.phase
+            st.wait_reason = None
+            st.finished_at = time.time()
+            self._reset_active_chunks_locked(st, last_error_message="cancelled")
             self._mark_dirty_locked(job_id)
         self._flush_job(job_id, require_dirty=False)
-        return True
-
-    def pause(self, job_id: str) -> bool:
-        with self._lock:
-            st = self._jobs.get(job_id)
-            if st is None:
-                return False
-            if st.state not in {JobState.QUEUED, JobState.RUNNING}:
-                return False
-
-            self._paused.add(job_id)
-            st.state = JobState.PAUSED
-            st.wait_reason = WaitReason.USER_PAUSED
-            st.finished_at = None
-            self._mark_dirty_locked(job_id)
-        return True
-
-    def resume(self, job_id: str) -> bool:
-        with self._lock:
-            st = self._jobs.get(job_id)
-            if st is None:
-                return False
-            if st.state != JobState.PAUSED and job_id not in self._paused:
-                return False
-
-            self._paused.discard(job_id)
-            if st.state == JobState.PAUSED:
-                st.state = JobState.QUEUED
-                st.wait_reason = None
-                st.finished_at = None
-            self._mark_dirty_locked(job_id)
         return True
 
     def delete(self, job_id: str) -> bool:
@@ -823,8 +802,6 @@ class JobStore:
                 if existed:
                     path = self._persist_path_for_job_id(job_id)
                 self._jobs.pop(job_id, None)
-                self._cancelled.discard(job_id)
-                self._paused.discard(job_id)
                 self._persist_dirty_since.pop(job_id, None)
                 self._persist_seq.pop(job_id, None)
             if path is None:
@@ -835,10 +812,6 @@ class JobStore:
             except Exception:
                 logger.exception("failed to delete persisted job record: job_id=%s", job_id)
             return existed
-
-    def is_cancelled(self, job_id: str) -> bool:
-        with self._lock:
-            return job_id in self._cancelled
 
     # Pre-chunk text accessors (memory-only, thread-safe)
     def set_chunk_pre_text(self, job_id: str, index: int, text: str) -> None:
@@ -863,10 +836,6 @@ class JobStore:
     def clear_all_pre_texts(self, job_id: str) -> None:
         with self._lock:
             self._pre_texts.pop(job_id, None)
-
-    def is_paused(self, job_id: str) -> bool:
-        with self._lock:
-            return job_id in self._paused
 
 
 GLOBAL_JOBS = JobStore()

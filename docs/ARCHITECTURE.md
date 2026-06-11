@@ -43,10 +43,15 @@ novel_proofer/
 ├── server.py          # 入口：uvicorn CLI 包装
 ├── api.py             # REST 端点、请求验证、响应序列化
 ├── background.py      # 后台任务：受控线程池（job 级并发）
+├── converters.py      # API 响应组装：durable job + volatile execution
+├── executions.py      # 当前进程内 execution registry 与 stop 请求
+├── job_records.py     # 严格 JobRecord 持久化 schema
 ├── logging_setup.py   # logging 初始化：文件日志（RotatingFileHandler）
+├── models.py          # Pydantic 请求/响应模型
 ├── dotenv_store.py    # 本地 .env 读写（LLM 默认配置）
-├── jobs.py            # JobStore：线程安全 + 可选快照持久化
+├── jobs.py            # JobStore：durable job/chunk 状态 + 持久化
 ├── runner.py          # 编排器：chunking → local rules → LLM → merge
+├── workflow.py        # workflow command/event guard 与 invariant
 ├── formatting/
 │   ├── config.py      # FormatConfig 数据类
 │   ├── rules.py       # 确定性文本转换（标点、缩进）
@@ -60,12 +65,15 @@ novel_proofer/
 
 | 模块 | 职责 | 关键方法 |
 |------|------|---------|
-| `api.py` | REST 端点、请求验证 | `create_job()`, `get_job()`, `pause_job()` |
-| `background.py` | 后台任务线程池（job 级并发） | `submit()`, `shutdown()` |
+| `api.py` | REST 端点、请求验证、命令提交 | `create_job()`, `get_job()`, `pause_job()` |
+| `background.py` | 后台任务线程池与 execution 生命周期 | `submit()`, `shutdown()` |
+| `converters.py` | API 响应组装 | `_job_to_out()`, `_job_summary_to_out()` |
 | `dotenv_store.py` | 本地 `.env` 读写（保留未知键/注释） | `read_llm_defaults()`, `update_llm_defaults()` |
+| `executions.py` | 进程内 active execution registry | `begin()`, `request_stop()`, `finish()` |
 | `job_records.py` | 严格 `JobRecord` 持久化 schema 与解析 | `job_record_to_payload()`, `job_record_from_payload()` |
 | `logging_setup.py` | 文件日志初始化 | `ensure_file_logging()` |
 | `jobs.py` | 线程安全状态管理（含持久化） | `configure_persistence()`, `load_persisted_jobs()`, `get_summary()`, `get_chunks_page()` |
+| `workflow.py` | 状态转移 guard、command/event 决策、持久化 invariant | `decide_command()`, `apply_workflow_event()`, `validate_job_phase_invariants()` |
 | `runner.py` | 流程编排 | `run_job()`, `_llm_worker()`, `_finalize_job()` |
 | `formatting/rules.py` | 本地规则 | `apply_rules()` |
 | `formatting/chunking.py` | 分片 | `chunk_by_lines_with_first_chunk_max()`, `iter_chunks_by_lines_with_first_chunk_max_from_file()` |
@@ -537,34 +545,28 @@ class JobStore:
     def __init__(self):
         self._lock = threading.Lock()  # 线程安全
         self._jobs: dict[str, JobStatus] = {}
-        self._cancelled: set[str] = set()
-        self._paused: set[str] = set()
         self._persist_dir: Path | None = None  # 可选持久化目录（output/.state/jobs）
         self._persist_interval_s = 5.0  # 默认 5s（可用环境变量覆盖）
-        self._persist_dirty = set()  # dirty job_id 集合（合并写 / 节流）
+        self._persist_dirty_since: dict[str, float] = {}  # dirty job_id -> first dirty time
 
     def configure_persistence(self, *, persist_dir: Path) -> None:
         self._persist_dir = persist_dir
 
     def load_persisted_jobs(self) -> int:
         # 读取 output/.state/jobs/*.json 并“自愈”状态，使其在重启后可继续：
-        # - queued/running -> paused（因为重启后没有 in-flight 任务）
+        # - queued/running -> paused + server_recovered（因为重启后 execution registry 为空）
         # - processing/retrying -> pending（让 resume/retry 可以继续跑）
         ...
 
     def update(self, job_id, **kwargs):
         flush_now = False
         with self._lock:
-            # 已标记为 cancelled（删除任务/reset）的 job 不接受更新
+            # 已标记为 cancelled（删除任务/reset）的 job 不接受普通更新
             if st.state == "cancelled":
                 return
 
             requested_state = kwargs.get("state", st.state)
-            target_state = (
-                st.state
-                if st.state == "paused" and requested_state in {"queued", "running"}
-                else requested_state
-            )
+            target_state = requested_state
             target_wait_reason = kwargs.get(
                 "wait_reason",
                 st.wait_reason if target_state == "paused" else None,
@@ -580,33 +582,49 @@ class JobStore:
                 # started_at 只接受首次写入
                 if k == "started_at" and st.started_at is not None:
                     continue
-                # paused 状态不被 running 覆盖
-                if k == "state" and st.state == "paused" and v in {"queued", "running"}:
-                    continue
                 setattr(st, k, v)
 
-            # 离开 paused 时清空 wait_reason
-            if st.state != "paused":
-                st.wait_reason = None
-
             # 标记 dirty：让后台线程批量落盘（避免每个 chunk 更新都做一次全量 snapshot + 写盘）
-            self._persist_dirty.add(job_id)
+            self._mark_dirty_locked(job_id)
             flush_now = st.state in {"done", "error", "cancelled"}
 
         # 终态立即落盘，降低重启后状态回退的概率
         if flush_now:
             self._flush_job(job_id)
+
+    def mark_execution_stopped(self, job_id, *, phase, wait_reason="user_paused"):
+        # pause 的 durable 投影：把 volatile stop 请求持久化为 paused workflow state，
+        # 更新 job.state/job.phase/wait_reason，并把 processing/retrying chunk 回到 pending
+        ...
+
+    def mark_reset_requested(self, job_id, *, phase=None):
+        # reset/delete 的 durable 投影：把 volatile delete 请求持久化为 cancelled state，
+        # 必要时更新 phase，并把 processing/retrying chunk 回到 pending；它不直接停止线程
+        ...
 ```
 
 **设计要点**：
 - 所有状态更新通过 `update()` / `update_chunk()` 方法（受锁保护）
 - 使用 snapshot 模式返回数据（避免外部修改内部状态）；区分 full snapshot 与 summary snapshot，避免轮询路径复制全部 `chunk_statuses`
 - API 快照暴露 `workflow_phase` / `execution_state` / `wait_reason` / `terminal_state` / `available_commands`，不把内部 `state` / `phase` 原样公开给前端判断
-- `is_cancelled()` / `is_paused()` 用于 worker 检查是否应该停止
+- JobStore 不保存线程、Future、pause flag 或 cancel flag；worker 是否应该停止只读 `ExecutionRegistry`
 - 可选持久化：Job 快照写入 `output/.state/jobs/{job_id}.json`，用于重启恢复；快照损坏时会直接报错，不做静默修复
 - 持久化节流：后台线程合并写入（默认 5s 一次，可用 `NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S` 覆盖），避免高并发 chunk 更新导致频繁磁盘 IO
 - 关键状态：`done/error/cancelled` 终态会触发立即落盘（降低状态回退）
 - 重启自愈：将无意义的“运行中”状态收敛为可继续的 `paused/pending`
+
+### 6.4 ExecutionRegistry
+
+文件：`novel_proofer/executions.py`
+
+`ExecutionRegistry` 是当前后端进程内的 volatile 执行表。它记录 job 当前是否有 active attempt、attempt 正在排队还是运行、正在执行哪个 command，以及是否收到了 `pause` 或 `delete` stop 请求。它不落盘，进程重启后为空；因此重启恢复只从 `JobRecord` 得到 durable workflow 状态，不会假装线程或 Future 仍然存在。
+
+`background.submit()` 负责在提交 Future 前创建 execution entry，在 worker 真正开始时标记为 `running`，在 worker 完成或崩溃后先把结果收敛回 `JobStore`，再移除 execution entry。API snapshot 的 `execution_state` 来自这个 registry；终态 job 会投影为 `idle`。
+
+**Design motivation**：
+- 阻止重复执行：`ExecutionRegistry.begin()` 会拒绝 duplicate active attempt，避免同一 `job_id` 被重复调度。
+- 保持重启语义清晰：registry 是进程内易失状态，进程重启后为空；durable workflow 只从 `JobRecord` 恢复。
+- 传递显式 stop 信号：`pause/delete` 通过 registry 和 `background.submit()` / runner helper 传递，而不是靠突变 durable state 冒充“线程已经停了”。
 
 ---
 
@@ -652,10 +670,10 @@ def _run_llm_for_indices(job_id, indices, work_dir, llm):
         in_flight: dict[Future, int] = {}
 
         while pending_indices or in_flight:
-            # 检查终止/暂停
-            if GLOBAL_JOBS.is_cancelled(job_id):
+            # 检查当前 execution 是否收到 delete/pause stop 请求
+            if _delete_requested(job_id):
                 break
-            if GLOBAL_JOBS.is_paused(job_id) and not in_flight:
+            if _pause_requested(job_id) and not in_flight:
                 break
 
             # 逐步提交任务（避免一次性提交导致无法及时停止）
@@ -672,8 +690,9 @@ def _run_llm_for_indices(job_id, indices, work_dir, llm):
 
 **设计要点**：
 - 逐步提交任务，而非一次性全部提交
-- 每个 worker 检查 `is_cancelled()` / `is_paused()` 标志
-- 暂停时保留 in-flight 任务完成，新任务不提交
+- runner 通过 `_pause_requested(job_id)` / `_delete_requested(job_id)` helper 检查 stop 请求，这两个 helper 内部都会读取 `GLOBAL_EXECUTIONS.stop_reason(job_id)` 并比对 `StopReason.PAUSE` / `StopReason.DELETE`
+- stop 请求会传入 LLM client 的 `should_stop()`，让流式读取和重试等待尽快短路
+- 暂停/删除会把仍处于 `processing/retrying` 的 chunk 收敛回 `pending`
 
 ### 7.3 输出验证与合并
 
