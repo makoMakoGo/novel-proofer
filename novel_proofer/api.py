@@ -60,7 +60,13 @@ from novel_proofer.models import (
 )
 from novel_proofer.runner import merge_outputs, resume_paused_job, retry_failed_chunks, run_job
 from novel_proofer.states import ChunkState, JobCommand, JobPhase, JobState, WaitReason
-from novel_proofer.workflow import CommandDecision, ResumeTarget, decide_command, resume_decision
+from novel_proofer.workflow import (
+    CommandDecision,
+    ResumeTarget,
+    decide_command,
+    resume_decision,
+    retry_failed_chunk_indices,
+)
 from novel_proofer.workflow_context import workflow_context_for_job
 
 logger = logging.getLogger(__name__)
@@ -116,6 +122,18 @@ class _JobCommandService:
         if st is None:
             raise HTTPException(status_code=500, detail="job store error")
         return st
+
+    @staticmethod
+    def apply_command_state(job_id: str, decision: CommandDecision, **updates: Any) -> None:
+        if decision.next_state is None:
+            raise HTTPException(status_code=500, detail="workflow command state missing")
+        GLOBAL_JOBS.update(
+            job_id,
+            state=decision.next_state.state,
+            phase=decision.next_state.phase,
+            wait_reason=decision.next_state.wait_reason,
+            **updates,
+        )
 
     @staticmethod
     def cleanup_failed_new_job(job_id: str) -> None:
@@ -576,15 +594,7 @@ async def resume_job(
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
     resume_command = _require_resume_workflow(st)
-    if resume_command.next_state is None:
-        raise HTTPException(status_code=500, detail="workflow command state missing")
-    GLOBAL_JOBS.update(
-        job_id,
-        state=resume_command.next_state.state,
-        phase=resume_command.next_state.phase,
-        wait_reason=resume_command.next_state.wait_reason,
-        finished_at=None,
-    )
+    _JobCommandService.apply_command_state(job_id, resume_command, finished_at=None)
 
     llm = _llm_from_options(body.llm or LLMOptions())
     prev_llm_model = st.last_llm_model
@@ -631,39 +641,66 @@ async def retry_failed(
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    _require_workflow_command(st, JobCommand.RETRY_FAILED)
-
-    failed = [c.index for c in st.chunk_statuses if c.state == ChunkState.ERROR]
+    retry_decision = _require_workflow_command(st, JobCommand.RETRY_FAILED)
 
     llm = _llm_from_options(body.llm or LLMOptions())
     prev_llm_model = st.last_llm_model
+    retry_targets = retry_failed_chunk_indices((chunk.index, chunk.state) for chunk in st.chunk_statuses)
+    if not retry_targets:
+        raise HTTPException(status_code=500, detail="workflow retry targets missing")
+    retry_targets_set = set(retry_targets)
+    previous_chunks = {chunk.index: chunk for chunk in st.chunk_statuses if chunk.index in retry_targets_set}
 
-    # Important: flip the visible job/chunk states before starting the worker thread, otherwise
-    # clients may poll and immediately "bounce" back to the error UI state.
-    GLOBAL_JOBS.update(
-        job_id, state=JobState.QUEUED, phase=JobPhase.PROCESS, finished_at=None, error=None, last_llm_model=llm.model
+    _JobCommandService.apply_command_state(
+        job_id,
+        retry_decision,
+        finished_at=None,
+        error=None,
+        last_llm_model=llm.model,
     )
-    for i in failed:
+    for i in retry_targets:
         GLOBAL_JOBS.update_chunk(
             job_id,
             i,
             state=ChunkState.PENDING,
             started_at=None,
             finished_at=None,
+            last_error_code=None,
+            last_error_message=None,
+            llm_model=llm.model,
+            input_chars=None,
+            output_chars=None,
         )
 
     def _rollback_retry_state() -> None:
         GLOBAL_JOBS.update(
-            job_id, state=JobState.ERROR, finished_at=st.finished_at, error=st.error, last_llm_model=prev_llm_model
+            job_id,
+            state=st.state,
+            phase=st.phase,
+            wait_reason=st.wait_reason,
+            finished_at=st.finished_at,
+            error=st.error,
+            last_llm_model=prev_llm_model,
         )
-        for i in failed:
-            GLOBAL_JOBS.update_chunk(job_id, i, state=ChunkState.ERROR)
+        for i, chunk in previous_chunks.items():
+            GLOBAL_JOBS.update_chunk(
+                job_id,
+                i,
+                state=chunk.state,
+                started_at=chunk.started_at,
+                finished_at=chunk.finished_at,
+                last_error_code=chunk.last_error_code,
+                last_error_message=chunk.last_error_message,
+                llm_model=chunk.llm_model,
+                input_chars=chunk.input_chars,
+                output_chars=chunk.output_chars,
+            )
 
     _JobCommandService.submit_background(
         job_id=job_id,
         command=JobCommand.RETRY_FAILED,
         fn=retry_failed_chunks,
-        args=(job_id, llm),
+        args=(job_id, llm, retry_targets),
         on_submit_failure=_rollback_retry_state,
     )
 
@@ -678,14 +715,10 @@ async def merge_job(
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
     merge_decision = _require_workflow_command(st, JobCommand.MERGE)
-    if merge_decision.next_state is None:
-        raise HTTPException(status_code=500, detail="workflow command state missing")
 
-    GLOBAL_JOBS.update(
+    _JobCommandService.apply_command_state(
         job_id,
-        state=merge_decision.next_state.state,
-        phase=merge_decision.next_state.phase,
-        wait_reason=merge_decision.next_state.wait_reason,
+        merge_decision,
         finished_at=None,
     )
 

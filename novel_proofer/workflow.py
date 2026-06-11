@@ -366,6 +366,8 @@ def decide_command(context: WorkflowContext, command: JobCommand | str) -> Comma
             return _reject(cmd, WorkflowRejectionCode.NOT_PAUSED, f"job is not paused (state={state.value})")
         if phase != JobPhase.MERGE:
             return _reject(cmd, WorkflowRejectionCode.INVALID_PHASE, f"job is not ready to merge (phase={phase.value})")
+        if context.chunks.has_failed:
+            return _reject(cmd, WorkflowRejectionCode.FAILED_CHUNKS, "job is not ready to merge (chunks failed)")
         if not context.chunks.all_done:
             return _reject(
                 cmd, WorkflowRejectionCode.CHUNKS_INCOMPLETE, "job is not ready to merge (chunks incomplete)"
@@ -499,6 +501,8 @@ def apply_event(context: WorkflowContext, event: WorkflowEvent | str) -> EventTr
             return _event_reject(evt, WorkflowRejectionCode.CANCELLED, "job is cancelled")
         if state not in {JobState.PAUSED, JobState.QUEUED, JobState.RUNNING}:
             return _event_reject(evt, WorkflowRejectionCode.INVALID_STATE, f"merge cannot start in state={state.value}")
+        if context.chunks.has_failed:
+            return _event_reject(evt, WorkflowRejectionCode.FAILED_CHUNKS, "merge chunks failed")
         if not context.chunks.all_done:
             return _event_reject(evt, WorkflowRejectionCode.CHUNKS_INCOMPLETE, "merge chunks are incomplete")
         return EventTransition.allow(evt, WorkflowState(JobState.RUNNING, JobPhase.MERGE))
@@ -508,6 +512,8 @@ def apply_event(context: WorkflowContext, event: WorkflowEvent | str) -> EventTr
             return _event_reject(
                 evt, WorkflowRejectionCode.INVALID_PHASE, f"merge cannot complete in phase={phase.value}"
             )
+        if context.chunks.has_failed:
+            return _event_reject(evt, WorkflowRejectionCode.FAILED_CHUNKS, "merge chunks failed")
         if not context.chunks.all_done:
             return _event_reject(evt, WorkflowRejectionCode.CHUNKS_INCOMPLETE, "merge chunks are incomplete")
         return EventTransition.allow(evt, WorkflowState(JobState.DONE, JobPhase.DONE))
@@ -593,6 +599,10 @@ def processing_final_state(chunks: Iterable[ChunkState | str]) -> ProcessingFina
     if any(chunk == ChunkState.ERROR for chunk in chunk_states):
         return ProcessingFinalState.ERROR
     return ProcessingFinalState.READY_TO_MERGE
+
+
+def retry_failed_chunk_indices(chunks: Iterable[tuple[int, ChunkState | str]]) -> tuple[int, ...]:
+    return tuple(int(index) for index, state in chunks if ChunkState(state) == ChunkState.ERROR)
 
 
 def validate_job_phase_invariants(

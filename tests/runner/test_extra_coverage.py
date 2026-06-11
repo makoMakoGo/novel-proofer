@@ -372,13 +372,13 @@ def test_run_job_cancellation_llm_outcomes_and_exception(monkeypatch: pytest.Mon
 def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     llm = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
 
-    runner.retry_failed_chunks("missing", llm)
+    runner.retry_failed_chunks("missing", llm, (0,))
     runner.resume_paused_job("missing", llm)
 
     # Missing work_dir/output_path.
     job_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0).job_id
     try:
-        runner.retry_failed_chunks(job_id, llm)
+        runner.retry_failed_chunks(job_id, llm, (0,))
         runner.resume_paused_job(job_id, llm)
         st = GLOBAL_JOBS.get(job_id)
         assert st is not None and st.state == "error"
@@ -394,33 +394,15 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             GLOBAL_JOBS.update(
                 job2_id, work_dir=str(base / "w1"), output_path=str(base / "o1.txt"), cleanup_debug_dir=False
             )
-            runner.retry_failed_chunks(job2_id, llm)
+            runner.retry_failed_chunks(job2_id, llm, (0,))
             runner.resume_paused_job(job2_id, llm)
             st = GLOBAL_JOBS.get(job2_id)
             assert st is not None and st.state == "error"
         finally:
             GLOBAL_JOBS.delete(job2_id)
 
-        # No failed chunks -> finalize to merge-ready.
-        job3_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1).job_id
-        try:
-            out_path = base / "o2.txt"
-            out_path.write_text("x", encoding="utf-8")
-            GLOBAL_JOBS.update(
-                job3_id,
-                phase="process",
-                work_dir=str(base / "w2"),
-                output_path=str(out_path),
-                cleanup_debug_dir=False,
-            )
-            GLOBAL_JOBS.init_chunks(job3_id, total_chunks=1)
-            GLOBAL_JOBS.update_chunk(job3_id, 0, state="done")
-            runner.retry_failed_chunks(job3_id, llm)
-            st = GLOBAL_JOBS.get(job3_id)
-            assert st is not None and st.state == "paused"
-            assert getattr(st, "phase", None) == "merge"
-        finally:
-            GLOBAL_JOBS.delete(job3_id)
+        with pytest.raises(ValueError, match="retry target indices are required"):
+            runner.retry_failed_chunks("missing", llm, ())
 
         # Outcome paused/cancelled branches.
         job4_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1).job_id
@@ -431,7 +413,7 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             GLOBAL_JOBS.init_chunks(job4_id, total_chunks=1)
             GLOBAL_JOBS.update_chunk(job4_id, 0, state="error", last_error_message="x")
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "paused")
-            runner.retry_failed_chunks(job4_id, llm)
+            runner.retry_failed_chunks(job4_id, llm, (0,))
             st = GLOBAL_JOBS.get(job4_id)
             assert st is not None and st.state == "paused"
             assert getattr(st, "phase", None) == "process"
@@ -446,7 +428,7 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             GLOBAL_JOBS.init_chunks(job5_id, total_chunks=1)
             GLOBAL_JOBS.update_chunk(job5_id, 0, state="error", last_error_message="x")
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "cancelled")
-            runner.retry_failed_chunks(job5_id, llm)
+            runner.retry_failed_chunks(job5_id, llm, (0,))
             st = GLOBAL_JOBS.get(job5_id)
             assert st is not None and st.state == "cancelled"
         finally:
