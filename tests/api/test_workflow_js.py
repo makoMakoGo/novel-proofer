@@ -8,7 +8,13 @@ def test_frontend_workflow_actions_use_snapshot_commands() -> None:
     script = textwrap.dedent(
         """
         import assert from 'node:assert/strict';
-        import { actionAvailability, primaryActionKey, snapshotLabel, snapshotTone } from './templates/static/js/workflow.js';
+        import {
+            actionAvailability,
+            primaryActionKey,
+            settingsLockState,
+            snapshotLabel,
+            snapshotTone,
+        } from './templates/static/js/workflow.js';
 
         const readyToProcess = {
             id: 'job1',
@@ -83,6 +89,74 @@ def test_frontend_workflow_actions_use_snapshot_commands() -> None:
         };
         assert.equal(actionAvailability(cancelled).canDetach, false);
         assert.equal(primaryActionKey(cancelled), null);
+        """
+    )
+
+    subprocess.run(["node", "--input-type=module", "-e", script], check=True)
+
+
+def test_frontend_settings_locks_use_snapshot_state() -> None:
+    script = textwrap.dedent(
+        """
+        import assert from 'node:assert/strict';
+        import { actionAvailability, settingsLockState } from './templates/static/js/workflow.js';
+
+        const detached = settingsLockState(null);
+        assert.equal(detached.formatLocked, false);
+        assert.equal(detached.llmLocked, false);
+
+        const readyToProcess = {
+            id: 'job1',
+            workflow_phase: 'process',
+            execution_state: 'idle',
+            wait_reason: 'ready_to_process',
+            terminal_state: null,
+            available_commands: ['process', 'detach', 'reset'],
+            progress: { done_chunks: 0, total_chunks: 2 },
+        };
+        assert.equal(settingsLockState(readyToProcess).formatLocked, true);
+        assert.equal(settingsLockState(readyToProcess).llmLocked, false);
+        assert.equal(actionAvailability(readyToProcess).canProcess, true);
+
+        const userPaused = {
+            ...readyToProcess,
+            wait_reason: 'user_paused',
+            progress: { done_chunks: 1, total_chunks: 2 },
+        };
+        assert.equal(settingsLockState(userPaused).formatLocked, true);
+        assert.equal(settingsLockState(userPaused).llmLocked, false);
+
+        const running = {
+            ...readyToProcess,
+            execution_state: 'running',
+            wait_reason: null,
+            available_commands: ['pause', 'reset'],
+        };
+        assert.equal(settingsLockState(running).formatLocked, true);
+        assert.equal(settingsLockState(running).llmLocked, true);
+        assert.equal(actionAvailability(running).canProcess, false);
+
+        const retryableError = {
+            ...readyToProcess,
+            terminal_state: 'error',
+            wait_reason: null,
+            available_commands: ['retry_failed', 'detach', 'reset'],
+        };
+        assert.equal(settingsLockState(retryableError).formatLocked, true);
+        assert.equal(settingsLockState(retryableError).llmLocked, false);
+        assert.equal(actionAvailability(retryableError).canRetry, true);
+
+        const readyToMerge = {
+            ...readyToProcess,
+            workflow_phase: 'merge',
+            wait_reason: 'ready_to_merge',
+            available_commands: ['merge', 'detach', 'reset'],
+            progress: { done_chunks: 2, total_chunks: 2 },
+        };
+        assert.equal(settingsLockState(readyToMerge).formatLocked, true);
+        assert.equal(settingsLockState(readyToMerge).llmLocked, false);
+        assert.equal(settingsLockState(readyToMerge).formatLockReason.includes('api/'), false);
+        assert.equal(settingsLockState(running).llmLockReason.includes('/'), false);
         """
     )
 
