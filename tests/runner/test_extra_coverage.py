@@ -43,11 +43,10 @@ def test_llm_worker_records_retries_and_aligns_newlines(monkeypatch: pytest.Monk
         base = Path(td)
         work_dir = base / "work"
         out_path = base / "out.txt"
-        (work_dir / "pre").mkdir(parents=True, exist_ok=True)
-        (work_dir / "pre" / "000000.txt").write_text("IN\n\n", encoding="utf-8")
 
         job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         try:
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, 0, "IN\n\n")
             cfg = LLMConfig(base_url="http://example.com", model="m")
             runner._llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=True)
 
@@ -72,13 +71,12 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
         base = Path(td)
         work_dir = base / "work"
         out_path = base / "out.txt"
-        (work_dir / "pre").mkdir(parents=True, exist_ok=True)
-        (work_dir / "pre" / "000000.txt").write_text("IN\n", encoding="utf-8")
 
         # Cancel before worker starts -> early return.
         job_id = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         execution = GLOBAL_EXECUTIONS.begin(job_id, "process")
         try:
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, 0, "IN\n")
             assert GLOBAL_EXECUTIONS.request_stop(job_id, "delete") is True
             runner._llm_worker(job_id, 0, work_dir, LLMConfig(base_url="", model=""), write_llm_resp=True)
             assert not (work_dir / "resp").exists()
@@ -90,6 +88,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
         job_id2 = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         execution2 = GLOBAL_EXECUTIONS.begin(job_id2, "process")
         try:
+            GLOBAL_JOBS.set_chunk_pre_text(job_id2, 0, "IN\n")
 
             def fake_cancel_then_return(
                 cfg: LLMConfig,
@@ -114,6 +113,7 @@ def test_llm_worker_cancel_behaviors(monkeypatch: pytest.MonkeyPatch) -> None:
         job_id3 = _mk_job(work_dir, out_path, total_chunks=1, cleanup_debug_dir=False)
         execution3 = GLOBAL_EXECUTIONS.begin(job_id3, "process")
         try:
+            GLOBAL_JOBS.set_chunk_pre_text(job_id3, 0, "IN\n")
 
             def fake_cancel_then_raise(
                 cfg: LLMConfig,
@@ -152,10 +152,9 @@ def test_llm_worker_ratio_validation_errors(monkeypatch: pytest.MonkeyPatch) -> 
         ) -> None:
             work_dir = base / sub
             out_path = base / f"{sub}.txt"
-            (work_dir / "pre").mkdir(parents=True, exist_ok=True)
-            (work_dir / "pre" / f"{index:06d}.txt").write_text(pre, encoding="utf-8")
             job_id = _mk_job(work_dir, out_path, total_chunks=total_chunks, cleanup_debug_dir=False)
             try:
+                GLOBAL_JOBS.set_chunk_pre_text(job_id, index, pre)
                 monkeypatch.setattr(
                     runner,
                     "call_llm_text_resilient_with_meta_and_raw",
@@ -412,6 +411,7 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             )
             GLOBAL_JOBS.init_chunks(job4_id, total_chunks=1)
             GLOBAL_JOBS.update_chunk(job4_id, 0, state="error", last_error_message="x")
+            GLOBAL_JOBS.set_chunk_pre_text(job4_id, 0, "chunk-0\n")
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "paused")
             runner.retry_failed_chunks(job4_id, llm, (0,))
             st = GLOBAL_JOBS.get(job4_id)
@@ -427,6 +427,7 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             )
             GLOBAL_JOBS.init_chunks(job5_id, total_chunks=1)
             GLOBAL_JOBS.update_chunk(job5_id, 0, state="error", last_error_message="x")
+            GLOBAL_JOBS.set_chunk_pre_text(job5_id, 0, "chunk-0\n")
             monkeypatch.setattr(runner, "_run_llm_for_indices", lambda *a, **k: "cancelled")
             runner.retry_failed_chunks(job5_id, llm, (0,))
             st = GLOBAL_JOBS.get(job5_id)
@@ -474,6 +475,7 @@ def test_resume_paused_job_pause_after_post_pass_stays_paused(monkeypatch: pytes
                 cleanup_debug_dir=False,
             )
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, 0, "chunk-0\n")
 
             def fake_run(*_args: object, **_kwargs: object) -> str:
                 GLOBAL_JOBS.update_chunk(job_id, 0, state="done")

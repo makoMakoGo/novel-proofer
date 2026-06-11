@@ -49,13 +49,12 @@ def test_llm_worker_success_writes_resp_only_when_enabled(
 
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td)
-        (work_dir / "pre").mkdir(parents=True, exist_ok=True)
-        (work_dir / "pre" / "000000.txt").write_text("原始内容\n", encoding="utf-8")
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1)
         job_id = job.job_id
         try:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, 0, "原始内容\n")
             cfg = LLMConfig(base_url="http://example.com", model="m")
 
             runner._llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=write_llm_resp)
@@ -89,13 +88,12 @@ def test_llm_worker_error_does_not_create_error_dir(monkeypatch: pytest.MonkeyPa
 
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td)
-        (work_dir / "pre").mkdir(parents=True, exist_ok=True)
-        (work_dir / "pre" / "000000.txt").write_text("原始内容\n", encoding="utf-8")
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1)
         job_id = job.job_id
         try:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, 0, "原始内容\n")
             cfg = LLMConfig(base_url="http://example.com", model="m")
 
             runner._llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=False)
@@ -139,8 +137,6 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td) / "work"
         out_path = Path(td) / "final.txt"
-        (work_dir / "pre").mkdir(parents=True, exist_ok=True)
-        (work_dir / "pre" / "000000.txt").write_text("原始内容\n", encoding="utf-8")
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1)
         job_id = job.job_id
@@ -149,6 +145,7 @@ def test_retry_failed_chunks_overwrites_resp(monkeypatch: pytest.MonkeyPatch) ->
             GLOBAL_JOBS.update(job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
             # This test focuses on resp overwrite; disable paragraph indentation for stable expectations.
             GLOBAL_JOBS.update(job_id, format=runner.FormatConfig(paragraph_indent=False))
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, 0, "原始内容\n")
             cfg = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
 
             runner._llm_worker(job_id, 0, work_dir, cfg, write_llm_resp=False)
@@ -192,8 +189,6 @@ def test_retry_failed_chunks_keeps_error_when_retry_still_fails(monkeypatch: pyt
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td) / "work"
         out_path = Path(td) / "final.txt"
-        (work_dir / "pre").mkdir(parents=True, exist_ok=True)
-        (work_dir / "pre" / "000000.txt").write_text("原始内容\n", encoding="utf-8")
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1)
         job_id = job.job_id
@@ -201,6 +196,7 @@ def test_retry_failed_chunks_keeps_error_when_retry_still_fails(monkeypatch: pyt
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
             GLOBAL_JOBS.update(job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
             GLOBAL_JOBS.update_chunk(job_id, 0, state="error", last_error_message="old failure")
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, 0, "原始内容\n")
             cfg = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
 
             runner.retry_failed_chunks(job_id, cfg, (0,))
@@ -233,8 +229,6 @@ def test_resume_paused_job_overwrites_existing_resp(monkeypatch: pytest.MonkeyPa
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td) / "work"
         out_path = Path(td) / "final.txt"
-        (work_dir / "pre").mkdir(parents=True, exist_ok=True)
-        (work_dir / "pre" / "000000.txt").write_text("原始内容\n", encoding="utf-8")
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1)
         job_id = job.job_id
@@ -243,6 +237,7 @@ def test_resume_paused_job_overwrites_existing_resp(monkeypatch: pytest.MonkeyPa
             GLOBAL_JOBS.update(job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
             # This test focuses on resp overwrite; disable paragraph indentation for stable expectations.
             GLOBAL_JOBS.update(job_id, format=runner.FormatConfig(paragraph_indent=False))
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, 0, "原始内容\n")
 
             assert GLOBAL_JOBS.mark_execution_stopped(job_id, phase="process") is True
 

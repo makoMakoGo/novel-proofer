@@ -1,123 +1,139 @@
-# 状态机：Job / Phase / Chunk（含重试语义）
+# 状态机：公开快照与内部状态
 
-本文描述 novel-proofer 的内部状态模型与公开 API 快照：
+本文区分三层概念：
 
-- **内部 Job 阶段（`JobStatus.phase`）**：任务处于哪一段 workflow（`validate|process|merge|done`）；API 暴露为 `workflow_phase`。
-- **内部 Job 运行态（`JobStatus.state`）**：workflow 记录的底层生命周期（`queued|running|paused|done|error|cancelled`）；API 不再把它作为 `state` 字段公开，也不把它当作当前线程/Future 仍存在的证明。
-- **API Job 快照**：UI 使用 `workflow_phase`、`execution_state`、`wait_reason`、`terminal_state` 与 `available_commands` 渲染，不从内部 `paused` 推断业务语义。
-- **Chunk 状态**：任务内每个分片的生命周期（`pending|processing|retrying|done|error`）。
+- 内部 durable workflow：`JobStatus.state` + `JobStatus.phase`
+- 进程内 volatile execution：`ExecutionRegistry`
+- 前端公开快照：`workflow_phase`、`execution_state`、`wait_reason`、`terminal_state`、`available_commands`
 
-> 设计原则：`retrying` **不是**“待重试队列”，而是**同一次分片处理内部**的“自动重试/退避等待”中间态；手动“重试失败分片”应当把分片重置为 `pending` 再重新调度。
->
-> 当前代码把 workflow 决策集中在 `novel_proofer.workflow`：API、runner 与持久化加载都应复用同一组 guard / invariant helper，而不是在各层重复手写状态判断。
+前端不直接消费内部 `state`，也不从 `paused` 猜“现在该显示什么按钮”。
 
-## Chunk 状态机
+## 公开快照
 
-### 状态语义
+| 字段 | 含义 |
+| --- | --- |
+| `workflow_phase` | `validate | process | merge | done` |
+| `execution_state` | `idle | queued | running`；来自 volatile execution registry |
+| `wait_reason` | 仅当 durable workflow 处于可恢复 idle 状态时非空 |
+| `terminal_state` | `done | error | cancelled | null` |
+| `available_commands` | 当前允许 UI 触发的显式命令列表 |
 
-- `pending`：待处理（已入队/可被 worker 调度），尚未开始本次尝试。
-- `processing`：worker 正在处理该分片（读写文件、发起 LLM 请求、校验输出等）。
-- `retrying`：LLM 请求发生可重试错误（如 429/504 等）后，正在退避等待下一次尝试；会伴随 `retries` 递增与 `last_error_*` 更新。
-- `done`：该分片处理成功（输出通过校验并落盘）。
-- `error`：该分片处理失败（达到重试上限或不可重试错误/本地异常）。
+## 内部 durable workflow
 
-### Mermaid（Chunk）
+### `phase`
+
+- `validate`：校验/预处理阶段
+- `process`：LLM 处理阶段
+- `merge`：等待或执行合并
+- `done`：任务完成
+
+### `state`
+
+- `queued`：某个命令已经进入执行路径
+- `running`：某个命令正在运行
+- `paused`：当前没有 active execution，但任务可继续
+- `error`：任务失败，需要显式修复后继续
+- `done`：最终输出已生成
+- `cancelled`：任务被 reset/delete
+
+### `wait_reason`
+
+仅允许出现在 `state=paused`：
+
+- `ready_to_process`
+- `user_paused`
+- `ready_to_merge`
+- `server_recovered`
+
+除此之外，`wait_reason` 必须为空。
+
+## chunk 状态
+
+| 状态 | 含义 |
+| --- | --- |
+| `pending` | 待处理 |
+| `processing` | 正在处理 |
+| `retrying` | 同一次 chunk 处理内部的自动重试/退避 |
+| `done` | 成功 |
+| `error` | 失败 |
+
+`retrying` 不是“手动待重试队列”；手动 `retry-failed` 会把 failed chunks 重置成 `pending` 再重新调度。
+
+## 命令决策
+
+`novel_proofer.workflow` 是唯一 command decision 来源。
+
+### 允许条件
+
+| 命令 | 条件 |
+| --- | --- |
+| `validate` | `state=paused` 且 `phase=validate` |
+| `process` | `state=paused` 且 `phase=process` |
+| `pause` | `phase=process` 且内部 state 为 `queued/running` |
+| `retry-failed` | `state=error` 且至少一个 chunk 为 `error` |
+| `merge` | `state=paused` 且 `phase=merge` 且所有 chunks 为 `done` |
+| `detach` | 非 active execution |
+| `reset` | 任何非 `cancelled` 任务 |
+| `download` | `state=done` |
+
+### merge 拒绝语义
+
+`merge` 失败时不再混用模糊错误：
+
+- failed chunks：`FAILED_CHUNKS`，消息为 `job is not ready to merge (chunks failed)`
+- incomplete chunks：`CHUNKS_INCOMPLETE`，消息为 `job is not ready to merge (chunks incomplete)`
+
+这两个 rejection 会同时影响 API `409`、runner event 校验、以及测试断言。
+
+## 事件转移
 
 ```mermaid
 stateDiagram-v2
-  [*] --> pending
-
-  pending --> processing: worker 开始处理
-
-  processing --> done: 成功 + 输出校验通过
-  processing --> error: 不可恢复错误 / 超过重试上限
-  processing --> retrying: LLM 可重试错误（进入退避）
-
-  retrying --> processing: 退避结束，下一次尝试开始
-  retrying --> done: 某次重试成功
-  retrying --> error: 最终失败
-
-  error --> pending: 手动重试失败分片\n(/retry-failed)
-
-  processing --> pending: 暂停/删除任务(reset)/进程重启\n(把 in-flight 还原为 pending)
-  retrying --> pending: 暂停/删除任务(reset)/进程重启\n(把 in-flight 还原为 pending)
+  [*] --> queued: create_validation
+  queued --> running: execution begins
+  running --> paused: validation_complete / user_pause / restart_recovery
+  paused --> queued: process / validate / merge / retry_failed
+  running --> error: process_failed / worker crash
+  running --> done: merge_complete
+  queued --> cancelled: reset_delete
+  running --> cancelled: reset_delete
+  paused --> cancelled: reset_delete
 ```
 
-### 关键字段（Chunk）
+更精确地说：
 
-- `retries`：自动重试计数（只在 LLM 请求链路中递增）。
-- `last_error_code` / `last_error_message`：最近一次失败的诊断信息（**完成后可能保留历史错误**，UI 应把它当作“曾重试/历史信息”而非“当前错误”）。
-- `llm_model`：该分片**最近一次处理/即将进行的处理**所使用的模型名（便于排查“失败分片重试时换模型”的混用问题）。
+- `validation_complete` -> `paused + process + ready_to_process`
+- `process_complete` -> `paused + merge + ready_to_merge`
+- `process_failed` -> `error + process`
+- `restart_recovery` -> `paused + same_phase + server_recovered`
 
-## Job 状态机
+## execution registry
 
-### 内部 Job 阶段语义（`JobStatus.phase` / API `workflow_phase`）
+`ExecutionRegistry` 只保存当前进程内的：
 
-- `validate`：校验/准备阶段：解码、切片、确定性规则预处理，生成可恢复中间态（`pre/` 等）。
-- `process`：处理阶段：对 chunk 发起 LLM 请求与校验，写入 `out/`；`resp/` 为可选调试产物（默认仅失败写入，或显式开启“全量保留 raw 响应”时写入）；失败支持自动重试与手动重试失败分片。
-- `merge`：合并阶段：所有 chunk 成功后，等待用户显式点击“合并输出”。
-- `done`：完成：已合并生成最终输出文件。
+- `job_id`
+- `attempt_id`
+- `command`
+- `state=queued|running`
+- `stop_requested=pause|delete|null`
 
-### 内部 Job 运行态语义（`JobStatus.state`）
+它不持久化。进程重启后：
 
-- `queued`：workflow 已提交到执行路径/准备开始；当前进程是否真的有排队 Future 以 `execution_state` 为准。
-- `running`：workflow 正处于执行阶段；当前进程是否真的有运行中的 worker 以 `execution_state` 为准。
-- `paused`：已暂停/待用户操作：用于表示“可恢复且当前未运行”。
-- `error`：任务失败（通常是处理阶段存在 `chunk=error`；或合并阶段异常）。
-- `done`：任务完成（已合并生成输出）。
-- `cancelled`：仅用于“删除任务（reset）”的硬删除信号，通常会很快被清理并从 jobs 列表消失；UI 不应把它当作可恢复状态。
+- registry 为空
+- API `execution_state` 会变成 `idle`
+- durable workflow 通过 `server_recovered` 诚实表达“任务可继续，但没有 worker 还活着”
 
-### API Job 快照语义
+## 前端约束
 
-- `workflow_phase`：公开的 workflow 阶段，取代旧响应中的 `phase`。
-- `execution_state`：来自当前后端进程内的 volatile execution registry。`queued|running` 表示有执行尝试；`idle` 表示当前没有后台执行在跑。终态 job 总是投影为 `idle`，即使后台完成回调仍在收尾。
-- `wait_reason`：解释一个可恢复 idle 任务为什么停住，只在内部 `paused` 状态下非空。当前取值包括 `ready_to_process`、`user_paused`、`ready_to_merge`、`server_recovered`。
-- `terminal_state`：终态投影。未结束时为 `null`；结束后为 `done|error|cancelled`。
-- `available_commands`：后端给 UI 的显式命令列表。UI 按这个列表决定按钮可用性，不再手写 `state=paused && phase=...` 之类的猜测；有活跃 execution 时会隐藏会撞车的启动类命令。
+前端只做这几件事：
 
-### Mermaid（Job）
+- 渲染公开快照
+- 按 `available_commands` 控制按钮
+- 本地保存 `UiAttachment`
+- 刷新/关闭页面时停止 observer
 
-```mermaid
-stateDiagram-v2
-  [*] --> queued: 创建/提交任务
+前端不允许：
 
-  queued --> running: 开始校验\n(phase=validate)
-  running --> paused: 校验完成\n(phase=process)
-
-  paused --> running: 开始处理/继续\n(phase=process)
-  running --> paused: /pause\n(phase 不变)
-  running --> error: 处理失败\n(phase=process)
-  error --> queued: /retry-failed\n(失败分片 reset->pending)
-
-  running --> paused: 处理完成\n(phase=merge)
-  paused --> running: /merge\n(phase=merge)
-  running --> done: 合并完成\n(phase=done)
-
-  queued --> cancelled: /reset
-  running --> cancelled: /reset
-  paused --> cancelled: /reset
-  error --> [*]: /reset 删除记录
-  done --> [*]: /reset 删除记录
-```
-
-### 关键字段（Job）
-
-- `progress.total_chunks` / `progress.done_chunks`：进度与百分比展示的基准。
-- `last_retry_count`：全任务范围的自动重试总次数（统计/观测用）。
-- `last_llm_model`（API 里暴露为 `job.llm_model`）：**本轮/最近一次**执行所用模型名（配合每个分片的 `llm_model` 进行定位）。
-
-## 代码边界
-
-- `novel_proofer.workflow`：集中表达状态转移守卫与持久化 invariant，例如 `can_pause()`、`can_resume()`、`can_retry_failed()`、`can_merge()`、`processing_final_state()`、`validate_job_phase_invariants()`。
-- `novel_proofer.api`：只负责把 guard 结果转换成 HTTP 响应与提交后台任务，不再拥有独立的 workflow 判断规则。
-- `novel_proofer.executions`：只保存当前进程内的 execution attempt、command、queued/running 状态与 pause/delete stop 请求；不落盘，进程重启后为空。
-- `novel_proofer.background`：负责把后台 Future 生命周期绑定到 execution registry，worker 崩溃时把 durable job 收敛为显式 error，完成后移除 execution entry。
-- `novel_proofer.runner`：只负责执行阶段，并在阶段结束时调用 workflow helper 判定最终进入 `error` 还是 `merge`。
-- `novel_proofer.jobs`：只负责存储/持久化/恢复，并复用 workflow invariant 校验落盘状态是否自洽；不保存线程、Future、pause flag 或 cancel flag。
-
-## UI 展示约定（推荐）
-
-- `retrying` 在**展示层**应视为 `processing` 的子状态：进度条与“处理中”统计/过滤可把 `processing + retrying` 合并为 “Active/处理中”。
-- 表格行内仍保留诊断能力：通过 `重试次数` 与 `信息(last_error_*)` 表达“正在重试/曾重试/最终错误”。
-- 主流程按钮按 `available_commands` 呈现为：**开始校验 / 开始处理 / 合并输出 / 下载 / 暂停 / 重试失败分片**；并将“新任务（detach）”与“删除任务（reset）”区分。
-- 刷新、关闭页面、隐藏页面与导航离开只改变浏览器侧 attachment，不应暂停、重置、取消或 abort 后端任务；停止工作必须来自用户显式点击命令。
+- 根据 `paused` 自己推断 `ready_to_process` / `ready_to_merge`
+- 在 `pagehide` / `beforeunload` 里调用 pause/reset
+- 从旧调试目录或旧兼容字段推导 lifecycle

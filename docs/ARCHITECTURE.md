@@ -1,781 +1,305 @@
-# 小说打样员 / Novel Proofer 技术文档
+# Architecture：最终工作流模型
 
-本文档详细记录小说打样员的处理原理（Why + How），便于理解和后续调整。
+本文记录当前实现的最终架构，只保留仍然真实存在的模块、边界和数据流。
 
-## 目录
+## 设计目标
 
-1. [概述](#1-概述)
-2. [系统架构](#2-系统架构)
-3. [本地规则系统](#3-本地规则系统)
-4. [分块策略](#4-分块策略)
-5. [LLM 集成](#5-llm-集成)
-6. [状态管理](#6-状态管理)
-7. [Runner 编排](#7-runner-编排)
-8. [关键设计决策汇总](#8-关键设计决策汇总)
+这个重构要解决的是一个很具体的问题：浏览器页面可以来来去去，但后端任务必须保持自己的生命周期真相。
 
----
+因此当前架构坚持三条规则：
 
-## 1. 概述
+1. `JobRecord` 是 durable truth。
+2. `JobExecution` 是 volatile truth。
+3. `UiAttachment` 只是浏览器页面关联，不驱动后端状态。
 
-小说打样员（Novel Proofer）是一个中文小说排版校对工具，采用**本地规则 + LLM** 的混合架构：
+所有设计都围绕这三件事展开。
 
-- **本地规则**：确定性的字符替换，处理标点、缩进、空行等格式问题
-- **LLM**：语义级格式化，处理段落分割、对话分离、章节标题等需要理解上下文的任务
+## 模块边界
 
-### 为什么需要混合架构？
-
-| 任务类型 | 本地规则 | LLM |
-|---------|---------|-----|
-| 标点符号统一 | ✅ 确定性、快速 | ❌ 过度杀伤 |
-| 段落缩进 | ✅ 规则明确 | ❌ 不需要 |
-| 对话与叙述分段 | ❌ 无法理解语义 | ✅ 需要上下文 |
-| 章节标题识别 | ⚠️ 部分可行 | ✅ 更准确 |
-| 广告/水印清理 | ❌ 变体太多 | ✅ 语义理解 |
-
----
-
-## 2. 系统架构
-
-### 2.1 模块职责边界
-
-```
+```text
 novel_proofer/
-├── server.py          # 入口：uvicorn CLI 包装
-├── api.py             # REST 端点、请求验证、响应序列化
-├── background.py      # 后台任务：受控线程池（job 级并发）
-├── converters.py      # API 响应组装：durable job + volatile execution
-├── executions.py      # 当前进程内 execution registry 与 stop 请求
-├── job_records.py     # 严格 JobRecord 持久化 schema
-├── logging_setup.py   # logging 初始化：文件日志（RotatingFileHandler）
-├── models.py          # Pydantic 请求/响应模型
-├── dotenv_store.py    # 本地 .env 读写（LLM 默认配置）
-├── jobs.py            # JobStore：durable job/chunk 状态 + 持久化
-├── runner.py          # 编排器：chunking → local rules → LLM → merge
-├── workflow.py        # workflow command/event guard 与 invariant
+├── api.py
+├── background.py
+├── converters.py
+├── executions.py
+├── job_records.py
+├── jobs.py
+├── runner.py
+├── workflow.py
+├── workflow_context.py
 ├── formatting/
-│   ├── config.py      # FormatConfig 数据类
-│   ├── rules.py       # 确定性文本转换（标点、缩进）
-│   ├── chunking.py    # 按行边界分片（支持文件流式）
-│   └── merge.py       # 分片合并（runner/fixer 复用）
 └── llm/
-    ├── config.py      # LLMConfig、系统提示词
-    ├── client.py      # OpenAI 兼容流式客户端（httpx 连接池）+ 重试逻辑
-    └── think_filter.py # 状态机过滤 <think> 标签
 ```
 
-| 模块 | 职责 | 关键方法 |
-|------|------|---------|
-| `api.py` | REST 端点、请求验证、命令提交 | `create_job()`, `get_job()`, `pause_job()` |
-| `background.py` | 后台任务线程池与 execution 生命周期 | `submit()`, `shutdown()` |
-| `converters.py` | API 响应组装 | `_job_to_out()`, `_job_summary_to_out()` |
-| `dotenv_store.py` | 本地 `.env` 读写（保留未知键/注释） | `read_llm_defaults()`, `update_llm_defaults()` |
-| `executions.py` | 进程内 active execution registry | `begin()`, `request_stop()`, `finish()` |
-| `job_records.py` | 严格 `JobRecord` 持久化 schema 与解析 | `job_record_to_payload()`, `job_record_from_payload()` |
-| `logging_setup.py` | 文件日志初始化 | `ensure_file_logging()` |
-| `jobs.py` | 线程安全状态管理（含持久化） | `configure_persistence()`, `load_persisted_jobs()`, `get_summary()`, `get_chunks_page()` |
-| `workflow.py` | 状态转移 guard、command/event 决策、持久化 invariant | `decide_command()`, `apply_workflow_event()`, `validate_job_phase_invariants()` |
-| `runner.py` | 流程编排 | `run_job()`, `_llm_worker()`, `_finalize_job()` |
-| `formatting/rules.py` | 本地规则 | `apply_rules()` |
-| `formatting/chunking.py` | 分片 | `chunk_by_lines_with_first_chunk_max()`, `iter_chunks_by_lines_with_first_chunk_max_from_file()` |
-| `formatting/merge.py` | 合并输出 | `merge_text_chunks_to_path()`, `merge_text_parts()` |
-| `llm/client.py` | LLM 调用 | `call_llm_text_resilient_with_meta_and_raw()` |
-| `llm/think_filter.py` | Think 标签过滤 | `ThinkTagFilter.feed()` |
+### `workflow.py`
 
-### 2.2 数据流总览
+唯一的 workflow 决策层。
 
-```
-上传文件 (POST /api/v1/jobs)
-    ↓
-上传落盘（限制大小；避免整文件读入内存）
-    ↓
-转码为 UTF-8 输入缓存（保存到 output/.inputs/{job_id}.txt；用于“重跑全部（新任务）无需重新上传”）
-    ↓
-后台任务提交（受控线程池；避免阻塞 FastAPI 事件循环）
-    ↓
-分片（Runner 从文件流式分片：iter_chunks_by_lines_with_first_chunk_max_from_file）
-    ↓
-本地规则预处理 (apply_rules) → 保存到 pre/
-    ↓
-LLM 并发处理 (_llm_worker × N)
-    ├─ 第一分片：扩展提示词（清理广告/水印）
-    ├─ 流式调用 + 重试
-    ├─ Think 标签过滤
-    ├─ 输出验证（长度比例）
-    └─ 保存到 out/
-    ↓
-本地规则二次收敛 (apply_rules)
-    ↓
-合并输出（formatting/merge.py）
-    ↓
-最终文件 → output/
-```
+- 定义 command decision
+- 定义 event transition
+- 校验 durable invariant
+- 给 API、runner、持久化恢复复用
 
-同时：
-- Job 状态快照：`output/.state/jobs/{job_id}.json`（用于重启恢复）
-- 文件日志：`output/logs/novel-proofer.log`（滚动文件，便于排查问题）
+这里不做 HTTP，不做文件 IO，不做线程调度。
 
----
+### `jobs.py`
 
-## 3. 本地规则系统
+`JobStore` 保存 durable job 状态与 chunk 状态。
 
-文件：`novel_proofer/formatting/rules.py`
+- 线程安全更新
+- summary/full snapshot
+- 持久化到 `JobRecord`
+- 重启恢复时把 in-flight workflow 收敛为 `server_recovered`
 
-### 3.1 规则执行顺序
+它不保存线程、Future、页面关联，也不拥有“后台还在不在跑”的判断权。
 
-规则在 `apply_rules()` 中按固定顺序执行，**顺序很重要**：
+### `executions.py`
 
-| # | 规则 | Why | How |
-|---|------|-----|-----|
-| 1 | 换行符统一 | 后续规则依赖 `\n` | `\r\n` / `\r` → `\n` |
-| 2 | 行尾空格清理 | 避免干扰缩进处理 | 正则 `[ \t]+(?=\n)` → 空 |
-| 3 | 空行规范化 | 保持段落结构清晰 | 3+ 个 `\n` → 2 个 |
-| 4 | 省略号统一 | 中文排版规范 | `...` / `。。。` → `……` |
-| 5 | 破折号统一 | 中文排版规范 | `--` / `—` → `——` |
-| 6 | CJK 标点转换 | 中文使用全角标点 | `,;:!?.` → `，；：！？。` |
-| 7 | 标点间距修复 | 移除多余空格 | `你好 ，` → `你好，` |
-| 8 | 引号规范化 | 直引号转弯引号 | `"` → `"` / `"`（默认关闭） |
-| 9 | 段落缩进 | 段首两个全角空格 | 章节标题不缩进 |
+`ExecutionRegistry` 保存当前进程内的 active execution。
 
-### 3.2 为什么这个顺序？
+- 防止同一 job 重复调度
+- 暴露 `queued|running|stop_requested`
+- 为 API 快照提供 `execution_state`
 
-1. **换行符必须首先统一**：后续所有规则都依赖 `\n` 作为行分隔符
-2. **标点规则在缩进前**：缩进会改变行结构，如果先缩进，标点检测会变复杂
-3. **缩进必须最后执行**：避免前面的规则破坏已添加的缩进
+它是易失状态，重启后为空。
 
-### 3.3 每条规则详解
+### `background.py`
 
-#### 规则 1-3：基础清理
+负责把命令提交到受控线程池，并把 worker 生命周期绑定到 execution registry。
 
-```python
-# 1. 换行符统一
-text.replace("\r\n", "\n").replace("\r", "\n")
+- `submit()` 先创建 execution
+- worker 真正开跑时标记 `running`
+- worker 完成/崩溃后清理 execution
+- `on_crash` 把 durable job 收敛到显式错误
 
-# 2. 行尾空格清理
-re.subn(r"[ \t]+(?=\n)", "", text)
+### `api.py`
 
-# 3. 空行规范化（3+ 个换行 → 2 个）
-re.subn(r"\n{3,}", "\n\n", text)
-```
+薄 API 层。
 
-**Why**：这三个是"卫生"规则，清理格式垃圾，为后续处理创建干净的基础。
+它只做四件事：
 
-#### 规则 4-5：标点符号统一
+- 请求解析
+- 调用 workflow command decision
+- 更新 durable state
+- 提交后台命令
 
-```python
-# 4. 省略号：... / 。。。 / … → ……（两个 U+2026）
-_ellipsis_ascii_re.subn("……", text)   # "..." → "……"
-_ellipsis_cn_re.subn("……", text)      # "。。。" → "……"
-re.subn(r"…{3,}", "……", text)         # 3+ 个 → 2 个
+它不再手写 retry/merge 的状态推导逻辑。
 
-# 5. 破折号：-- / — / ——— → ——（两个 U+2014）
-_em_dash_re.subn("——", text)
-```
+### `runner.py`
 
-**Why**：中文小说中省略号和破折号有标准形式。统一来自不同输入源的变体（Word、PDF、网页等）。
+执行层。
 
-#### 规则 6：ASCII 标点转全角
+它只负责：
 
-```python
-def _normalize_cjk_punctuation(text: str) -> tuple[str, int]:
-    # 仅在 CJK 上下文中转换，避免破坏英文/代码/URL
-    # 例如：你好,世界 → 你好，世界
-    # 但：hello,world 保持不变
-    # 避免小数：3.14 保持不变
-```
+- validate 阶段的分片与预处理
+- process 阶段的 LLM 调度
+- merge 阶段的输出合并
 
-**Why**：中文排版规范要求使用全角标点。通过检测相邻字符是否为 CJK 来决定是否转换。
+runner 不自己决定“这个命令是否合法”；那是 `workflow.py` 的职责。
 
-#### 规则 7：CJK 与标点间的空格
+## 三个核心概念
 
-```python
-def _fix_cjk_punct_spacing(text: str) -> tuple[str, int]:
-    # 移除 CJK 字符与标点间的空格
-    # 你好 ， → 你好，
-    # 你好 。 → 你好。
+### `JobRecord`
+
+持久化在 `output/.state/jobs/{job_id}.json`。
+
+它包含：
+
+- workflow：`state/phase/wait_reason`
+- artifacts：输入/输出/工作目录/清理策略
+- format snapshot
+- llm diagnostics
+- chunk items 与 chunk counts
+- timestamps
+- diagnostics
+
+它不包含：
+
+- 线程
+- Future
+- stop flag
+- 页面是否打开
+
+### `JobExecution`
+
+只存在于当前进程内。
+
+它包含：
+
+- `job_id`
+- `attempt_id`
+- `command`
+- `state=queued|running`
+- `stop_requested=pause|delete|null`
+
+它不写盘，也不会在重启后伪装成“还活着”。
+
+### `UiAttachment`
+
+只存在浏览器本地。
+
+它的职责是：
+
+- 记住最近关联的 `job_id`
+- 页面刷新后自动重新关联
+- 新任务时 detach
+
+它不负责 pause、abort、delete、resume。
+
+## 请求与命令流
+
+### 创建任务
+
+```text
+POST /api/v1/jobs
+  -> prepare_new_job()
+  -> 写入输入缓存 output/.inputs/{job_id}.txt
+  -> queue validate command
+  -> background.submit(validate)
+  -> ExecutionRegistry.begin(job_id, validate)
 ```
 
-**Why**：中文排版中，CJK 字符与标点间不应有空格。这通常来自 OCR 或不规范的输入。
+### 继续处理
 
-#### 规则 8：引号转换（默认关闭）
-
-```python
-def _normalize_quotes(text: str) -> tuple[str, int]:
-    # 仅在含 CJK 的行中转换
-    # 仅在引号数量为偶数时转换（确保配对）
-    # 交替转换：第 1、3、5... 个 → "，第 2、4、6... 个 → "
+```text
+POST /api/v1/jobs/{id}/resume
+  -> resume_decision()
+  -> apply_command_state()
+  -> background.submit(validate|process)
 ```
 
-**Why 默认关闭**：
-- 引号转换风险高（奇数引号会破坏文本）
-- 代码/URL 中的引号不应转换
-- 用户可选择启用
+### 重试失败分片
 
-#### 规则 9：段落缩进（最复杂）
-
-```python
-def _normalize_paragraph_indent(text: str, config: FormatConfig) -> tuple[str, bool]:
-    indent = "　　"  # 两个全角空格 U+3000
-
-    for i, line in enumerate(lines):
-        # 1. 章节标题：移除缩进
-        if is_chapter_title(line):
-            new_line = re.sub(r"^\s+", "", line)
-            continue
-
-        # 2. 分隔符行：跳过（如 "===", "---"）
-        if is_separator(line):
-            continue
-
-        # 3. 段首行（第一行或前一行为空）：添加缩进
-        is_para_start = i == 0 or not lines[i - 1].strip()
-        if is_para_start:
-            new_line = indent + stripped_line
-
-        # 4. 段中行（前一行非空）：移除缩进
-        else:
-            new_line = stripped_line
+```text
+POST /api/v1/jobs/{id}/retry-failed
+  -> decide_command(RETRY_FAILED)
+  -> retry_failed_chunk_indices()
+  -> apply_command_state()
+  -> 仅重置 failed chunks
+  -> background.submit(retry_failed, retry_targets)
 ```
 
-**章节标题检测** (`is_chapter_title`)：
-- 书名号格式：`《标题》`、`【标题】`
-- 章节模式：`第X章`、`序章`、`番外`、`后记`、`尾声`
-- 全大写英文标题（罕见；仅当该行不含 CJK 字符时生效，避免误判中文段落里的单个字母）
+这里的重要约束是：retry targets 由命令边界冻结，runner 不再扫描 `pending/retrying` 猜哪些该重试。
 
----
+### 合并输出
 
-## 4. 分块策略
-
-文件：`novel_proofer/formatting/chunking.py`
-
-### 4.1 为什么需要分块？
-
-1. **LLM 上下文限制**：单次请求不能太长，否则会超时或被截断
-2. **并发处理**：分片后可以多线程并发调用 LLM，提高处理速度
-3. **错误隔离**：单个分片失败不影响其他分片，可以单独重试
-
-### 4.2 分块算法设计
-
-核心函数：`chunk_by_lines()`
-
-```python
-def chunk_by_lines(text: str, max_chars: int) -> list[str]:
-    lines = text.splitlines(keepends=True)  # 保留换行符
-    chunks = []
-    buf = []
-    size = 0
-    last_blank_idx = None  # 追踪最后一个空行的位置
-
-    for line in lines:
-        # 如果加入这一行会超过预算
-        if buf and size + len(line) > max_chars:
-            # 优先在最后一个空行处分割（段落边界）
-            if last_blank_idx is not None:
-                flush_upto(last_blank_idx)
-            else:
-                flush_all()  # 没有空行，强制切割
-
-        buf.append(line)
-        size += len(line)
-
-        # 追踪空行位置
-        if line.strip() == "":
-            last_blank_idx = len(buf) - 1
+```text
+POST /api/v1/jobs/{id}/merge
+  -> decide_command(MERGE)
+  -> apply_command_state()
+  -> background.submit(merge)
 ```
 
-**设计考量**：
+merge 的合法性由 workflow 层统一判断，failed chunks 和 incomplete chunks 使用不同 rejection code。
 
-| 决策 | Why |
-|------|-----|
-| 按行分割 | 不会在行中间切割，避免破坏文本结构 |
-| 优先段落边界 | 在空行处切割，保持段落完整性 |
-| 贪心策略 | 尽量填满每个分片，减少分片数量 |
+## validate / process / merge
 
-### 4.3 首分片特殊处理
+### validate
 
-函数：`chunk_by_lines_with_first_chunk_max()`
+`run_job()` 的 validate 部分会：
 
-```python
-def chunk_by_lines_with_first_chunk_max(
-    text: str, *, max_chars: int, first_chunk_max_chars: int
-) -> list[str]:
-    # 第一遍：用 first_chunk_max_chars 分割
-    first_pass = chunk_by_lines(text, max_chars=first_chunk_max_chars)
-    first = first_pass[0]
+- 读取输入缓存或上传输入
+- 依照 `FormatConfig` 分片
+- 执行确定性预处理规则
+- 把预处理文本暂存到 `JobStore` 的内存 pre-text map
+- 初始化 chunk 列表
+- 结束时进入 `paused + ready_to_process`
 
-    # 剩余文本用标准 max_chars 重新分割
-    rest_text = "".join(first_pass[1:])
-    rest_chunks = chunk_by_lines(rest_text, max_chars=max_chars)
+为了降低热路径小文件 IO，预处理文本默认不作为 `pre/*.txt` 持久化 truth。
 
-    return [first, *rest_chunks]
+### process
+
+`resume_paused_job()` 与 `retry_failed_chunks()` 在调度 worker 前都会确保目标分片的预处理文本存在：
+
+- 如果内存里还在，直接用
+- 如果内存已丢失，但输入缓存还在，就按当前 job 的 format snapshot 重新构建目标分片预处理文本
+- 如果输入缓存缺失，明确失败
+
+这样恢复依赖 durable 输入缓存，而不是调试目录里的兼容小文件。
+
+### merge
+
+`merge_outputs()` 只处理已经被 workflow 层允许的任务。
+
+- 读取 `out/*.txt`
+- 统一合并段落边界
+- 执行合并后的本地格式收敛
+- 写入最终输出
+- 按配置决定是否删除调试目录
+
+## 输入缓存与调试目录
+
+### 输入缓存
+
+`output/.inputs/{job_id}.txt` 是以下能力的 durable 依赖：
+
+- `rerun-all`
+- `/input-stats`
+- 重启后 `resume`
+- 重启后 `retry-failed`
+
+输入缓存缺失时，系统应该明确报错，而不是退回调试目录做 silent fallback。
+
+### 调试目录
+
+`output/.jobs/{job_id}/` 仍然存在，但它只是调试工位。
+
+当前目录语义：
+
+- `out/`：分片最终输出
+- `resp/`：可选 raw 响应
+- `pre/`：保留目录结构，不是恢复来源，也不是 input-stats 来源
+- `README.txt`：说明文件
+
+删除调试目录不会改变 `JobRecord` 的 durable truth；删除输入缓存才会影响恢复能力。
+
+## 重启恢复
+
+服务启动时：
+
+```text
+GLOBAL_JOBS.load_persisted_jobs()
+  -> 读取 JobRecord
+  -> queued/running => paused + server_recovered
+  -> processing/retrying chunks => pending
 ```
 
-**Why 首分片需要更大预算**：
-- 小说开头通常包含广告、水印、作者信息、简介等"前置信息"
-- 需要给 LLM 更多上下文来识别和清理这些内容
-- 使用扩展的系统提示词（`FIRST_CHUNK_SYSTEM_PROMPT_PREFIX`）
+恢复后的任务是“诚实可继续”的，而不是“假装还在运行”。
 
-**配置约束**（在 `runner.py` 中）：
-```python
-max_chars = max(200, min(4_000, max_chars))  # 限制在 200-4000
-first_chunk_max_chars = min(4_000, max(max_chars, 2_000))  # 至少 2000，最多 4000
-```
+这意味着：
 
-### 4.4 文件流式分片（降低内存）
+- UI 会看到 `execution_state=idle`
+- `wait_reason=server_recovered`
+- 用户必须显式继续
 
-函数：`iter_chunks_by_lines_with_first_chunk_max_from_file()`
+## 前端契约
 
-`chunk_by_lines_with_first_chunk_max()` 适合“已有字符串”的场景（例如 `formatting/fixer.py` 直接处理文本）。但 API 上传文件时，如果把整本小说一次性读入内存再分片，既浪费内存，也会让后续扩展（更大输入、更多并发）变得更脆弱。
+前端只依赖公开快照：
 
-因此 `runner.py` 使用文件流式分片：按行读取输入缓存文件，保持与字符串版相同的“优先空行边界”的策略，同时避免加载全量文本。
+- `workflow_phase`
+- `execution_state`
+- `wait_reason`
+- `terminal_state`
+- `available_commands`
 
-```python
-# 第一遍：先统计分片数，初始化 JobStore 的 chunk 列表
-total = sum(1 for _ in iter_chunks_by_lines_with_first_chunk_max_from_file(path, ...))
-GLOBAL_JOBS.init_chunks(job_id, total_chunks=total)
+前端还做两件事：
 
-# 第二遍：逐片处理（本地规则 → 写入 pre/ → LLM 并发处理 → 合并）
-for i, chunk in enumerate(iter_chunks_by_lines_with_first_chunk_max_from_file(path, ...)):
-    ...
-```
+- 用 `UiAttachment` 记住当前加载的任务
+- 在 `pagehide` / `beforeunload` 时停止本地 observer
 
----
+前端不会：
 
-## 5. LLM 集成
+- 在页面关闭时 pause 后端任务
+- 从内部 `paused` 推导 `ready_to_process` 或 `ready_to_merge`
+- 从调试目录推导任务状态
 
-文件：`novel_proofer/llm/`
+## 为什么这样更干净
 
-### 5.1 LLM 的职责
+这个架构的关键不是“模块更多”，而是事实来源更少：
 
-LLM 负责**语义级别的排版与格式化**，补充本地规则的不足：
+- lifecycle 决策只在 `workflow.py`
+- durable truth 只在 `JobRecord`
+- volatile truth 只在 `ExecutionRegistry`
+- 页面关联只在 `UiAttachment`
 
-| 任务 | 说明 |
-|------|------|
-| 段落分割 | 识别对话、动作描写、场景转换，将其分成独立段落 |
-| 对话分离 | 将混在一起的对话和叙述分开 |
-| 章节标题处理 | 识别并正确格式化章节/卷/序章等标题 |
-| 空行规则 | 确保段落间只有 1 个空行 |
-| 缩进规则 | 每个正文段落用两个全角空格缩进 |
-| 首分片清理 | 删除广告/水印/群链接/作者信息/简介 |
-
-### 5.2 提示词设计
-
-**基础系统提示词**（所有分片）：
-
-```
-你是小说排版校对器。输入是长篇小说的一个片段（已切分），你只做"排版与标点统一"，不要改写内容。
-你需要：
-1. 统一标点符号（中文使用全角标点）
-2. 正确分段：对话、动作描写、场景转换应各自成段
-3. 空行规则：段落之间只保留 1 个空行
-4. 缩进规则：每个正文段落开头用两个全角空格缩进
-5. 标题规则：章节/卷/序章等标题必须单独成行，且不缩进
-
-【正确格式示例】...
-【错误格式示例】...
-```
-
-**首分片扩展提示词**（`FIRST_CHUNK_SYSTEM_PROMPT_PREFIX`）：
-
-```
-你正在处理整本小说的第一个片段。此片段可能包含网站水印/广告引流/群链接/作者与标签/内容介绍等"前置信息"。
-在不改写正文的前提下，你必须额外执行以下清理：
-1. 删除所有广告/引流/水印/群链接等垃圾信息
-2. 若出现"作者/标签/内容介绍"等元信息：这些行及其后紧随的简介段落都要删除
-3. 只保留标题
-4. 如果原文本没有标题，不要凭空生成标题
-```
-
-**设计考量**：
-- **明确角色定义**：强调"只做排版，不改写内容"
-- **正反例对比**：帮助 LLM 理解预期输出
-- **温度设置**：`temperature: 0.0`（确定性输出）
-
-### 5.3 错误处理与重试策略
-
-**可重试的 HTTP 状态码**：
-
-```python
-_RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
-```
-
-| 状态码 | 含义 | 处理 |
-|--------|------|------|
-| 408 | Request Timeout | 重试 |
-| 429 | Too Many Requests | 重试（速率限制） |
-| 500-504 | 服务器错误 | 重试 |
-| 401, 403 | 认证/权限错误 | 立即失败 |
-
-**重试策略**：
-
-```python
-def call_llm_text_resilient(cfg, input_text):
-    attempts = 3  # 最多 3 次尝试
-
-    for i in range(attempts):
-        try:
-            return call_llm_text(cfg, input_text)
-        except LLMError as e:
-            if e.status_code not in _RETRYABLE_STATUS:
-                raise  # 非可重试错误立即抛出
-
-        # 指数退避：1s, 2s, 4s...
-        time.sleep(1.0 * (2 ** i))
-```
-
-**输出验证**（`_validate_llm_output`）：
-
-```python
-_MIN_VALIDATE_LEN = 200
-_SHORTEST_RATIO = 0.85
-_LONGEST_RATIO = 1.15
-
-def _validate_llm_output(input_text, output_text, *, allow_shorter=False):
-    if len(output_text.strip()) == 0:
-        raise LLMError("LLM output empty")
-
-    if len(input_text) >= _MIN_VALIDATE_LEN:
-        ratio = len(output_text) / len(input_text)
-        if ratio < _SHORTEST_RATIO and not allow_shorter:
-            raise LLMError(f"LLM output too short (ratio={ratio:.2f})")
-        if ratio > _LONGEST_RATIO:
-            raise LLMError(f"LLM output too long (ratio={ratio:.2f})")
-```
-
-**Why 首分片允许更短**：首分片可能删除大量广告/水印，输出比输入短是正常的。
-
-### 5.4 Think 标签过滤
-
-文件：`novel_proofer/llm/think_filter.py`
-
-**Why 需要过滤**：
-- 某些推理模型（如 DeepSeek）会输出 `<think>...</think>` 标签用于内部推理
-- 这些标签不是最终输出的一部分，会污染小说文本
-
-**实现方式**：两态状态机
-
-```python
-class _State(Enum):
-    NORMAL    # 标签外
-    IN_THINK  # 标签内（内容被丢弃）
-
-class ThinkTagFilter:
-    _state: _State       # 当前状态
-    _buffer: str         # 末尾可能的部分标签（处理跨 chunk 边界）
-    _depth: int          # 嵌套深度（支持 <think><think>...</think></think>）
-
-    def feed(self, chunk: str) -> str:
-        # NORMAL: 扫描 <think>，遇到则切换到 IN_THINK 并 _depth=1
-        #         末尾不足 7 字符的 '<' 缓冲到下次（可能是部分标签）
-        # IN_THINK: 扫描 </think>，遇到则 _depth-=1；归零回 NORMAL
-        #           遇到嵌套 <think> 则 _depth+=1
-        #           标签内全部内容丢弃
-        # 大小写不敏感
-```
-
-**容错机制**：
-
-```python
-_THINK_FILTER_MIN_LEN = 200
-_THINK_FILTER_MIN_RATIO = 0.2
-
-def _maybe_filter_think_tags(cfg, raw_content, *, input_text=None):
-    filtered = ThinkTagFilter().feed(raw_content)
-
-    # 未闭合标签：回退为仅移除标签标记，保留内容
-    if _looks_like_think_unclosed(raw_content):
-        return _strip_think_tags_keep_content(raw_content)
-
-    # 如果过滤后输出过短，说明可能过度过滤
-    if len(filtered.strip()) < max(_THINK_FILTER_MIN_LEN, int(expected * _THINK_FILTER_MIN_RATIO)):
-        return _strip_think_tags_keep_content(raw_content)
-
-    return filtered
-```
-
----
-
-## 6. 状态管理
-
-文件：`novel_proofer/jobs.py`
-
-### 6.1 Job 状态机
-
-```
-create()
-  ↓
-[queued] ─────────────────────────────────────────────────┐
-  ↓ run_job() starts                                      │
-[running] ◄───────────────────────────────────────────┐   │
-  ├─ pause() → [paused]                               │   │
-  │             └─ resume() → [queued] → [running] ───┘   │
-  ├─ reset() → [cancelled] → delete()                      │
-  └─ LLM 处理完成                                          │
-      ├─ 无错误 → [done] ✓                                │
-      ├─ 有错误 → [error]                                 │
-      │           └─ retry_failed_chunks() ───────────────┘
-      └─ reset requested → [cancelled]
-
-终态: done, error, cancelled
-```
-
-### 6.2 Chunk 状态机
-
-```
-init_chunks()
-  ↓
-[pending] ◄─────────────────────────────────────────┐
-  ├─ reset/pause 时重置                              │
-  └─ retry 时重置                                    │
-  ↓                                                  │
-[processing] ──────────────────────────────────────┐│
-  ├─ LLM 调用中                                     ││
-  ├─ 遇到 408/429/5xx → [retrying] ────────────────┘│
-  │                      └─ 重试成功 → [done]        │
-  │                      └─ 重试失败 → [error]       │
-  └─ 成功 → [done] ✓                                │
-  └─ 失败 → [error] ────────────────────────────────┘
-
-终态: done, error
-```
-
-### 6.3 JobStore 实现
-
-```python
-class JobStore:
-    def __init__(self):
-        self._lock = threading.Lock()  # 线程安全
-        self._jobs: dict[str, JobStatus] = {}
-        self._persist_dir: Path | None = None  # 可选持久化目录（output/.state/jobs）
-        self._persist_interval_s = 5.0  # 默认 5s（可用环境变量覆盖）
-        self._persist_dirty_since: dict[str, float] = {}  # dirty job_id -> first dirty time
-
-    def configure_persistence(self, *, persist_dir: Path) -> None:
-        self._persist_dir = persist_dir
-
-    def load_persisted_jobs(self) -> int:
-        # 读取 output/.state/jobs/*.json 并“自愈”状态，使其在重启后可继续：
-        # - queued/running -> paused + server_recovered（因为重启后 execution registry 为空）
-        # - processing/retrying -> pending（让 resume/retry 可以继续跑）
-        ...
-
-    def update(self, job_id, **kwargs):
-        flush_now = False
-        with self._lock:
-            # 已标记为 cancelled（删除任务/reset）的 job 不接受普通更新
-            if st.state == "cancelled":
-                return
-
-            requested_state = kwargs.get("state", st.state)
-            target_state = requested_state
-            target_wait_reason = kwargs.get(
-                "wait_reason",
-                st.wait_reason if target_state == "paused" else None,
-            )
-
-            # paused 必须携带显式 wait_reason；离开 paused 时清空 wait_reason
-            if target_state == "paused" and target_wait_reason is None:
-                raise ValueError("wait_reason is required when state is paused")
-            if target_state != "paused" and target_wait_reason is not None:
-                raise ValueError("wait_reason must be null unless state is paused")
-
-            for k, v in kwargs.items():
-                # started_at 只接受首次写入
-                if k == "started_at" and st.started_at is not None:
-                    continue
-                setattr(st, k, v)
-
-            # 标记 dirty：让后台线程批量落盘（避免每个 chunk 更新都做一次全量 snapshot + 写盘）
-            self._mark_dirty_locked(job_id)
-            flush_now = st.state in {"done", "error", "cancelled"}
-
-        # 终态立即落盘，降低重启后状态回退的概率
-        if flush_now:
-            self._flush_job(job_id)
-
-    def mark_execution_stopped(self, job_id, *, phase, wait_reason="user_paused"):
-        # pause 的 durable 投影：把 volatile stop 请求持久化为 paused workflow state，
-        # 更新 job.state/job.phase/wait_reason，并把 processing/retrying chunk 回到 pending
-        ...
-
-    def mark_reset_requested(self, job_id, *, phase=None):
-        # reset/delete 的 durable 投影：把 volatile delete 请求持久化为 cancelled state，
-        # 必要时更新 phase，并把 processing/retrying chunk 回到 pending；它不直接停止线程
-        ...
-```
-
-**设计要点**：
-- 所有状态更新通过 `update()` / `update_chunk()` 方法（受锁保护）
-- 使用 snapshot 模式返回数据（避免外部修改内部状态）；区分 full snapshot 与 summary snapshot，避免轮询路径复制全部 `chunk_statuses`
-- API 快照暴露 `workflow_phase` / `execution_state` / `wait_reason` / `terminal_state` / `available_commands`，不把内部 `state` / `phase` 原样公开给前端判断
-- JobStore 不保存线程、Future、pause flag 或 cancel flag；worker 是否应该停止只读 `ExecutionRegistry`
-- 可选持久化：Job 快照写入 `output/.state/jobs/{job_id}.json`，用于重启恢复；快照损坏时会直接报错，不做静默修复
-- 持久化节流：后台线程合并写入（默认 5s 一次，可用 `NOVEL_PROOFER_JOB_PERSIST_INTERVAL_S` 覆盖），避免高并发 chunk 更新导致频繁磁盘 IO
-- 关键状态：`done/error/cancelled` 终态会触发立即落盘（降低状态回退）
-- 重启自愈：将无意义的“运行中”状态收敛为可继续的 `paused/pending`
-
-### 6.4 ExecutionRegistry
-
-文件：`novel_proofer/executions.py`
-
-`ExecutionRegistry` 是当前后端进程内的 volatile 执行表。它记录 job 当前是否有 active attempt、attempt 正在排队还是运行、正在执行哪个 command，以及是否收到了 `pause` 或 `delete` stop 请求。它不落盘，进程重启后为空；因此重启恢复只从 `JobRecord` 得到 durable workflow 状态，不会假装线程或 Future 仍然存在。
-
-`background.submit()` 负责在提交 Future 前创建 execution entry，在 worker 真正开始时标记为 `running`，在 worker 完成或崩溃后先把结果收敛回 `JobStore`，再移除 execution entry。API snapshot 的 `execution_state` 来自这个 registry；终态 job 会投影为 `idle`。
-
-**Design motivation**：
-- 阻止重复执行：`ExecutionRegistry.begin()` 会拒绝 duplicate active attempt，避免同一 `job_id` 被重复调度。
-- 保持重启语义清晰：registry 是进程内易失状态，进程重启后为空；durable workflow 只从 `JobRecord` 恢复。
-- 传递显式 stop 信号：`pause/delete` 通过 registry 和 `background.submit()` / runner helper 传递，而不是靠突变 durable state 冒充“线程已经停了”。
-
----
-
-## 7. Runner 编排
-
-文件：`novel_proofer/runner.py`
-
-### 7.1 主流程
-
-```python
-def run_job(job_id, input_path, fmt, llm):
-    # [1] 分片（文件流式）：先统计分片数，再初始化 chunk 列表
-    total = sum(1 for _ in iter_chunks_by_lines_with_first_chunk_max_from_file(input_path, ...))
-    GLOBAL_JOBS.init_chunks(job_id, total_chunks=total)
-
-    # [2] 本地规则预处理
-    for i, c in enumerate(iter_chunks_by_lines_with_first_chunk_max_from_file(input_path, ...)):
-        fixed, stats = apply_rules(c, fmt)
-        _atomic_write_text(work_dir / "pre" / f"{i:06d}.txt", fixed)
-
-    # [3] LLM 并发处理
-    outcome = _run_llm_for_indices(job_id, list(range(total)), work_dir, llm)
-
-    # [4] 本地规则二次收敛
-    for cs in chunk_statuses:
-        if cs.state == "done":
-            chunk_out = read(work_dir / "out" / f"{cs.index:06d}.txt")
-            fixed, stats = apply_rules(chunk_out, fmt)
-            write(work_dir / "out" / f"{cs.index:06d}.txt", fixed)
-
-    # [5] 合并输出
-    _finalize_job(job_id, work_dir, out_path, total, error_msg)
-```
-
-### 7.2 并发控制
-
-```python
-def _run_llm_for_indices(job_id, indices, work_dir, llm):
-    max_workers = llm.max_concurrency  # 默认 20
-
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        pending_indices = list(indices)
-        in_flight: dict[Future, int] = {}
-
-        while pending_indices or in_flight:
-            # 检查当前 execution 是否收到 delete/pause stop 请求
-            if _delete_requested(job_id):
-                break
-            if _pause_requested(job_id) and not in_flight:
-                break
-
-            # 逐步提交任务（避免一次性提交导致无法及时停止）
-            while pending_indices and len(in_flight) < max_workers:
-                i = pending_indices.pop(0)
-                fut = ex.submit(_llm_worker, job_id, i, work_dir, llm)
-                in_flight[fut] = i
-
-            # 等待任务完成
-            done, _ = wait(in_flight.keys(), timeout=0.5, return_when=FIRST_COMPLETED)
-            for f in done:
-                in_flight.pop(f)
-```
-
-**设计要点**：
-- 逐步提交任务，而非一次性全部提交
-- runner 通过 `_pause_requested(job_id)` / `_delete_requested(job_id)` helper 检查 stop 请求，这两个 helper 内部都会读取 `GLOBAL_EXECUTIONS.stop_reason(job_id)` 并比对 `StopReason.PAUSE` / `StopReason.DELETE`
-- stop 请求会传入 LLM client 的 `should_stop()`，让流式读取和重试等待尽快短路
-- 暂停/删除会把仍处于 `processing/retrying` 的 chunk 收敛回 `pending`
-
-### 7.3 输出验证与合并
-
-**尾部换行对齐**：
-
-```python
-def _align_trailing_newlines(reference, text, *, max_newlines=3):
-    # 对齐 LLM 输出的尾部换行符与输入一致
-    # 防止分片边界处的段落分离不稳定
-    want = min(_count_trailing_newlines(reference), max_newlines)
-    have = _count_trailing_newlines(text)
-    if have == want:
-        return text
-    return text.rstrip("\n") + ("\n" * want)
-```
-
-**合并逻辑**：
-
-```python
-def _merge_chunk_outputs(work_dir, total_chunks, out_path):
-    def _iter_chunks():
-        for i in range(total_chunks):
-            chunk_text = read(work_dir / "out" / f"{i:06d}.txt")
-            yield (chunk_text, i == total_chunks - 1)
-
-    # 合并逻辑抽到 formatting/merge.py，runner 与 fixer 复用同一套规则
-    merge_text_chunks_to_path(_iter_chunks(), out_path)
-```
-
-**Why 需要补空行**：LLM 可能在分片边界处丢失段落分隔，合并时需要恢复。
-
----
-
-## 8. 关键设计决策汇总
-
-| 决策 | Why |
-|------|-----|
-| **本地规则 + LLM 混合架构** | 本地规则快速确定性，LLM 处理语义任务 |
-| **规则执行顺序固定** | 后续规则依赖前面规则的结果 |
-| **缩进最后执行** | 避免破坏前面规则对行结构的检测 |
-| **分块优先段落边界** | 保持段落完整性，减少 LLM 上下文混乱 |
-| **首分片更大预算** | 给 LLM 更多上下文来清理前置信息 |
-| **首分片允许更短输出** | 删除广告/水印后输出变短是正常的 |
-| **引号转换默认关闭** | 风险高（奇数引号、代码中的引号） |
-| **本地规则应用两次** | 确保最终输出格式一致，即使 LLM 破坏了格式 |
-| **逐步提交并发任务** | 支持终止/暂停，避免资源浪费 |
-| **Think 标签过滤容错** | 过度过滤时回退为保留内容 |
-| **合并时补空行** | 恢复分片边界处丢失的段落分隔 |
-| **后台任务使用受控线程池** | 避免阻塞 FastAPI 事件循环，且避免 job 级并发无限制增长 |
-| **输入缓存落盘 + 文件流式分片** | 内存占用更稳定；支持 rerun-all 无需重新上传 |
-| **Job 状态快照持久化** | 本地单机无需引入 DB，也能在重启后继续/重试 |
-| **文件日志滚动** | 替代 `print()`，便于定位 LLM/IO/状态问题 |
-| **轮询接口返回 summary（`chunks=0`）** | 避免每秒轮询复制全部分片状态，降低 CPU 与锁竞争 |
-| **分片计数增量维护** | `chunk_counts` 在状态迁移时更新，避免重复全量扫描 |
-| **Debug 分片明细按需拉取 + 节流** | 减少高频轮询时的重复 I/O 与序列化开销 |
-
----
-
-## 附录：配置参数速查
-
-### FormatConfig
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `max_chunk_chars` | 2000 | 分片大小上限（200-4000） |
-| `paragraph_indent` | True | 启用段落缩进 |
-| `indent_with_fullwidth_space` | True | 使用全角空格缩进 |
-| `normalize_blank_lines` | True | 合并多个空行 |
-| `trim_trailing_spaces` | True | 移除行尾空白 |
-| `normalize_ellipsis` | True | 统一省略号 |
-| `normalize_em_dash` | True | 统一破折号 |
-| `normalize_cjk_punctuation` | True | ASCII 标点转全角 |
-| `fix_cjk_punct_spacing` | True | 移除 CJK 与标点间的空格 |
-| `normalize_quotes` | **False** | 直引号转弯引号 |
-
-### LLMConfig
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `base_url` | "" | OpenAI 兼容 API 端点 |
-| `api_key` | "" | 认证令牌 |
-| `model` | "" | 模型名称 |
-| `temperature` | 0.0 | 确定性输出 |
-| `timeout_seconds` | 180.0 | 单个请求超时 |
-| `max_concurrency` | 20 | 并发分片数 |
-| `extra_params` | None | 额外的 OpenAI 参数透传（例如 thinking config 等） |
+每层都少猜一点，整个系统就少一堆互相打架的小聪明。
