@@ -16,11 +16,18 @@ from novel_proofer.formatting.chunking import iter_chunks_by_lines_with_first_ch
 from novel_proofer.formatting.config import FormatConfig, clamp_chunk_params
 from novel_proofer.formatting.merge import merge_text_chunks_to_path
 from novel_proofer.formatting.rules import apply_rules, is_chapter_title, is_separator_line
-from novel_proofer.jobs import GLOBAL_JOBS
+from novel_proofer.jobs import GLOBAL_JOBS, JobStatus
 from novel_proofer.llm.client import LLMError, call_llm_text_resilient_with_meta_and_raw
 from novel_proofer.llm.config import LLMConfig, build_first_chunk_config
 from novel_proofer.states import ChunkState, JobPhase, JobState, WaitReason
-from novel_proofer.workflow import ProcessingFinalState, processing_final_state
+from novel_proofer.workflow import (
+    ProcessingFinalState,
+    WorkflowEvent,
+    WorkflowState,
+    processing_final_state,
+    require_event,
+)
+from novel_proofer.workflow_context import workflow_context_for_job
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +39,12 @@ _JOB_DEBUG_README = """\
 - out/  : 分片最终输出（通过校验）
 - resp/ : LLM 原始响应
 """
+
+
+def _workflow_event_state(st: JobStatus, event: WorkflowEvent) -> WorkflowState:
+    result = require_event(workflow_context_for_job(st), event)
+    assert result.next_state is not None
+    return result.next_state
 
 
 def _ensure_job_debug_readme(work_dir: Path) -> None:
@@ -238,10 +251,12 @@ def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
 
     final_state = processing_final_state([c.state for c in cur.chunk_statuses])
     if final_state == ProcessingFinalState.ERROR:
+        next_state = _workflow_event_state(cur, WorkflowEvent.PROCESS_FAILED)
         GLOBAL_JOBS.update(
             job_id,
-            state=JobState.ERROR,
-            phase=JobPhase.PROCESS,
+            state=next_state.state,
+            phase=next_state.phase,
+            wait_reason=next_state.wait_reason,
             finished_at=time.time(),
             error=error_msg,
             done_chunks=cur.done_chunks,
@@ -249,11 +264,12 @@ def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
         return False
 
     # All chunks processed; wait for explicit merge.
+    next_state = _workflow_event_state(cur, WorkflowEvent.PROCESS_COMPLETE)
     GLOBAL_JOBS.update(
         job_id,
-        state=JobState.PAUSED,
-        phase=JobPhase.MERGE,
-        wait_reason=WaitReason.READY_TO_MERGE,
+        state=next_state.state,
+        phase=next_state.phase,
+        wait_reason=next_state.wait_reason,
         finished_at=None,
         error=None,
         done_chunks=total,
@@ -555,11 +571,15 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
                 GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
                 return
             if GLOBAL_JOBS.is_paused(job_id):
+                cur = GLOBAL_JOBS.get(job_id)
+                if cur is None:
+                    return
+                next_state = WorkflowState(JobState.PAUSED, JobPhase.VALIDATE, WaitReason.USER_PAUSED)
                 GLOBAL_JOBS.update(
                     job_id,
-                    state=JobState.PAUSED,
-                    phase=JobPhase.VALIDATE,
-                    wait_reason=WaitReason.USER_PAUSED,
+                    state=next_state.state,
+                    phase=next_state.phase,
+                    wait_reason=next_state.wait_reason,
                     finished_at=None,
                 )
                 return
@@ -579,20 +599,25 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
             GLOBAL_JOBS.update(job_id, state=JobState.CANCELLED, finished_at=time.time())
             return
         if GLOBAL_JOBS.is_paused(job_id):
+            next_state = WorkflowState(JobState.PAUSED, JobPhase.PROCESS, WaitReason.USER_PAUSED)
             GLOBAL_JOBS.update(
                 job_id,
-                state=JobState.PAUSED,
-                phase=JobPhase.PROCESS,
-                wait_reason=WaitReason.USER_PAUSED,
+                state=next_state.state,
+                phase=next_state.phase,
+                wait_reason=next_state.wait_reason,
                 finished_at=None,
             )
             return
 
+        cur = GLOBAL_JOBS.get(job_id)
+        if cur is None:
+            return
+        next_state = _workflow_event_state(cur, WorkflowEvent.VALIDATION_COMPLETE)
         GLOBAL_JOBS.update(
             job_id,
-            state=JobState.PAUSED,
-            phase=JobPhase.PROCESS,
-            wait_reason=WaitReason.READY_TO_PROCESS,
+            state=next_state.state,
+            phase=next_state.phase,
+            wait_reason=next_state.wait_reason,
             finished_at=None,
             error=None,
         )
@@ -752,11 +777,32 @@ def merge_outputs(job_id: str, *, cleanup_debug_dir: bool | None = None) -> None
         )
         return
 
-    GLOBAL_JOBS.update(job_id, state=JobState.RUNNING, phase=JobPhase.MERGE, finished_at=None, error=None)
+    next_state = _workflow_event_state(st, WorkflowEvent.MERGE_STARTED)
+    if st.state == JobState.PAUSED and not GLOBAL_JOBS.resume(job_id):
+        raise RuntimeError("failed to start merge execution")
+    GLOBAL_JOBS.update(
+        job_id,
+        state=next_state.state,
+        phase=next_state.phase,
+        wait_reason=next_state.wait_reason,
+        finished_at=None,
+        error=None,
+    )
     try:
         _merge_chunk_outputs(work_dir, total, out_path)
         _post_merge_paragraph_indent_pass(out_path, st.format)
-        GLOBAL_JOBS.update(job_id, state=JobState.DONE, phase=JobPhase.DONE, finished_at=time.time(), done_chunks=total)
+        cur = GLOBAL_JOBS.get(job_id)
+        if cur is None:
+            return
+        done_state = _workflow_event_state(cur, WorkflowEvent.MERGE_COMPLETE)
+        GLOBAL_JOBS.update(
+            job_id,
+            state=done_state.state,
+            phase=done_state.phase,
+            wait_reason=done_state.wait_reason,
+            finished_at=time.time(),
+            done_chunks=total,
+        )
         do_cleanup = bool(st.cleanup_debug_dir) if cleanup_debug_dir is None else bool(cleanup_debug_dir)
         if do_cleanup:
             _cleanup_work_dir(job_id, work_dir)

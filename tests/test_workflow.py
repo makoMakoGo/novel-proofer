@@ -2,16 +2,27 @@ from __future__ import annotations
 
 import pytest
 
-from novel_proofer.states import ChunkState, JobPhase, JobState
+from novel_proofer.states import ChunkState, JobCommand, JobPhase, JobState, WaitReason
 from novel_proofer.workflow import (
     ProcessingFinalState,
     ResumeTarget,
+    WorkflowContext,
+    WorkflowEvent,
     WorkflowInvariantError,
+    WorkflowRejectionCode,
+    WorkflowTransitionError,
+    apply_event,
+    available_commands,
     can_merge,
     can_pause,
     can_resume,
     can_retry_failed,
+    create_validation_state,
+    decide_command,
     processing_final_state,
+    require_command,
+    require_event,
+    resume_decision,
     validate_job_phase_invariants,
 )
 
@@ -94,3 +105,395 @@ def test_persisted_phase_invariants_are_centralized() -> None:
 
     with pytest.raises(WorkflowInvariantError, match="requires every chunk to be done"):
         validate_job_phase_invariants(JobState.PAUSED, JobPhase.MERGE, [ChunkState.DONE, ChunkState.ERROR])
+
+
+@pytest.mark.parametrize(
+    ("context", "command", "next_state", "target"),
+    [
+        (
+            WorkflowContext.from_values(
+                state=JobState.PAUSED,
+                phase=JobPhase.VALIDATE,
+                wait_reason=WaitReason.USER_PAUSED,
+            ),
+            JobCommand.VALIDATE,
+            (JobState.QUEUED, JobPhase.VALIDATE, None),
+            ResumeTarget.VALIDATE,
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.PAUSED,
+                phase=JobPhase.PROCESS,
+                wait_reason=WaitReason.READY_TO_PROCESS,
+            ),
+            JobCommand.PROCESS,
+            (JobState.QUEUED, JobPhase.PROCESS, None),
+            ResumeTarget.PROCESS,
+        ),
+        (
+            WorkflowContext.from_values(state=JobState.RUNNING, phase=JobPhase.PROCESS),
+            JobCommand.PAUSE,
+            (JobState.PAUSED, JobPhase.PROCESS, WaitReason.USER_PAUSED),
+            None,
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.ERROR,
+                phase=JobPhase.PROCESS,
+                chunks=[ChunkState.DONE, ChunkState.ERROR],
+            ),
+            JobCommand.RETRY_FAILED,
+            (JobState.QUEUED, JobPhase.PROCESS, None),
+            None,
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.PAUSED,
+                phase=JobPhase.MERGE,
+                wait_reason=WaitReason.READY_TO_MERGE,
+                chunks=[ChunkState.DONE, ChunkState.DONE],
+            ),
+            JobCommand.MERGE,
+            (JobState.QUEUED, JobPhase.MERGE, None),
+            None,
+        ),
+        (
+            WorkflowContext.from_values(state=JobState.DONE, phase=JobPhase.DONE, chunks=[ChunkState.DONE]),
+            JobCommand.DOWNLOAD,
+            (JobState.DONE, JobPhase.DONE, None),
+            None,
+        ),
+    ],
+)
+def test_command_decisions_return_explicit_next_state_and_target(
+    context: WorkflowContext,
+    command: JobCommand,
+    next_state: tuple[JobState, JobPhase, WaitReason | None],
+    target: ResumeTarget | None,
+) -> None:
+    decision = decide_command(context, command)
+
+    assert decision.allowed is True
+    assert decision.rejection is None
+    assert decision.target == target
+    assert decision.next_state is not None
+    assert (decision.next_state.state, decision.next_state.phase, decision.next_state.wait_reason) == next_state
+
+
+@pytest.mark.parametrize(
+    ("context", "command", "code", "reason"),
+    [
+        (
+            WorkflowContext.from_values(state=JobState.RUNNING, phase=JobPhase.VALIDATE),
+            JobCommand.PAUSE,
+            WorkflowRejectionCode.INVALID_PHASE,
+            "cannot pause job in phase=validate",
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.PAUSED,
+                phase=JobPhase.MERGE,
+                wait_reason=WaitReason.READY_TO_MERGE,
+                chunks=[ChunkState.DONE],
+            ),
+            JobCommand.PROCESS,
+            WorkflowRejectionCode.INVALID_PHASE,
+            "job is ready to merge",
+        ),
+        (
+            WorkflowContext.from_values(state=JobState.ERROR, phase=JobPhase.PROCESS, chunks=[ChunkState.DONE]),
+            JobCommand.RETRY_FAILED,
+            WorkflowRejectionCode.NO_FAILED_CHUNKS,
+            "no failed chunks to retry",
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.PAUSED,
+                phase=JobPhase.MERGE,
+                wait_reason=WaitReason.READY_TO_MERGE,
+                chunks=[ChunkState.DONE, ChunkState.PENDING],
+            ),
+            JobCommand.MERGE,
+            WorkflowRejectionCode.CHUNKS_INCOMPLETE,
+            "job is not ready to merge (chunks incomplete)",
+        ),
+        (
+            WorkflowContext.from_values(state=JobState.CANCELLED, phase=JobPhase.PROCESS),
+            JobCommand.RESET,
+            WorkflowRejectionCode.CANCELLED,
+            "job is cancelled",
+        ),
+    ],
+)
+def test_illegal_commands_return_typed_rejections(
+    context: WorkflowContext,
+    command: JobCommand,
+    code: WorkflowRejectionCode,
+    reason: str,
+) -> None:
+    decision = decide_command(context, command)
+
+    assert decision.allowed is False
+    assert decision.rejection is not None
+    assert decision.rejection.code == code
+    assert decision.rejection.message == reason
+
+
+def test_require_command_preserves_rejection_message_and_code() -> None:
+    context = WorkflowContext.from_values(state=JobState.RUNNING, phase=JobPhase.PROCESS)
+    decision = decide_command(context, JobCommand.PROCESS)
+
+    with pytest.raises(WorkflowTransitionError) as exc_info:
+        require_command(context, JobCommand.PROCESS)
+
+    assert str(exc_info.value) == decision.reason
+    assert decision.rejection is not None
+    assert exc_info.value.code == decision.rejection.code
+
+
+@pytest.mark.parametrize(
+    ("context", "event", "next_state"),
+    [
+        (
+            WorkflowContext.from_values(state=JobState.QUEUED, phase=JobPhase.VALIDATE),
+            WorkflowEvent.CREATE_VALIDATION,
+            (JobState.QUEUED, JobPhase.VALIDATE, None),
+        ),
+        (
+            WorkflowContext.from_values(state=JobState.RUNNING, phase=JobPhase.VALIDATE),
+            WorkflowEvent.VALIDATION_COMPLETE,
+            (JobState.PAUSED, JobPhase.PROCESS, WaitReason.READY_TO_PROCESS),
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.PAUSED,
+                phase=JobPhase.PROCESS,
+                wait_reason=WaitReason.READY_TO_PROCESS,
+            ),
+            WorkflowEvent.START_PROCESS,
+            (JobState.QUEUED, JobPhase.PROCESS, None),
+        ),
+        (
+            WorkflowContext.from_values(state=JobState.RUNNING, phase=JobPhase.PROCESS),
+            WorkflowEvent.USER_PAUSE,
+            (JobState.PAUSED, JobPhase.PROCESS, WaitReason.USER_PAUSED),
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.RUNNING,
+                phase=JobPhase.PROCESS,
+                chunks=[ChunkState.DONE, ChunkState.DONE],
+            ),
+            WorkflowEvent.PROCESS_COMPLETE,
+            (JobState.PAUSED, JobPhase.MERGE, WaitReason.READY_TO_MERGE),
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.RUNNING,
+                phase=JobPhase.PROCESS,
+                chunks=[ChunkState.DONE, ChunkState.ERROR],
+            ),
+            WorkflowEvent.PROCESS_FAILED,
+            (JobState.ERROR, JobPhase.PROCESS, None),
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.ERROR,
+                phase=JobPhase.PROCESS,
+                chunks=[ChunkState.ERROR],
+            ),
+            WorkflowEvent.RETRY_FAILED_CHUNKS,
+            (JobState.QUEUED, JobPhase.PROCESS, None),
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.QUEUED,
+                phase=JobPhase.MERGE,
+                chunks=[ChunkState.DONE],
+            ),
+            WorkflowEvent.MERGE_STARTED,
+            (JobState.RUNNING, JobPhase.MERGE, None),
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.RUNNING,
+                phase=JobPhase.MERGE,
+                chunks=[ChunkState.DONE],
+            ),
+            WorkflowEvent.MERGE_COMPLETE,
+            (JobState.DONE, JobPhase.DONE, None),
+        ),
+        (
+            WorkflowContext.from_values(state=JobState.RUNNING, phase=JobPhase.PROCESS),
+            WorkflowEvent.RESTART_RECOVERY,
+            (JobState.PAUSED, JobPhase.PROCESS, WaitReason.SERVER_RECOVERED),
+        ),
+        (
+            WorkflowContext.from_values(state=JobState.QUEUED, phase=JobPhase.PROCESS),
+            WorkflowEvent.RESET_DELETE,
+            (JobState.CANCELLED, JobPhase.PROCESS, None),
+        ),
+    ],
+)
+def test_workflow_events_are_table_driven(
+    context: WorkflowContext,
+    event: WorkflowEvent,
+    next_state: tuple[JobState, JobPhase, WaitReason | None],
+) -> None:
+    transition = apply_event(context, event)
+
+    assert transition.allowed is True
+    assert transition.rejection is None
+    assert transition.next_state is not None
+    assert (transition.next_state.state, transition.next_state.phase, transition.next_state.wait_reason) == next_state
+
+
+@pytest.mark.parametrize(
+    ("context", "event", "code", "reason"),
+    [
+        (
+            WorkflowContext.from_values(
+                state=JobState.RUNNING,
+                phase=JobPhase.PROCESS,
+                chunks=[ChunkState.DONE, ChunkState.PENDING],
+            ),
+            WorkflowEvent.PROCESS_COMPLETE,
+            WorkflowRejectionCode.CHUNKS_INCOMPLETE,
+            "process chunks are incomplete",
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.RUNNING,
+                phase=JobPhase.PROCESS,
+                chunks=[ChunkState.DONE, ChunkState.ERROR],
+            ),
+            WorkflowEvent.PROCESS_COMPLETE,
+            WorkflowRejectionCode.FAILED_CHUNKS,
+            "process has failed chunks",
+        ),
+        (
+            WorkflowContext.from_values(
+                state=JobState.PAUSED,
+                phase=JobPhase.PROCESS,
+                wait_reason=WaitReason.USER_PAUSED,
+            ),
+            WorkflowEvent.RESTART_RECOVERY,
+            WorkflowRejectionCode.INVALID_STATE,
+            "job is not in-flight (state=paused)",
+        ),
+        (
+            WorkflowContext.from_values(state=JobState.RUNNING, phase=JobPhase.PROCESS),
+            WorkflowEvent.MERGE_STARTED,
+            WorkflowRejectionCode.INVALID_PHASE,
+            "merge cannot start in phase=process",
+        ),
+    ],
+)
+def test_illegal_events_return_typed_rejections(
+    context: WorkflowContext,
+    event: WorkflowEvent,
+    code: WorkflowRejectionCode,
+    reason: str,
+) -> None:
+    transition = apply_event(context, event)
+
+    assert transition.allowed is False
+    assert transition.rejection is not None
+    assert transition.rejection.code == code
+    assert transition.rejection.message == reason
+
+
+def test_require_event_preserves_rejection_message_and_code() -> None:
+    context = WorkflowContext.from_values(
+        state=JobState.RUNNING,
+        phase=JobPhase.PROCESS,
+        chunks=[ChunkState.DONE, ChunkState.ERROR],
+    )
+    transition = apply_event(context, WorkflowEvent.PROCESS_COMPLETE)
+
+    with pytest.raises(WorkflowTransitionError) as exc_info:
+        require_event(context, WorkflowEvent.PROCESS_COMPLETE)
+
+    assert str(exc_info.value) == transition.reason
+    assert transition.rejection is not None
+    assert exc_info.value.code == transition.rejection.code
+
+
+def test_resume_decision_rejects_merge_and_done_without_process_fallthrough() -> None:
+    merge_context = WorkflowContext.from_values(
+        state=JobState.PAUSED,
+        phase=JobPhase.MERGE,
+        wait_reason=WaitReason.READY_TO_MERGE,
+        chunks=[ChunkState.DONE],
+    )
+    done_context = WorkflowContext.from_values(state=JobState.DONE, phase=JobPhase.DONE, chunks=[ChunkState.DONE])
+
+    merge_decision = resume_decision(merge_context)
+    done_decision = resume_decision(done_context)
+
+    assert merge_decision.allowed is False
+    assert merge_decision.rejection is not None
+    assert merge_decision.rejection.code == WorkflowRejectionCode.INVALID_PHASE
+    assert merge_decision.rejection.message == "job is ready to merge"
+    assert done_decision.allowed is False
+    assert done_decision.rejection is not None
+    assert done_decision.rejection.code == WorkflowRejectionCode.DONE
+    assert done_decision.rejection.message == "job is already done"
+
+
+@pytest.mark.parametrize("phase", list(JobPhase))
+def test_pause_is_legal_only_for_in_flight_process_phase(phase: JobPhase) -> None:
+    if phase == JobPhase.DONE:
+        with pytest.raises(WorkflowInvariantError, match=r"job\.state must be 'done'"):
+            WorkflowContext.from_values(state=JobState.RUNNING, phase=phase)
+        return
+
+    decision = decide_command(WorkflowContext.from_values(state=JobState.RUNNING, phase=phase), JobCommand.PAUSE)
+
+    if phase == JobPhase.PROCESS:
+        assert decision.allowed is True
+    else:
+        assert decision.allowed is False
+        assert decision.rejection is not None
+        assert decision.rejection.code == WorkflowRejectionCode.INVALID_PHASE
+
+
+@pytest.mark.parametrize(
+    "wait_reason",
+    [WaitReason.READY_TO_PROCESS, WaitReason.USER_PAUSED, WaitReason.SERVER_RECOVERED],
+)
+def test_process_resume_allows_process_wait_reasons(wait_reason: WaitReason) -> None:
+    context = WorkflowContext.from_values(state=JobState.PAUSED, phase=JobPhase.PROCESS, wait_reason=wait_reason)
+
+    decision = decide_command(context, JobCommand.PROCESS)
+
+    assert decision.allowed is True
+    assert decision.target == ResumeTarget.PROCESS
+
+
+def test_wait_reasons_are_phase_specific() -> None:
+    with pytest.raises(WorkflowInvariantError, match="wait_reason=ready_to_merge is invalid for phase=process"):
+        WorkflowContext.from_values(
+            state=JobState.PAUSED,
+            phase=JobPhase.PROCESS,
+            wait_reason=WaitReason.READY_TO_MERGE,
+        )
+
+
+def test_available_commands_are_derived_from_workflow_decisions() -> None:
+    context = WorkflowContext.from_values(
+        state=JobState.PAUSED,
+        phase=JobPhase.MERGE,
+        wait_reason=WaitReason.READY_TO_MERGE,
+        chunks=[ChunkState.DONE, ChunkState.DONE],
+    )
+
+    assert available_commands(context) == [JobCommand.MERGE, JobCommand.DETACH, JobCommand.RESET]
+
+
+def test_create_validation_state_is_the_only_new_job_workflow_entry() -> None:
+    state = create_validation_state()
+
+    assert state.state == JobState.QUEUED
+    assert state.phase == JobPhase.VALIDATE
+    assert state.wait_reason is None

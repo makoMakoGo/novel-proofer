@@ -389,7 +389,13 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
         try:
             out_path = base / "o2.txt"
             out_path.write_text("x", encoding="utf-8")
-            GLOBAL_JOBS.update(job3_id, work_dir=str(base / "w2"), output_path=str(out_path), cleanup_debug_dir=False)
+            GLOBAL_JOBS.update(
+                job3_id,
+                phase="process",
+                work_dir=str(base / "w2"),
+                output_path=str(out_path),
+                cleanup_debug_dir=False,
+            )
             GLOBAL_JOBS.init_chunks(job3_id, total_chunks=1)
             GLOBAL_JOBS.update_chunk(job3_id, 0, state="done")
             runner.retry_failed_chunks(job3_id, llm)
@@ -436,7 +442,11 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             (work_dir / "out").mkdir(parents=True, exist_ok=True)
             (work_dir / "out" / "000000.txt").write_text("x", encoding="utf-8")
             GLOBAL_JOBS.update(
-                job6_id, work_dir=str(work_dir), output_path=str(base / "o5.txt"), cleanup_debug_dir=False
+                job6_id,
+                phase="process",
+                work_dir=str(work_dir),
+                output_path=str(base / "o5.txt"),
+                cleanup_debug_dir=False,
             )
             GLOBAL_JOBS.init_chunks(job6_id, total_chunks=1)
             GLOBAL_JOBS.update_chunk(job6_id, 0, state="done")

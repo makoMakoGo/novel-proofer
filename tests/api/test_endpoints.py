@@ -454,7 +454,7 @@ def test_job_input_stats_endpoint(monkeypatch: pytest.MonkeyPatch):
         job4_dir = jobs_dir / job4.job_id
         job4_dir.mkdir(parents=True, exist_ok=True)
         (job4_dir / "x.txt").write_text("x", encoding="utf-8")
-        GLOBAL_JOBS.update(job4.job_id, state="done")
+        GLOBAL_JOBS.update(job4.job_id, state="done", phase="done")
 
         input_cache = out_dir / ".inputs" / f"{job4.job_id}.txt"
         input_cache.parent.mkdir(parents=True, exist_ok=True)
@@ -520,6 +520,26 @@ def test_reset_job_deletes_job() -> None:
 
         r2 = client.get(f"/api/v1/jobs/{job.job_id}")
         assert r2.status_code == 404, r2.text
+        assert GLOBAL_JOBS.get(job.job_id) is None
+    finally:
+        GLOBAL_JOBS.delete(job.job_id)
+
+
+def test_reset_completed_job_deletes_without_forcing_cancel(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = TestClient(api.app)
+
+    job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=0)
+    GLOBAL_JOBS.update(job.job_id, state="done", phase="done")
+
+    def fail_cancel(job_id: str) -> bool:
+        raise AssertionError(f"cancel should not be called for completed reset: {job_id}")
+
+    monkeypatch.setattr(api.GLOBAL_JOBS, "cancel", fail_cancel)
+
+    try:
+        r = client.post(f"/api/v1/jobs/{job.job_id}/reset")
+        assert r.status_code == 200, r.text
+        assert r.json().get("ok") is True
         assert GLOBAL_JOBS.get(job.job_id) is None
     finally:
         GLOBAL_JOBS.delete(job.job_id)

@@ -56,10 +56,25 @@ from novel_proofer.models import (
     RetryFailedRequest,
 )
 from novel_proofer.runner import merge_outputs, resume_paused_job, retry_failed_chunks, run_job
-from novel_proofer.states import ChunkState, JobPhase, JobState
-from novel_proofer.workflow import ResumeTarget, can_merge, can_pause, can_resume, can_retry_failed
+from novel_proofer.states import ChunkState, JobCommand, JobPhase, JobState
+from novel_proofer.workflow import CommandDecision, ResumeTarget, decide_command, resume_decision
+from novel_proofer.workflow_context import workflow_context_for_job
 
 logger = logging.getLogger(__name__)
+
+
+def _require_workflow_command(st: JobStatus, command: JobCommand) -> CommandDecision:
+    decision = decide_command(workflow_context_for_job(st), command)
+    if not decision.allowed:
+        raise HTTPException(status_code=409, detail=decision.reason)
+    return decision
+
+
+def _require_resume_workflow(st: JobStatus) -> CommandDecision:
+    decision = resume_decision(workflow_context_for_job(st))
+    if not decision.allowed:
+        raise HTTPException(status_code=409, detail=decision.reason)
+    return decision
 
 
 class _JobCommandService:
@@ -510,9 +525,7 @@ async def pause_job(job_id: str = Depends(paths._job_id_dep)) -> JobActionRespon
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    pause_guard = can_pause(st.state, st.phase)
-    if not pause_guard.allowed:
-        raise HTTPException(status_code=409, detail=pause_guard.reason)
+    _require_workflow_command(st, JobCommand.PAUSE)
     if not GLOBAL_JOBS.pause(job_id):
         raise HTTPException(status_code=409, detail="failed to pause job")
     st2 = GLOBAL_JOBS.get(job_id) or st
@@ -526,9 +539,7 @@ async def resume_job(
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    resume_guard = can_resume(st.state, st.phase)
-    if not resume_guard.allowed:
-        raise HTTPException(status_code=409, detail=resume_guard.reason)
+    resume_command = _require_resume_workflow(st)
     if not GLOBAL_JOBS.resume(job_id):
         raise HTTPException(status_code=409, detail="failed to resume job")
 
@@ -537,13 +548,17 @@ async def resume_job(
     GLOBAL_JOBS.update(job_id, last_llm_model=llm.model)
     fn: Callable[..., Any]
     args: tuple[Any, ...]
-    if resume_guard.target == ResumeTarget.VALIDATE:
+    if resume_command.target is None:
+        raise HTTPException(status_code=500, detail="workflow command target missing")
+    if resume_command.target == ResumeTarget.VALIDATE:
         fmt = st.format
         fn = run_job
         args = (job_id, paths._input_cache_path(job_id), fmt, llm)
-    else:
+    elif resume_command.target == ResumeTarget.PROCESS:
         fn = resume_paused_job
         args = (job_id, llm)
+    else:
+        raise HTTPException(status_code=500, detail="workflow command target mismatch")
 
     def _rollback_resume_state() -> None:
         GLOBAL_JOBS.pause(job_id)
@@ -566,9 +581,7 @@ async def retry_failed(
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    retry_guard = can_retry_failed(st.state, [c.state for c in st.chunk_statuses])
-    if not retry_guard.allowed:
-        raise HTTPException(status_code=409, detail=retry_guard.reason)
+    _require_workflow_command(st, JobCommand.RETRY_FAILED)
 
     failed = [c.index for c in st.chunk_statuses if c.state == ChunkState.ERROR]
 
@@ -613,9 +626,7 @@ async def merge_job(
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
-    merge_guard = can_merge(st.state, st.phase, [c.state for c in st.chunk_statuses])
-    if not merge_guard.allowed:
-        raise HTTPException(status_code=409, detail=merge_guard.reason)
+    _require_workflow_command(st, JobCommand.MERGE)
 
     if not GLOBAL_JOBS.resume(job_id):
         raise HTTPException(status_code=409, detail="failed to start merge")
@@ -639,8 +650,11 @@ async def reset_job(job_id: str = Depends(paths._job_id_dep)) -> JobActionRespon
     st = GLOBAL_JOBS.get(job_id)
     if st is None:
         raise HTTPException(status_code=404, detail="job not found")
+    reset_decision = _require_workflow_command(st, JobCommand.RESET)
+    assert reset_decision.next_state is not None
 
-    GLOBAL_JOBS.cancel(job_id)
+    if reset_decision.next_state.state == JobState.CANCELLED:
+        GLOBAL_JOBS.cancel(job_id)
 
     def _cleanup_and_delete() -> None:
         steps: tuple[tuple[str, Callable[[], object]], ...] = (
