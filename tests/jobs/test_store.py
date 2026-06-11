@@ -8,47 +8,98 @@ from typing import Any
 import pytest
 
 from novel_proofer.formatting.config import FormatConfig
-from novel_proofer.jobs import JobStore, _job_from_dict
+from novel_proofer.job_records import JOB_RECORD_VERSION, job_record_from_payload
+from novel_proofer.jobs import JobStore
 from novel_proofer.states import ChunkState, JobPhase, JobState, WaitReason
 
 
-def _raw_job_snapshot(
+def _chunk_item(
     *,
+    index: int = 0,
+    state: ChunkState | str = ChunkState.PENDING,
+    started_at: float | None = None,
+    finished_at: float | None = None,
+    retries: int = 0,
+    last_error_code: int | None = None,
+    last_error_message: str | None = None,
+    llm_model: str | None = None,
+    input_chars: int | None = None,
+    output_chars: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "index": index,
+        "state": state,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "retries": retries,
+        "last_error_code": last_error_code,
+        "last_error_message": last_error_message,
+        "llm_model": llm_model,
+        "input_chars": input_chars,
+        "output_chars": output_chars,
+    }
+
+
+def _chunk_counts(chunks: list[dict[str, Any]]) -> dict[str, int]:
+    counts = {
+        "pending": 0,
+        "processing": 0,
+        "retrying": 0,
+        "done": 0,
+        "error": 0,
+    }
+    for chunk in chunks:
+        state = str(chunk["state"])
+        counts[state] += 1
+    return counts
+
+
+def _raw_job_record(
+    *,
+    job_id: str = "a" * 32,
     state: JobState | str = JobState.PAUSED,
     phase: JobPhase | str = JobPhase.PROCESS,
     wait_reason: WaitReason | str | None = WaitReason.USER_PAUSED,
+    chunks: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    chunk_items = [] if chunks is None else chunks
     return {
-        "version": 3,
-        "job": {
-            "job_id": "a" * 32,
-            "state": state,
-            "phase": phase,
-            "wait_reason": wait_reason,
-            "created_at": 1.0,
-            "started_at": None,
-            "finished_at": None,
-            "input_filename": "in.txt",
-            "output_filename": "out.txt",
-            "total_chunks": 0,
-            "done_chunks": 0,
-            "format": json.loads(json.dumps(FormatConfig().__dict__)),
-            "last_error_code": None,
-            "last_retry_count": 0,
-            "last_llm_model": None,
-            "stats": {},
-            "chunk_statuses": [],
-            "chunk_counts": {
-                "pending": 0,
-                "processing": 0,
-                "retrying": 0,
-                "done": 0,
-                "error": 0,
+        "version": JOB_RECORD_VERSION,
+        "job_record": {
+            "job_id": job_id,
+            "workflow": {
+                "state": state,
+                "phase": phase,
+                "wait_reason": wait_reason,
             },
-            "error": None,
-            "output_path": None,
-            "work_dir": None,
-            "cleanup_debug_dir": True,
+            "timestamps": {
+                "created_at": 1.0,
+                "started_at": None,
+                "finished_at": None,
+            },
+            "artifacts": {
+                "input_filename": "in.txt",
+                "output_filename": "out.txt",
+                "output_path": None,
+                "work_dir": None,
+                "cleanup_debug_dir": True,
+            },
+            "format": json.loads(json.dumps(FormatConfig().__dict__)),
+            "llm": {
+                "last_error_code": None,
+                "last_retry_count": 0,
+                "last_llm_model": None,
+            },
+            "chunks": {
+                "total": len(chunk_items),
+                "done": sum(1 for chunk in chunk_items if str(chunk["state"]) == ChunkState.DONE.value),
+                "counts": _chunk_counts(chunk_items),
+                "items": chunk_items,
+            },
+            "diagnostics": {
+                "stats": {},
+                "error": None,
+            },
         },
     }
 
@@ -277,78 +328,149 @@ def test_job_store_persistence_is_throttled_and_flushable(tmp_path: Path) -> Non
         js.shutdown_persistence(wait=True)
 
 
-def test_job_from_dict_rejects_missing_phase() -> None:
-    raw = _raw_job_snapshot()
-    del raw["job"]["phase"]
+def test_job_record_rejects_missing_phase() -> None:
+    raw = _raw_job_record()
+    del raw["job_record"]["workflow"]["phase"]
 
     with pytest.raises(ValueError, match="missing field 'phase'"):
-        _job_from_dict(raw)
+        job_record_from_payload(raw)
 
 
-def test_job_from_dict_rejects_paused_without_wait_reason() -> None:
-    raw = _raw_job_snapshot(wait_reason=None)
+def test_job_record_rejects_unknown_root_fields() -> None:
+    raw = _raw_job_record()
+    raw["job"] = {}
 
-    with pytest.raises(ValueError, match="wait_reason is required"):
-        _job_from_dict(raw)
-
-
-def test_job_from_dict_rejects_non_paused_with_wait_reason() -> None:
-    raw = _raw_job_snapshot(state=JobState.RUNNING, phase=JobPhase.VALIDATE, wait_reason=WaitReason.USER_PAUSED)
-
-    with pytest.raises(ValueError, match="wait_reason must be null"):
-        _job_from_dict(raw)
+    with pytest.raises(ValueError, match="job record file contains unknown fields: job"):
+        job_record_from_payload(raw)
 
 
-def test_job_store_load_persisted_jobs_rejects_corrupt_snapshot(tmp_path: Path) -> None:
-    bad = tmp_path / f"{'a' * 32}.json"
+def test_job_record_rejects_mismatched_chunk_counts() -> None:
+    raw = _raw_job_record(chunks=[_chunk_item(index=0, state=ChunkState.PENDING)])
+    raw["job_record"]["chunks"]["counts"]["pending"] = 0
+
+    with pytest.raises(ValueError, match="job_record\\.chunks\\.counts does not match chunk items"):
+        job_record_from_payload(raw)
+
+
+def test_job_record_rejects_paused_without_wait_reason() -> None:
+    raw = _raw_job_record(wait_reason=None)
+
+    with pytest.raises(ValueError, match="paused workflow state requires wait_reason"):
+        job_record_from_payload(raw)
+
+
+def test_job_record_rejects_non_paused_with_wait_reason() -> None:
+    raw = _raw_job_record(state=JobState.RUNNING, phase=JobPhase.VALIDATE, wait_reason=WaitReason.USER_PAUSED)
+
+    with pytest.raises(ValueError, match="workflow wait_reason must be None"):
+        job_record_from_payload(raw)
+
+
+def test_job_store_persists_job_record_without_volatile_execution(tmp_path: Path) -> None:
+    js = JobStore(persist_interval_s=60.0)
+    js.configure_persistence(persist_dir=tmp_path)
+    try:
+        st = js.create("in.txt", "out.txt", total_chunks=1)
+        job_id = st.job_id
+        js.init_chunks(job_id, total_chunks=1)
+        js.update(job_id, state=JobState.RUNNING, phase=JobPhase.PROCESS, started_at=2.0)
+        js.update_chunk(job_id, 0, state=ChunkState.PROCESSING, started_at=3.0, input_chars=10)
+
+        runtime = js.get(job_id)
+        assert runtime is not None
+        assert runtime.state == JobState.RUNNING
+        assert runtime.chunk_statuses[0].state == ChunkState.PROCESSING
+
+        js.flush_persistence(job_id)
+        payload = json.loads((tmp_path / f"{job_id}.json").read_text(encoding="utf-8"))
+
+        assert payload["version"] == JOB_RECORD_VERSION
+        assert "job" not in payload
+        record = payload["job_record"]
+        assert record["workflow"] == {
+            "state": JobState.PAUSED,
+            "phase": JobPhase.PROCESS,
+            "wait_reason": WaitReason.SERVER_RECOVERED,
+        }
+        assert record["chunks"]["counts"]["pending"] == 1
+        assert record["chunks"]["counts"]["processing"] == 0
+        assert record["chunks"]["items"][0]["state"] == ChunkState.PENDING
+        assert record["chunks"]["items"][0]["started_at"] is None
+        assert record["chunks"]["items"][0]["input_chars"] == 10
+        job_record_from_payload(payload)
+    finally:
+        js.shutdown_persistence(wait=True)
+
+
+def test_job_store_load_persisted_jobs_loads_clean_record(tmp_path: Path) -> None:
+    job_id = "b" * 32
+    snap = tmp_path / f"{job_id}.json"
+    snap.write_text(
+        json.dumps(
+            _raw_job_record(
+                job_id=job_id,
+                state=JobState.PAUSED,
+                phase=JobPhase.PROCESS,
+                wait_reason=WaitReason.READY_TO_PROCESS,
+                chunks=[_chunk_item(index=0, state=ChunkState.PENDING)],
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    js = JobStore()
+    js.configure_persistence(persist_dir=tmp_path)
+    try:
+        assert js.load_persisted_jobs() == 1
+        loaded = js.get(job_id)
+        assert loaded is not None
+        assert loaded.state == JobState.PAUSED
+        assert loaded.phase == JobPhase.PROCESS
+        assert loaded.wait_reason == WaitReason.READY_TO_PROCESS
+        assert loaded.chunk_counts == _chunk_counts([_chunk_item(index=0, state=ChunkState.PENDING)])
+    finally:
+        js.shutdown_persistence(wait=True)
+
+
+def test_job_store_load_persisted_jobs_preserves_server_recovered_record(tmp_path: Path) -> None:
+    job_id = "c" * 32
+    snap = tmp_path / f"{job_id}.json"
+    snap.write_text(
+        json.dumps(
+            _raw_job_record(
+                job_id=job_id,
+                state=JobState.PAUSED,
+                phase=JobPhase.VALIDATE,
+                wait_reason=WaitReason.SERVER_RECOVERED,
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    js = JobStore()
+    js.configure_persistence(persist_dir=tmp_path)
+    try:
+        assert js.load_persisted_jobs() == 1
+        loaded = js.get(job_id)
+        assert loaded is not None
+        assert loaded.state == JobState.PAUSED
+        assert loaded.phase == JobPhase.VALIDATE
+        assert loaded.wait_reason == WaitReason.SERVER_RECOVERED
+    finally:
+        js.shutdown_persistence(wait=True)
+
+
+def test_job_store_load_persisted_jobs_rejects_corrupt_record(tmp_path: Path) -> None:
+    bad = tmp_path / f"{'d' * 32}.json"
     bad.write_text(
         json.dumps(
-            {
-                "version": 3,
-                "job": {
-                    "job_id": "a" * 32,
-                    "state": JobState.PAUSED,
-                    "phase": JobPhase.MERGE,
-                    "wait_reason": WaitReason.READY_TO_MERGE,
-                    "created_at": 1.0,
-                    "started_at": None,
-                    "finished_at": None,
-                    "input_filename": "in.txt",
-                    "output_filename": "out.txt",
-                    "total_chunks": 1,
-                    "done_chunks": 0,
-                    "format": FormatConfig().__dict__,
-                    "last_error_code": None,
-                    "last_retry_count": 0,
-                    "last_llm_model": None,
-                    "stats": {},
-                    "chunk_statuses": [
-                        {
-                            "index": 0,
-                            "state": ChunkState.PENDING,
-                            "started_at": None,
-                            "finished_at": None,
-                            "retries": 0,
-                            "last_error_code": None,
-                            "last_error_message": None,
-                            "llm_model": None,
-                            "input_chars": None,
-                            "output_chars": None,
-                        }
-                    ],
-                    "chunk_counts": {
-                        "pending": 1,
-                        "processing": 0,
-                        "retrying": 0,
-                        "done": 0,
-                        "error": 0,
-                    },
-                    "error": None,
-                    "output_path": None,
-                    "work_dir": None,
-                    "cleanup_debug_dir": True,
-                },
-            }
+            _raw_job_record(
+                job_id="d" * 32,
+                state=JobState.PAUSED,
+                phase=JobPhase.MERGE,
+                wait_reason=WaitReason.READY_TO_MERGE,
+                chunks=[_chunk_item(index=0, state=ChunkState.PENDING)],
+            )
         ),
         encoding="utf-8",
     )
@@ -363,56 +485,18 @@ def test_job_store_load_persisted_jobs_rejects_corrupt_snapshot(tmp_path: Path) 
         js.shutdown_persistence(wait=True)
 
 
-def test_job_store_load_persisted_jobs_restores_running_job_as_paused(tmp_path: Path) -> None:
-    snap = tmp_path / f"{'b' * 32}.json"
+def test_job_store_load_persisted_jobs_restores_in_flight_record_as_paused(tmp_path: Path) -> None:
+    job_id = "e" * 32
+    snap = tmp_path / f"{job_id}.json"
     snap.write_text(
         json.dumps(
-            {
-                "version": 3,
-                "job": {
-                    "job_id": "b" * 32,
-                    "state": JobState.RUNNING,
-                    "phase": JobPhase.PROCESS,
-                    "wait_reason": None,
-                    "created_at": 1.0,
-                    "started_at": 2.0,
-                    "finished_at": None,
-                    "input_filename": "in.txt",
-                    "output_filename": "out.txt",
-                    "total_chunks": 1,
-                    "done_chunks": 0,
-                    "format": FormatConfig().__dict__,
-                    "last_error_code": None,
-                    "last_retry_count": 0,
-                    "last_llm_model": None,
-                    "stats": {},
-                    "chunk_statuses": [
-                        {
-                            "index": 0,
-                            "state": ChunkState.PROCESSING,
-                            "started_at": 3.0,
-                            "finished_at": None,
-                            "retries": 0,
-                            "last_error_code": None,
-                            "last_error_message": None,
-                            "llm_model": None,
-                            "input_chars": 10,
-                            "output_chars": None,
-                        }
-                    ],
-                    "chunk_counts": {
-                        "pending": 0,
-                        "processing": 1,
-                        "retrying": 0,
-                        "done": 0,
-                        "error": 0,
-                    },
-                    "error": None,
-                    "output_path": None,
-                    "work_dir": None,
-                    "cleanup_debug_dir": True,
-                },
-            }
+            _raw_job_record(
+                job_id=job_id,
+                state=JobState.RUNNING,
+                phase=JobPhase.PROCESS,
+                wait_reason=None,
+                chunks=[_chunk_item(index=0, state=ChunkState.PROCESSING, started_at=3.0, input_chars=10)],
+            )
         ),
         encoding="utf-8",
     )
@@ -421,7 +505,7 @@ def test_job_store_load_persisted_jobs_restores_running_job_as_paused(tmp_path: 
     js.configure_persistence(persist_dir=tmp_path)
     try:
         assert js.load_persisted_jobs() == 1
-        loaded = js.get("b" * 32)
+        loaded = js.get(job_id)
         assert loaded is not None
         assert loaded.state == JobState.PAUSED
         assert loaded.phase == JobPhase.PROCESS

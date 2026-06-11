@@ -8,12 +8,25 @@ import re
 import threading
 import time
 import uuid
-from dataclasses import asdict, dataclass, field, fields, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from novel_proofer.env import env_float
 from novel_proofer.formatting.config import FormatConfig
+from novel_proofer.job_records import (
+    ArtifactRecord,
+    ChunkRecord,
+    ChunkSetRecord,
+    DiagnosticsRecord,
+    JobRecord,
+    LLMRecord,
+    TimestampRecord,
+    WorkflowRecord,
+    compute_chunk_counts,
+    job_record_from_payload,
+    job_record_to_payload,
+)
 from novel_proofer.states import ChunkState, JobPhase, JobState, WaitReason
 from novel_proofer.workflow import (
     WorkflowContext,
@@ -21,18 +34,14 @@ from novel_proofer.workflow import (
     WorkflowInvariantError,
     WorkflowState,
     require_event,
-    validate_job_phase_invariants,
 )
 
 logger = logging.getLogger(__name__)
 
-_JOB_STATE_VERSION = 3
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 
-_JOB_PHASES = {phase.value for phase in JobPhase}
 _JOB_STATES = {state.value for state in JobState}
 _WAIT_REASONS = {reason.value for reason in WaitReason}
-_CHUNK_STATE_VALUES = {state.value for state in ChunkState}
 _CHUNK_STATES = (
     ChunkState.PENDING,
     ChunkState.PROCESSING,
@@ -132,11 +141,8 @@ class JobStatus:
     cleanup_debug_dir: bool = True
 
 
-_FORMAT_DEFAULTS = FormatConfig()
-
-
 def _new_chunk_counts() -> dict[str, int]:
-    return {s: 0 for s in _CHUNK_STATES}
+    return {state.value: 0 for state in _CHUNK_STATES}
 
 
 def _compute_chunk_counts(chunks: list[ChunkStatus]) -> dict[str, int]:
@@ -146,286 +152,119 @@ def _compute_chunk_counts(chunks: list[ChunkStatus]) -> dict[str, int]:
     return out
 
 
-def _require_dict(raw: object, *, context: str) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise ValueError(f"{context} must be an object")
-    return raw
-
-
-def _reject_unknown_fields(raw: dict[str, Any], allowed: set[str], *, context: str) -> None:
-    extra = sorted(set(raw) - allowed)
-    if extra:
-        raise ValueError(f"{context} contains unknown fields: {', '.join(extra)}")
-
-
-def _require_field(raw: dict[str, Any], key: str, *, context: str) -> Any:
-    if key not in raw:
-        raise ValueError(f"{context} missing field {key!r}")
-    return raw[key]
-
-
-def _parse_int(raw: Any, *, context: str) -> int:
-    if isinstance(raw, bool) or not isinstance(raw, int):
-        raise ValueError(f"{context} must be an integer")
-    return int(raw)
-
-
-def _parse_float(raw: Any, *, context: str) -> float:
-    if isinstance(raw, bool) or not isinstance(raw, int | float):
-        raise ValueError(f"{context} must be a number")
-    return float(raw)
-
-
-def _parse_bool(raw: Any, *, context: str) -> bool:
-    if not isinstance(raw, bool):
-        raise ValueError(f"{context} must be a boolean")
-    return raw
-
-
-def _parse_optional_float(raw: Any, *, context: str) -> float | None:
-    if raw is None:
-        return None
-    return _parse_float(raw, context=context)
-
-
-def _parse_optional_int(raw: Any, *, context: str) -> int | None:
-    if raw is None:
-        return None
-    return _parse_int(raw, context=context)
-
-
-def _parse_non_negative_int(raw: Any, *, context: str) -> int:
-    value = _parse_int(raw, context=context)
-    if value < 0:
-        raise ValueError(f"{context} must be >= 0")
-    return value
-
-
-def _parse_optional_non_negative_int(raw: Any, *, context: str) -> int | None:
-    if raw is None:
-        return None
-    return _parse_non_negative_int(raw, context=context)
-
-
-def _parse_str(raw: Any, *, context: str, allow_empty: bool = True) -> str:
-    if not isinstance(raw, str):
-        raise ValueError(f"{context} must be a string")
-    if not allow_empty and not raw.strip():
-        raise ValueError(f"{context} must not be empty")
-    return raw
-
-
-def _parse_optional_str(raw: Any, *, context: str) -> str | None:
-    if raw is None:
-        return None
-    return _parse_str(raw, context=context)
-
-
-def _parse_enum(raw: Any, *, context: str, allowed: set[str]) -> str:
-    value = _parse_str(raw, context=context, allow_empty=False)
-    if value not in allowed:
-        raise ValueError(f"{context} must be one of {sorted(allowed)!r}")
-    return value
-
-
-def _parse_stats(raw: object) -> dict[str, int]:
-    stats = _require_dict(raw, context="job.stats")
-    out: dict[str, int] = {}
-    for key, value in stats.items():
-        if not isinstance(key, str) or not key:
-            raise ValueError("job.stats keys must be non-empty strings")
-        out[key] = _parse_non_negative_int(value, context=f"job.stats[{key!r}]")
-    return out
-
-
-def _parse_chunk_counts(raw: object, chunks: list[ChunkStatus]) -> dict[str, int]:
-    counts = _require_dict(raw, context="job.chunk_counts")
-    expected = {str(state) for state in _CHUNK_STATES}
-    extra = sorted(set(counts) - expected)
-    if extra:
-        raise ValueError(f"job.chunk_counts contains unknown fields: {', '.join(extra)}")
-    missing = sorted(expected - set(counts))
-    if missing:
-        raise ValueError(f"job.chunk_counts missing fields: {', '.join(missing)}")
-    out = {key: _parse_non_negative_int(value, context=f"job.chunk_counts[{key!r}]") for key, value in counts.items()}
-    computed = _compute_chunk_counts(chunks)
-    if out != computed:
-        raise ValueError("job.chunk_counts does not match chunk_statuses")
-    return out
-
-
-def _format_config_from_dict(raw: object) -> FormatConfig:
-    config = _require_dict(raw, context="job.format")
-    allowed = {f.name for f in fields(FormatConfig)}
-    _reject_unknown_fields(config, allowed, context="job.format")
-    kwargs: dict[str, Any] = {}
-    for f in fields(FormatConfig):
-        value = _require_field(config, f.name, context="job.format")
-        default = getattr(_FORMAT_DEFAULTS, f.name)
-        if isinstance(default, bool):
-            kwargs[f.name] = _parse_bool(value, context=f"job.format.{f.name}")
-            continue
-        if isinstance(default, int):
-            kwargs[f.name] = _parse_int(value, context=f"job.format.{f.name}")
-            continue
-        kwargs[f.name] = value
-    return FormatConfig(**kwargs)
-
-
-def _chunk_to_dict(cs: ChunkStatus) -> dict[str, Any]:
-    return asdict(cs)
-
-
-def _chunk_from_dict(d: dict[str, Any]) -> ChunkStatus:
-    raw = _require_dict(d, context="chunk")
-    _reject_unknown_fields(
-        raw,
-        {
-            "index",
-            "state",
-            "started_at",
-            "finished_at",
-            "retries",
-            "last_error_code",
-            "last_error_message",
-            "llm_model",
-            "input_chars",
-            "output_chars",
-        },
-        context="chunk",
-    )
-    return ChunkStatus(
-        index=_parse_non_negative_int(_require_field(raw, "index", context="chunk"), context="chunk.index"),
-        state=_parse_enum(
-            _require_field(raw, "state", context="chunk"), context="chunk.state", allowed=_CHUNK_STATE_VALUES
-        ),
-        started_at=_parse_optional_float(raw.get("started_at"), context="chunk.started_at"),
-        finished_at=_parse_optional_float(raw.get("finished_at"), context="chunk.finished_at"),
-        retries=_parse_non_negative_int(_require_field(raw, "retries", context="chunk"), context="chunk.retries"),
-        last_error_code=_parse_optional_int(raw.get("last_error_code"), context="chunk.last_error_code"),
-        last_error_message=_parse_optional_str(raw.get("last_error_message"), context="chunk.last_error_message"),
-        llm_model=_parse_optional_str(raw.get("llm_model"), context="chunk.llm_model"),
-        input_chars=_parse_optional_non_negative_int(raw.get("input_chars"), context="chunk.input_chars"),
-        output_chars=_parse_optional_non_negative_int(raw.get("output_chars"), context="chunk.output_chars"),
-    )
-
-
-def _job_to_dict(st: JobStatus) -> dict[str, Any]:
-    return {"version": _JOB_STATE_VERSION, "job": asdict(st)}
-
-
-def _job_from_dict(d: dict[str, Any]) -> JobStatus:
-    payload = _require_dict(d, context="job state file")
-    version = _parse_int(_require_field(payload, "version", context="job state file"), context="job state file.version")
-    if version != _JOB_STATE_VERSION:
-        raise ValueError(f"unsupported job state version {version}; expected {_JOB_STATE_VERSION}")
-
-    job = _require_dict(_require_field(payload, "job", context="job state file"), context="job")
-    _reject_unknown_fields(
-        job,
-        {
-            "job_id",
-            "state",
-            "phase",
-            "wait_reason",
-            "created_at",
-            "started_at",
-            "finished_at",
-            "input_filename",
-            "output_filename",
-            "total_chunks",
-            "done_chunks",
-            "format",
-            "last_error_code",
-            "last_retry_count",
-            "last_llm_model",
-            "stats",
-            "chunk_statuses",
-            "chunk_counts",
-            "error",
-            "output_path",
-            "work_dir",
-            "cleanup_debug_dir",
-        },
-        context="job",
-    )
-
-    chunk_items = _require_field(job, "chunk_statuses", context="job")
-    if not isinstance(chunk_items, list):
-        raise ValueError("job.chunk_statuses must be a list")
-    chunks = [_chunk_from_dict(item) for item in chunk_items]
-    for expected_index, chunk in enumerate(chunks):
-        if chunk.index != expected_index:
-            raise ValueError(
-                f"chunk index mismatch at position {expected_index}: expected {expected_index}, got {chunk.index}"
-            )
-
-    total_chunks = _parse_non_negative_int(
-        _require_field(job, "total_chunks", context="job"), context="job.total_chunks"
-    )
-    done_chunks = _parse_non_negative_int(_require_field(job, "done_chunks", context="job"), context="job.done_chunks")
-    counted_done = sum(1 for chunk in chunks if chunk.state == ChunkState.DONE)
-    if total_chunks != len(chunks):
-        raise ValueError("job.total_chunks does not match chunk_statuses length")
-    if done_chunks != counted_done:
-        raise ValueError("job.done_chunks does not match chunk_statuses")
-
-    state = _parse_enum(_require_field(job, "state", context="job"), context="job.state", allowed=_JOB_STATES)
-    phase = _parse_enum(_require_field(job, "phase", context="job"), context="job.phase", allowed=_JOB_PHASES)
-    wait_reason = _parse_optional_str(job.get("wait_reason"), context="job.wait_reason")
-    if wait_reason is not None and wait_reason not in _WAIT_REASONS:
-        raise ValueError(f"job.wait_reason must be one of {sorted(_WAIT_REASONS)!r}")
-    if state == JobState.PAUSED and wait_reason is None:
-        raise ValueError("job.wait_reason is required when job.state is 'paused'")
-    if state != JobState.PAUSED and wait_reason is not None:
-        raise ValueError("job.wait_reason must be null unless job.state is 'paused'")
-    try:
-        validate_job_phase_invariants(state, phase, [chunk.state for chunk in chunks])
-    except WorkflowInvariantError as e:
-        raise ValueError(str(e)) from e
-
-    job_id = _parse_str(_require_field(job, "job_id", context="job"), context="job.job_id", allow_empty=False)
-    if not _JOB_ID_RE.fullmatch(job_id):
-        raise ValueError("job.job_id must be a 32-character lowercase hex string")
-    chunk_counts = _parse_chunk_counts(_require_field(job, "chunk_counts", context="job"), chunks)
-
-    return JobStatus(
-        job_id=job_id,
+def _chunk_to_record(cs: ChunkStatus) -> ChunkRecord:
+    state = str(cs.state)
+    started_at = cs.started_at
+    finished_at = cs.finished_at
+    if cs.state in {ChunkState.PROCESSING, ChunkState.RETRYING}:
+        state = ChunkState.PENDING.value
+        started_at = None
+        finished_at = None
+    return ChunkRecord(
+        index=cs.index,
         state=state,
-        phase=phase,
-        wait_reason=wait_reason,
-        created_at=_parse_float(_require_field(job, "created_at", context="job"), context="job.created_at"),
-        started_at=_parse_optional_float(job.get("started_at"), context="job.started_at"),
-        finished_at=_parse_optional_float(job.get("finished_at"), context="job.finished_at"),
-        input_filename=_parse_str(
-            _require_field(job, "input_filename", context="job"),
-            context="job.input_filename",
-            allow_empty=False,
+        started_at=started_at,
+        finished_at=finished_at,
+        retries=cs.retries,
+        last_error_code=cs.last_error_code,
+        last_error_message=cs.last_error_message,
+        llm_model=cs.llm_model,
+        input_chars=cs.input_chars,
+        output_chars=cs.output_chars,
+    )
+
+
+def _chunk_from_record(record: ChunkRecord) -> ChunkStatus:
+    return ChunkStatus(
+        index=record.index,
+        state=record.state,
+        started_at=record.started_at,
+        finished_at=record.finished_at,
+        retries=record.retries,
+        last_error_code=record.last_error_code,
+        last_error_message=record.last_error_message,
+        llm_model=record.llm_model,
+        input_chars=record.input_chars,
+        output_chars=record.output_chars,
+    )
+
+
+def _durable_workflow_for_snapshot(st: JobStatus) -> WorkflowRecord:
+    if st.state in {JobState.QUEUED, JobState.RUNNING}:
+        return WorkflowRecord(
+            state=JobState.PAUSED.value,
+            phase=str(st.phase),
+            wait_reason=WaitReason.SERVER_RECOVERED.value,
+        )
+    return WorkflowRecord(
+        state=str(st.state),
+        phase=str(st.phase),
+        wait_reason=None if st.wait_reason is None else str(st.wait_reason),
+    )
+
+
+def _job_to_record(st: JobStatus) -> JobRecord:
+    chunks = [_chunk_to_record(chunk) for chunk in st.chunk_statuses]
+    chunk_counts = compute_chunk_counts(chunks)
+    return JobRecord(
+        job_id=st.job_id,
+        workflow=_durable_workflow_for_snapshot(st),
+        timestamps=TimestampRecord(
+            created_at=st.created_at,
+            started_at=st.started_at,
+            finished_at=st.finished_at,
         ),
-        output_filename=_parse_str(
-            _require_field(job, "output_filename", context="job"),
-            context="job.output_filename",
-            allow_empty=False,
+        artifacts=ArtifactRecord(
+            input_filename=st.input_filename,
+            output_filename=st.output_filename,
+            output_path=st.output_path,
+            work_dir=st.work_dir,
+            cleanup_debug_dir=st.cleanup_debug_dir,
         ),
-        total_chunks=total_chunks,
-        done_chunks=done_chunks,
-        format=_format_config_from_dict(_require_field(job, "format", context="job")),
-        last_error_code=_parse_optional_int(job.get("last_error_code"), context="job.last_error_code"),
-        last_retry_count=_parse_non_negative_int(
-            _require_field(job, "last_retry_count", context="job"),
-            context="job.last_retry_count",
+        format=st.format,
+        llm=LLMRecord(
+            last_error_code=st.last_error_code,
+            last_retry_count=st.last_retry_count,
+            last_llm_model=st.last_llm_model,
         ),
-        last_llm_model=_parse_optional_str(job.get("last_llm_model"), context="job.last_llm_model"),
-        stats=_parse_stats(_require_field(job, "stats", context="job")),
+        chunks=ChunkSetRecord(
+            total=len(chunks),
+            done=sum(1 for chunk in chunks if chunk.state == ChunkState.DONE),
+            counts=chunk_counts,
+            items=chunks,
+        ),
+        diagnostics=DiagnosticsRecord(
+            stats=dict(st.stats),
+            error=st.error,
+        ),
+    )
+
+
+def _job_from_record(record: JobRecord) -> JobStatus:
+    chunks = [_chunk_from_record(chunk) for chunk in record.chunks.items]
+    return JobStatus(
+        job_id=record.job_id,
+        state=record.workflow.state,
+        phase=record.workflow.phase,
+        wait_reason=record.workflow.wait_reason,
+        created_at=record.timestamps.created_at,
+        started_at=record.timestamps.started_at,
+        finished_at=record.timestamps.finished_at,
+        input_filename=record.artifacts.input_filename,
+        output_filename=record.artifacts.output_filename,
+        total_chunks=record.chunks.total,
+        done_chunks=record.chunks.done,
+        format=record.format,
+        last_error_code=record.llm.last_error_code,
+        last_retry_count=record.llm.last_retry_count,
+        last_llm_model=record.llm.last_llm_model,
+        stats=dict(record.diagnostics.stats),
         chunk_statuses=chunks,
-        chunk_counts=chunk_counts,
-        error=_parse_optional_str(job.get("error"), context="job.error"),
-        output_path=_parse_optional_str(job.get("output_path"), context="job.output_path"),
-        work_dir=_parse_optional_str(job.get("work_dir"), context="job.work_dir"),
-        cleanup_debug_dir=_parse_bool(
-            _require_field(job, "cleanup_debug_dir", context="job"),
-            context="job.cleanup_debug_dir",
-        ),
+        chunk_counts=dict(record.chunks.counts),
+        error=record.diagnostics.error,
+        output_path=record.artifacts.output_path,
+        work_dir=record.artifacts.work_dir,
+        cleanup_debug_dir=record.artifacts.cleanup_debug_dir,
     )
 
 
@@ -504,16 +343,16 @@ class JobStore:
             try:
                 tmp.unlink(missing_ok=True)
             except Exception:
-                logger.exception("failed to cleanup temp job state file: %s", tmp)
+                logger.exception("failed to cleanup temp job record file: %s", tmp)
 
     def _persist_snapshot_unlocked(self, snapshot: JobStatus) -> None:
         path = self._persist_path_for_job_id(snapshot.job_id)
         if path is None:
             return
         try:
-            self._atomic_write_json(path, _job_to_dict(snapshot))
+            self._atomic_write_json(path, job_record_to_payload(_job_to_record(snapshot)))
         except Exception:
-            logger.exception("failed to persist job state: job_id=%s", snapshot.job_id)
+            logger.exception("failed to persist job record: job_id=%s", snapshot.job_id)
 
     def _persist_snapshot_direct(self, snapshot: JobStatus) -> None:
         with self._persist_lock:
@@ -573,7 +412,7 @@ class JobStore:
                 try:
                     self._flush_job(jid, require_dirty=True)
                 except Exception:
-                    logger.exception("failed to flush dirty job state: job_id=%s", jid)
+                    logger.exception("failed to flush dirty job record: job_id=%s", jid)
 
     def _flush_job(self, job_id: str, *, require_dirty: bool) -> None:
         if self._persist_dir is None:
@@ -664,10 +503,12 @@ class JobStore:
         for p in sorted(persist_dir.glob("*.json")):
             try:
                 obj = json.loads(p.read_text(encoding="utf-8"))
-                st, needs_rewrite = self._restore_loaded_job_after_restart(_job_from_dict(obj))
+                st, needs_rewrite = self._restore_loaded_job_after_restart(
+                    _job_from_record(job_record_from_payload(obj))
+                )
             except Exception as e:
                 raise ValueError(
-                    f"failed to load persisted job state {p}; delete the corrupted state file and retry"
+                    f"failed to load persisted job record {p}; delete the corrupted state file and retry"
                 ) from e
             loaded.append((st, needs_rewrite))
 
@@ -992,7 +833,7 @@ class JobStore:
                 if path.exists():
                     path.unlink()
             except Exception:
-                logger.exception("failed to delete persisted job state: job_id=%s", job_id)
+                logger.exception("failed to delete persisted job record: job_id=%s", job_id)
             return existed
 
     def is_cancelled(self, job_id: str) -> bool:
