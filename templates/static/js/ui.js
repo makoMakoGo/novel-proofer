@@ -417,13 +417,13 @@ export function refreshLocks(job) {
     _setFieldsDisabled(SLICE_FIELDS, locks.formatLocked);
     if (elements.sliceLockHint) {
         elements.sliceLockHint.classList.toggle('hidden', !locks.formatLocked);
-        if (locks.formatLocked) elements.sliceLockHint.textContent = locks.formatLockReason;
+        elements.sliceLockHint.textContent = locks.formatLockReason;
     }
 
     _setFieldsDisabled(LLM_FIELDS, locks.llmLocked);
     if (elements.llmLockHint) {
         elements.llmLockHint.classList.toggle('hidden', !locks.llmLocked);
-        if (locks.llmLocked) elements.llmLockHint.textContent = locks.llmLockReason;
+        elements.llmLockHint.textContent = locks.llmLockReason;
     }
 }
 
