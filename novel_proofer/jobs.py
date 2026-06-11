@@ -23,6 +23,7 @@ from novel_proofer.job_records import (
     LLMRecord,
     TimestampRecord,
     WorkflowRecord,
+    compute_chunk_counts,
     job_record_from_payload,
     job_record_to_payload,
 )
@@ -204,7 +205,7 @@ def _durable_workflow_for_snapshot(st: JobStatus) -> WorkflowRecord:
 
 def _job_to_record(st: JobStatus) -> JobRecord:
     chunks = [_chunk_to_record(chunk) for chunk in st.chunk_statuses]
-    chunk_counts = _compute_chunk_counts([_chunk_from_record(chunk) for chunk in chunks])
+    chunk_counts = compute_chunk_counts(chunks)
     return JobRecord(
         job_id=st.job_id,
         workflow=_durable_workflow_for_snapshot(st),

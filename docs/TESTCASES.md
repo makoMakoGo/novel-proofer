@@ -67,6 +67,7 @@
 | `tests/jobs/test_store.py::test_job_store_persistence_is_throttled_and_flushable` | 持久化写盘不应发生在每次 `update_chunk()` 的热路径；dirty 更新应被节流并可通过 `flush_persistence()` 主动触发落盘。 |
 | `tests/jobs/test_store.py::test_job_record_rejects_missing_phase` | `JobRecord` schema 缺少 workflow phase 时明确失败。 |
 | `tests/jobs/test_store.py::test_job_record_rejects_unknown_root_fields` | `JobRecord` 根对象不允许混入旧 schema 字段。 |
+| `tests/jobs/test_store.py::test_job_record_rejects_mismatched_chunk_counts` | `JobRecord` 的 chunk counts 必须与 chunk items 一致。 |
 | `tests/jobs/test_store.py::test_job_record_rejects_paused_without_wait_reason` | `JobRecord` 中 paused workflow 必须带 durable wait reason。 |
 | `tests/jobs/test_store.py::test_job_record_rejects_non_paused_with_wait_reason` | `JobRecord` 中非 paused workflow 不允许携带 wait reason。 |
 | `tests/jobs/test_store.py::test_job_store_persists_job_record_without_volatile_execution` | 持久化文件写入 v4 `job_record`，不会把 running job 或 processing chunk 当作 durable truth 落盘。 |

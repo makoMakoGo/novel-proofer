@@ -344,6 +344,14 @@ def test_job_record_rejects_unknown_root_fields() -> None:
         job_record_from_payload(raw)
 
 
+def test_job_record_rejects_mismatched_chunk_counts() -> None:
+    raw = _raw_job_record(chunks=[_chunk_item(index=0, state=ChunkState.PENDING)])
+    raw["job_record"]["chunks"]["counts"]["pending"] = 0
+
+    with pytest.raises(ValueError, match="job_record\\.chunks\\.counts does not match chunk items"):
+        job_record_from_payload(raw)
+
+
 def test_job_record_rejects_paused_without_wait_reason() -> None:
     raw = _raw_job_record(wait_reason=None)
 
