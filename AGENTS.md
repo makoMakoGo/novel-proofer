@@ -103,15 +103,15 @@ Keep generated/runtime data out of commits: `.env*` except examples, `output/`, 
 - `retrying` is an automatic retry/backoff state within a single chunk processing attempt, not a manual retry queue.
 - `reset` is the hard delete/cleanup action for a job. It should not be confused with UI detach/new task.
 
-## Workflow Recovery Architecture
+## Workflow Architecture
 
-Workflow recovery work is tracked through GitHub issues/PRs. See `docs/WORKFLOW_RECOVERY_REFACTOR.md` for the approved breaking vocabulary:
+The current workflow model is documented in `docs/WORKFLOW.md`, `docs/STATE_MACHINE.md`, and `docs/ARCHITECTURE.md`:
 
 - `JobRecord`: durable task and artifact truth.
 - `JobExecution`: volatile in-process worker attempt.
 - `UiAttachment`: browser-side association with a job id.
 
-The refactor intentionally does not preserve old compatibility shims or silent fallback behavior.
+Do not add compatibility shims or silent fallback behavior to workflow code.
 
 ## Local Rules Reference
 

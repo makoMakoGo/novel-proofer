@@ -116,21 +116,3 @@ export async function purgeAllJobs({ exclude = [] } = {}) {
         body: JSON.stringify({ exclude }),
     });
 }
-
-/**
- * Best effort pause on exit.
- */
-export function bestEffortPauseJob(jobId) {
-    const jid = String(jobId || '').trim();
-    if (!jid) return;
-    const url = `api/v1/jobs/${encodeURIComponent(jid)}/pause`;
-    try {
-        if (navigator.sendBeacon) {
-            navigator.sendBeacon(url, '');
-            return;
-        }
-    } catch (e) {}
-    try {
-        fetch(url, { method: 'POST', keepalive: true });
-    } catch (e) {}
-}

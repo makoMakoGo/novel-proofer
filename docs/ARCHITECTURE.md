@@ -43,10 +43,15 @@ novel_proofer/
 ├── server.py          # 入口：uvicorn CLI 包装
 ├── api.py             # REST 端点、请求验证、响应序列化
 ├── background.py      # 后台任务：受控线程池（job 级并发）
+├── converters.py      # API 响应组装：durable job + volatile execution
+├── executions.py      # 当前进程内 execution registry 与 stop 请求
+├── job_records.py     # 严格 JobRecord 持久化 schema
 ├── logging_setup.py   # logging 初始化：文件日志（RotatingFileHandler）
+├── models.py          # Pydantic 请求/响应模型
 ├── dotenv_store.py    # 本地 .env 读写（LLM 默认配置）
-├── jobs.py            # JobStore：线程安全 + 可选快照持久化
+├── jobs.py            # JobStore：durable job/chunk 状态 + 持久化
 ├── runner.py          # 编排器：chunking → local rules → LLM → merge
+├── workflow.py        # workflow command/event guard 与 invariant
 ├── formatting/
 │   ├── config.py      # FormatConfig 数据类
 │   ├── rules.py       # 确定性文本转换（标点、缩进）
@@ -60,12 +65,15 @@ novel_proofer/
 
 | 模块 | 职责 | 关键方法 |
 |------|------|---------|
-| `api.py` | REST 端点、请求验证 | `create_job()`, `get_job()`, `pause_job()` |
-| `background.py` | 后台任务线程池（job 级并发） | `submit()`, `shutdown()` |
+| `api.py` | REST 端点、请求验证、命令提交 | `create_job()`, `get_job()`, `pause_job()` |
+| `background.py` | 后台任务线程池与 execution 生命周期 | `submit()`, `shutdown()` |
+| `converters.py` | API 响应组装 | `_job_to_out()`, `_job_summary_to_out()` |
 | `dotenv_store.py` | 本地 `.env` 读写（保留未知键/注释） | `read_llm_defaults()`, `update_llm_defaults()` |
+| `executions.py` | 进程内 active execution registry | `begin()`, `request_stop()`, `finish()` |
 | `job_records.py` | 严格 `JobRecord` 持久化 schema 与解析 | `job_record_to_payload()`, `job_record_from_payload()` |
 | `logging_setup.py` | 文件日志初始化 | `ensure_file_logging()` |
 | `jobs.py` | 线程安全状态管理（含持久化） | `configure_persistence()`, `load_persisted_jobs()`, `get_summary()`, `get_chunks_page()` |
+| `workflow.py` | 状态转移 guard、command/event 决策、持久化 invariant | `decide_command()`, `apply_workflow_event()`, `validate_job_phase_invariants()` |
 | `runner.py` | 流程编排 | `run_job()`, `_llm_worker()`, `_finalize_job()` |
 | `formatting/rules.py` | 本地规则 | `apply_rules()` |
 | `formatting/chunking.py` | 分片 | `chunk_by_lines_with_first_chunk_max()`, `iter_chunks_by_lines_with_first_chunk_max_from_file()` |

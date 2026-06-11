@@ -722,8 +722,17 @@ function bindJobActionEvents() {
 }
 
 function bindLifecycleEvents() {
-    window.addEventListener('pagehide', () => api.bestEffortPauseJob(state.currentJobId));
-    window.addEventListener('beforeunload', () => api.bestEffortPauseJob(state.currentJobId));
+    const stopUiObserver = () => {
+        stopPolling();
+        state.pollInFlight = false;
+    };
+    const resumeUiObserver = (event) => {
+        if (!event.persisted || !state.currentJobId) return;
+        refreshJobOnce(state.currentJobId);
+    };
+    window.addEventListener('pagehide', stopUiObserver);
+    window.addEventListener('beforeunload', stopUiObserver);
+    window.addEventListener('pageshow', resumeUiObserver);
 }
 
 function restoreLastAttachedJob() {

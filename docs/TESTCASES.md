@@ -28,6 +28,12 @@
 | `tests/api/test_endpoints.py::test_rerun_all_creates_new_job_without_reupload` | 覆盖 `POST /api/v1/jobs/{job_id}/rerun-all`：基于输入缓存创建新任务并从头跑完整流程，且不需要重新上传文件。 |
 | `tests/api/test_endpoints.py::test_job_input_stats_endpoint` | 覆盖 `GET /api/v1/jobs/{job_id}/input-stats`：基于输入缓存统计“非空白字符数”（UI 字数口径）。 |
 
+## tests/api/test_lifecycle_js.py
+
+| Test case | 说明 |
+| --- | --- |
+| `tests/api/test_lifecycle_js.py::test_browser_lifecycle_handlers_do_not_mutate_jobs` | 验证浏览器 `pagehide/beforeunload` 生命周期只停止本地 UI observer，不会在页面卸载时调用任何后端任务变更逻辑；从 bfcache `pageshow` 返回时只重新拉取快照恢复 observer。 |
+
 ## tests/formatting/test_chunking.py
 
 | Test case | 说明 |
@@ -84,16 +90,17 @@
 | Test case | 说明 |
 | --- | --- |
 | `tests/test_executions.py::test_execution_registry_tracks_attempt_stop_and_callbacks` | 覆盖 volatile execution registry：active attempt、duplicate rejection、queued/running、pause/delete stop 请求、done callback 与 finish 清理。 |
+| `tests/test_executions.py::test_background_submit_cleans_up_execution_on_base_exception` | 覆盖后台 worker 抛出 `BaseException` 时也会清理 execution entry 并执行 done callback；`on_crash` 仍只处理普通 `Exception`。 |
 
 ## tests/test_workflow.py
 
 | Test case | 说明 |
 | --- | --- |
-| `tests/test_workflow.py::test_pause_guard_is_process_only_and_in_flight_only` | 兼容层校验 pause 只允许在 `process` 阶段且执行中。 |
-| `tests/test_workflow.py::test_resume_guard_selects_validate_or_process_target` | 兼容层校验 resume 会按当前 phase 选择 `validate` 或 `process` 目标。 |
-| `tests/test_workflow.py::test_retry_guard_requires_error_state_with_failed_chunks` | 兼容层校验 retry failed 只允许 error job 且存在失败分片。 |
+| `tests/test_workflow.py::test_pause_guard_is_process_only_and_in_flight_only` | 校验 pause 只允许在 `process` 阶段且执行中。 |
+| `tests/test_workflow.py::test_resume_guard_selects_validate_or_process_target` | 校验 resume 会按当前 phase 选择 `validate` 或 `process` 目标。 |
+| `tests/test_workflow.py::test_retry_guard_requires_error_state_with_failed_chunks` | 校验 retry failed 只允许 error job 且存在失败分片。 |
 | `tests/test_workflow.py::test_processing_final_state_depends_only_on_chunk_states` | 校验处理阶段最终状态只由分片 error/done 汇总决定。 |
-| `tests/test_workflow.py::test_merge_guard_requires_paused_merge_phase_and_complete_chunks` | 兼容层校验 merge 只允许 paused + merge phase + 分片全 done。 |
+| `tests/test_workflow.py::test_merge_guard_requires_paused_merge_phase_and_complete_chunks` | 校验 merge 只允许 paused + merge phase + 分片全 done。 |
 | `tests/test_workflow.py::test_persisted_phase_invariants_are_centralized` | 校验持久化 phase/state/chunk invariants 统一由 workflow 模块暴露。 |
 | `tests/test_workflow.py::test_command_decisions_return_explicit_next_state_and_target` | 表驱动校验合法命令返回明确 next workflow state 与 resume target。 |
 | `tests/test_workflow.py::test_illegal_commands_return_typed_rejections` | 表驱动校验非法命令返回 typed rejection code/message，而不是静默 no-op。 |
