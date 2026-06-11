@@ -29,7 +29,7 @@
 | `tests/api/test_endpoints.py::test_reset_active_execution_requests_delete_and_cleans_after_done` | active execution 上执行 `reset` 会发送 `delete` stop 请求，并在 execution 完成回调后删除 job 记录与中间产物。 |
 | `tests/api/test_endpoints.py::test_llm_settings_get_put_preserves_unknown_lines` | 覆盖 LLM 默认配置接口：`GET/PUT /api/v1/settings/llm`；验证写入 `.env` 时保留未知键/注释，并能读回保存的 LLM 字段。 |
 | `tests/api/test_endpoints.py::test_rerun_all_creates_new_job_without_reupload` | 覆盖 `POST /api/v1/jobs/{job_id}/rerun-all`：基于输入缓存创建新任务并从头跑完整流程，且不需要重新上传文件。 |
-| `tests/api/test_endpoints.py::test_job_input_stats_endpoint` | 覆盖 `GET /api/v1/jobs/{job_id}/input-stats`：基于输入缓存统计“非空白字符数”（UI 字数口径）。 |
+| `tests/api/test_endpoints.py::test_job_input_stats_endpoint` | 覆盖 `GET /api/v1/jobs/{job_id}/input-stats`：只基于输入缓存统计“非空白字符数”；输入缓存缺失时明确返回 `404`。 |
 
 ## tests/api/test_attachment_js.py
 
@@ -220,6 +220,7 @@
 | `tests/runner/test_run_job.py::test_run_job_pause_during_validation_stays_in_validate_phase` | validation 分片前收到 pause 时，任务保持 `paused + validate + user_paused`，不会错误触发执行停止事件。 |
 | `tests/runner/test_run_job.py::test_run_job_local_mode_cleans_up_by_default` | 本地模式（LLM 关闭）默认在任务 done 后清理调试目录（`cleanup_debug_dir=True`）。 |
 | `tests/runner/test_run_job.py::test_run_job_local_mode_keeps_debug_dir_when_opted_out` | 显式关闭清理时应保留调试目录结构（`README.txt/pre/out`），且不应生成 `req/`、`error/` 目录。 |
+| `tests/runner/test_run_job.py::test_resume_after_persisted_recovery_rebuilds_pre_texts_from_input_cache` | 覆盖重启恢复后的继续处理：内存 pre-text 已丢失、`pre/` 目录中也没有分片输入文件时，runner 会从输入缓存重建目标分片预处理文本并继续处理。 |
 
 ## tests/api/test_server_utils.py
 

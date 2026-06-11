@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
+from novel_proofer import paths
 from novel_proofer.env import env_truthy
 from novel_proofer.executions import GLOBAL_EXECUTIONS, StopReason
 from novel_proofer.formatting.chunking import iter_chunks_by_lines_with_first_chunk_max_from_file
@@ -37,7 +38,7 @@ _JOB_DEBUG_README = """\
 本目录为 novel-proofer 的单次任务调试产物。
 
 目录说明：
-- pre/  : 发送给 LLM 的分片输入
+- pre/  : 保留目录结构；预处理文本本身以内存态和输入缓存为准
 - out/  : 分片最终输出（通过校验）
 - resp/ : LLM 原始响应
 """
@@ -396,6 +397,34 @@ def _is_whitespace_only(text: str) -> bool:
     return text.strip() == ""
 
 
+def _ensure_chunk_pre_texts(job_id: str, target_indices: list[int], input_path: Path, fmt: FormatConfig) -> None:
+    missing = {int(index) for index in target_indices if GLOBAL_JOBS.get_chunk_pre_text(job_id, int(index)) is None}
+    if not missing:
+        return
+    if not input_path.exists():
+        raise FileNotFoundError("job input cache missing")
+
+    max_chars, first_chunk_max_chars = clamp_chunk_params(fmt.max_chunk_chars)
+    pre_fmt = replace(fmt, paragraph_indent=False)
+    for index, chunk in enumerate(
+        iter_chunks_by_lines_with_first_chunk_max_from_file(
+            input_path,
+            max_chars=max_chars,
+            first_chunk_max_chars=first_chunk_max_chars,
+        )
+    ):
+        if index not in missing:
+            continue
+        fixed, _stats = apply_rules(chunk, pre_fmt)
+        GLOBAL_JOBS.set_chunk_pre_text(job_id, index, fixed)
+        missing.remove(index)
+        if not missing:
+            return
+
+    missing_text = ", ".join(str(index) for index in sorted(missing))
+    raise ValueError(f"preprocessed chunk text missing for indices: {missing_text}")
+
+
 def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig, *, write_llm_resp: bool) -> None:
     if _stop_requested(job_id):
         return
@@ -405,7 +434,7 @@ def _llm_worker(job_id: str, index: int, work_dir: Path, llm: LLMConfig, *, writ
     try:
         pre = GLOBAL_JOBS.get_chunk_pre_text(job_id, index)
         if pre is None:
-            pre = _chunk_path(work_dir, "pre", index).read_text(encoding="utf-8")
+            raise RuntimeError(f"preprocessed chunk text missing for index {index}")
         GLOBAL_JOBS.update_chunk(
             job_id,
             index,
@@ -629,8 +658,8 @@ def run_job(job_id: str, input_path: Path, fmt: FormatConfig, llm: LLMConfig) ->
         max_chars, first_chunk_max_chars = clamp_chunk_params(fmt.max_chunk_chars)
         local_stats: dict[str, int] = {}
         total = 0
-        # For performance, skip writing per-chunk pre files; keep texts in memory and read them in workers.
-        # Still create the pre/ directory for debuggability/tests.
+        # For performance, keep preprocessed chunk text in memory during active runs.
+        # The pre/ directory remains as debug layout only, not as workflow truth.
         for i, c in enumerate(
             iter_chunks_by_lines_with_first_chunk_max_from_file(
                 input_path,
@@ -732,6 +761,12 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig, target_indices: tuple[int, 
             output_chars=None,
         )
 
+    try:
+        _ensure_chunk_pre_texts(job_id, list(targets), paths._input_cache_path(job_id), st.format)
+    except Exception as e:
+        GLOBAL_JOBS.update(job_id, state=JobState.ERROR, finished_at=time.time(), error=str(e))
+        return
+
     outcome = _run_llm_for_indices(job_id, list(targets), work_dir, llm)
     if outcome == "cancelled" or _delete_requested(job_id):
         _mark_reset_requested(job_id, phase=JobPhase.PROCESS)
@@ -781,6 +816,12 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
             finished_at=None,
             llm_model=llm.model,
         )
+
+    try:
+        _ensure_chunk_pre_texts(job_id, pending, paths._input_cache_path(job_id), st.format)
+    except Exception as e:
+        GLOBAL_JOBS.update(job_id, state=JobState.ERROR, finished_at=time.time(), error=str(e))
+        return
 
     outcome = _run_llm_for_indices(job_id, pending, work_dir, llm)
     if outcome == "cancelled" or _delete_requested(job_id):

@@ -11,15 +11,14 @@ from novel_proofer.runner import _llm_worker
 def test_llm_worker_skips_whitespace_only_chunk() -> None:
     with tempfile.TemporaryDirectory() as td:
         work_dir = Path(td)
-        (work_dir / "pre").mkdir(parents=True, exist_ok=True)
 
         pre = "\n\n\n"
-        (work_dir / "pre" / "000000.txt").write_text(pre, encoding="utf-8")
 
         job = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1)
         job_id = job.job_id
         try:
             GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
+            GLOBAL_JOBS.set_chunk_pre_text(job_id, 0, pre)
 
             # Base URL/model intentionally empty: if LLM call happens, it would error.
             cfg = LLMConfig(base_url="", model="")

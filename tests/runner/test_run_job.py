@@ -5,10 +5,11 @@ from pathlib import Path
 
 import pytest
 
+import novel_proofer.paths as paths
 import novel_proofer.runner as runner
 from novel_proofer.executions import GLOBAL_EXECUTIONS
 from novel_proofer.formatting.config import FormatConfig
-from novel_proofer.jobs import GLOBAL_JOBS
+from novel_proofer.jobs import GLOBAL_JOBS, JobStore
 from novel_proofer.llm.client import LLMTextResult
 from novel_proofer.llm.config import LLMConfig
 
@@ -209,3 +210,83 @@ def test_run_job_local_mode_keeps_debug_dir_when_opted_out(monkeypatch: pytest.M
             assert not (work_dir / "error").exists()
         finally:
             GLOBAL_JOBS.delete(job_id)
+
+
+def test_resume_after_persisted_recovery_rebuilds_pre_texts_from_input_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        runner,
+        "call_llm_text_resilient_with_meta_and_raw",
+        lambda cfg, input_text, *, should_stop=None, on_retry=None: (
+            LLMTextResult(text=input_text, raw_text="RAW"),
+            0,
+            None,
+            None,
+        ),
+    )
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        out_dir = base / "output"
+        jobs_dir = out_dir / ".jobs"
+        state_dir = out_dir / ".state" / "jobs"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+        state_dir.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(paths, "OUTPUT_DIR", out_dir)
+        monkeypatch.setattr(paths, "JOBS_DIR", jobs_dir)
+
+        input_path = base / "in.txt"
+        input_text = "第1章\n\n你好。\n"
+        input_path.write_text(input_text, encoding="utf-8")
+
+        original_store = runner.GLOBAL_JOBS
+        recovered_store = JobStore()
+        recovered_store.configure_persistence(persist_dir=state_dir)
+        monkeypatch.setattr(runner, "GLOBAL_JOBS", recovered_store)
+        try:
+            job = recovered_store.create("in.txt", "out.txt", total_chunks=0)
+            job_id = job.job_id
+            work_dir = jobs_dir / job_id
+            out_path = out_dir / f"{job_id}_out.txt"
+            recovered_store.update(job_id, work_dir=str(work_dir), output_path=str(out_path), cleanup_debug_dir=False)
+            paths._write_input_cache(job_id, input_text)
+
+            runner.run_job(
+                job_id,
+                input_path,
+                FormatConfig(max_chunk_chars=2000),
+                LLMConfig(base_url="http://example.com", model="m", max_concurrency=1),
+            )
+
+            persisted = recovered_store.get(job_id)
+            assert persisted is not None
+            assert persisted.state == "paused"
+            assert persisted.phase == "process"
+
+            recovered_store.flush_persistence(job_id)
+            recovered_store.shutdown_persistence(wait=True)
+
+            reloaded_store = JobStore()
+            reloaded_store.configure_persistence(persist_dir=state_dir)
+            assert reloaded_store.load_persisted_jobs() == 1
+            monkeypatch.setattr(runner, "GLOBAL_JOBS", reloaded_store)
+            try:
+                reloaded = reloaded_store.get(job_id)
+                assert reloaded is not None
+                assert reloaded.wait_reason == "ready_to_process"
+                assert reloaded_store.get_chunk_pre_text(job_id, 0) is None
+                assert not (work_dir / "pre" / "000000.txt").exists()
+
+                runner.resume_paused_job(job_id, LLMConfig(base_url="http://example.com", model="m", max_concurrency=1))
+
+                resumed = reloaded_store.get(job_id)
+                assert resumed is not None
+                assert resumed.state == "paused"
+                assert resumed.phase == "merge"
+                assert resumed.wait_reason == "ready_to_merge"
+                assert (work_dir / "out" / "000000.txt").read_text(encoding="utf-8").strip() != ""
+            finally:
+                reloaded_store.shutdown_persistence(wait=True)
+        finally:
+            monkeypatch.setattr(runner, "GLOBAL_JOBS", original_store)

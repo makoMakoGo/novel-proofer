@@ -69,7 +69,7 @@ npm run watch:css
 2. 新功能/修复从 `main` 开分支（示例）：`feat/ui-drop-upload`、`fix/llm-timeout`
 3. 保持分支小步提交，提交信息遵循 Conventional Commits（见下）
 4. 提交 PR 前自测（至少跑一次 `uv run --frozen --no-sync python -m pytest -q`）
-5. 合并前尽量保持线性历史（按团队偏好：rebase 或 merge commit；禁止 squash merge）
+5. 合并前保持线性历史；默认使用 squash merge，将单个 issue/PR 的改动压成一个清晰提交
 
 注：如果需要重写已推送历史（如 reword/rebase），请优先使用 `--force-with-lease`，并确保相关分支无人依赖。
 
@@ -148,7 +148,7 @@ uv run --frozen --no-sync python -m pytest -q
 
 ### 5.2 LLM 集成测试（可选）
 
-若设置 `NOVEL_PROOFER_RUN_LLM_TESTS=true`（或传入 `--run-llm-tests`），会运行标记为 `llm_integration` 的真实 LLM 集成测试。
+默认 `uv run --frozen --no-sync python -m pytest -q` 只跑 deterministic 测试；若设置 `NOVEL_PROOFER_RUN_LLM_TESTS=true`（或传入 `--run-llm-tests`），才会运行标记为 `llm_integration` 的真实 LLM 集成测试。
 
 注意：这类测试需要有效的 LLM 配置与网络，可能产生费用/速率限制；不建议在默认 CI 或未配置 key 的环境里启用。
 

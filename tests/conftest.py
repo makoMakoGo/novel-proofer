@@ -14,13 +14,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 
-def _load_dotenv(path: Path) -> None:
+def _load_dotenv(path: Path, *, skip_keys: set[str] | None = None) -> None:
     """Best-effort .env loader (no external deps).
 
     Only loads KEY=VALUE lines. Ignores comments and blank lines.
     Does not override existing environment variables.
     """
 
+    ignored_keys = skip_keys or set()
     try:
         if not path.exists():
             return
@@ -33,7 +34,7 @@ def _load_dotenv(path: Path) -> None:
             key, value = line.split("=", 1)
             key = key.strip()
             value = value.strip().strip('"')
-            if not key:
+            if not key or key in ignored_keys:
                 continue
             os.environ.setdefault(key, value)
     except Exception:
@@ -41,7 +42,7 @@ def _load_dotenv(path: Path) -> None:
         return
 
 
-_load_dotenv(REPO_ROOT / ".env.test")
+_load_dotenv(REPO_ROOT / ".env.test", skip_keys={"NOVEL_PROOFER_RUN_LLM_TESTS"})
 
 
 def _env_truthy(name: str) -> bool:
