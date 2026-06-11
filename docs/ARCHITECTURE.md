@@ -585,11 +585,13 @@ class JobStore:
             self._flush_job(job_id)
 
     def mark_execution_stopped(self, job_id, *, phase, wait_reason="user_paused"):
-        # pause 的 durable 投影：job 进入 paused，processing/retrying chunk 回到 pending
+        # pause 的 durable 投影：把 volatile stop 请求持久化为 paused workflow state，
+        # 更新 job.state/job.phase/wait_reason，并把 processing/retrying chunk 回到 pending
         ...
 
     def mark_reset_requested(self, job_id, *, phase=None):
-        # reset/delete 的 durable 投影：job 进入 cancelled，active chunk 回到 pending
+        # reset/delete 的 durable 投影：把 volatile delete 请求持久化为 cancelled state，
+        # 必要时更新 phase，并把 processing/retrying chunk 回到 pending；它不直接停止线程
         ...
 ```
 
@@ -610,6 +612,11 @@ class JobStore:
 `ExecutionRegistry` 是当前后端进程内的 volatile 执行表。它记录 job 当前是否有 active attempt、attempt 正在排队还是运行、正在执行哪个 command，以及是否收到了 `pause` 或 `delete` stop 请求。它不落盘，进程重启后为空；因此重启恢复只从 `JobRecord` 得到 durable workflow 状态，不会假装线程或 Future 仍然存在。
 
 `background.submit()` 负责在提交 Future 前创建 execution entry，在 worker 真正开始时标记为 `running`，在 worker 完成或崩溃后先把结果收敛回 `JobStore`，再移除 execution entry。API snapshot 的 `execution_state` 来自这个 registry；终态 job 会投影为 `idle`。
+
+**Design motivation**：
+- 阻止重复执行：`ExecutionRegistry.begin()` 会拒绝 duplicate active attempt，避免同一 `job_id` 被重复调度。
+- 保持重启语义清晰：registry 是进程内易失状态，进程重启后为空；durable workflow 只从 `JobRecord` 恢复。
+- 传递显式 stop 信号：`pause/delete` 通过 registry 和 `background.submit()` / runner helper 传递，而不是靠突变 durable state 冒充“线程已经停了”。
 
 ---
 
@@ -675,7 +682,7 @@ def _run_llm_for_indices(job_id, indices, work_dir, llm):
 
 **设计要点**：
 - 逐步提交任务，而非一次性全部提交
-- 每个 worker 通过 `ExecutionRegistry.stop_reason()` 检查 `pause/delete` stop 请求
+- runner 通过 `_pause_requested(job_id)` / `_delete_requested(job_id)` helper 检查 stop 请求，这两个 helper 内部都会读取 `GLOBAL_EXECUTIONS.stop_reason(job_id)` 并比对 `StopReason.PAUSE` / `StopReason.DELETE`
 - stop 请求会传入 LLM client 的 `should_stop()`，让流式读取和重试等待尽快短路
 - 暂停/删除会把仍处于 `processing/retrying` 的 chunk 收敛回 `pending`
 

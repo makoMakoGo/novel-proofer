@@ -242,16 +242,19 @@ def _post_merge_paragraph_indent_pass(out_path: Path, fmt: FormatConfig) -> None
 def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
     """Finalize job after PROCESS stage (no merge)."""
 
-    if _delete_requested(job_id):
-        _mark_reset_requested(job_id)
+    if _reconcile_process_stop(job_id):
         return False
 
     cur = GLOBAL_JOBS.get(job_id)
     if cur is None:
         return False
+    if _reconcile_process_stop(job_id):
+        return False
 
     final_state = processing_final_state([c.state for c in cur.chunk_statuses])
     if final_state == ProcessingFinalState.ERROR:
+        if _reconcile_process_stop(job_id):
+            return False
         next_state = _workflow_event_state(cur, WorkflowEvent.PROCESS_FAILED)
         GLOBAL_JOBS.update(
             job_id,
@@ -265,6 +268,8 @@ def _finalize_processing(job_id: str, total: int, error_msg: str) -> bool:
         return False
 
     # All chunks processed; wait for explicit merge.
+    if _reconcile_process_stop(job_id):
+        return False
     next_state = _workflow_event_state(cur, WorkflowEvent.PROCESS_COMPLETE)
     GLOBAL_JOBS.update(
         job_id,
@@ -334,6 +339,23 @@ def _mark_reset_requested(job_id: str, *, phase: JobPhase | str | None = None) -
 
 def _mark_execution_stopped(job_id: str, *, phase: JobPhase | str) -> None:
     GLOBAL_JOBS.mark_execution_stopped(job_id, phase=phase, wait_reason=WaitReason.USER_PAUSED)
+
+
+def _reconcile_process_stop(job_id: str) -> bool:
+    if _delete_requested(job_id):
+        _mark_reset_requested(job_id, phase=JobPhase.PROCESS)
+        return True
+    if _pause_requested(job_id):
+        _mark_execution_stopped(job_id, phase=JobPhase.PROCESS)
+        return True
+    return False
+
+
+def _reconcile_merge_delete(job_id: str) -> bool:
+    if _delete_requested(job_id):
+        _mark_reset_requested(job_id, phase=JobPhase.MERGE)
+        return True
+    return False
 
 
 def _reset_stopped_chunk(job_id: str, index: int) -> None:
@@ -716,6 +738,8 @@ def retry_failed_chunks(job_id: str, llm: LLMConfig) -> None:
         _mark_execution_stopped(job_id, phase=JobPhase.PROCESS)
         return
     _post_llm_deterministic_pass(job_id, work_dir)
+    if _reconcile_process_stop(job_id):
+        return
     _finalize_processing(job_id, total, "some chunks still failed; update LLM config and retry again")
 
 
@@ -765,6 +789,8 @@ def resume_paused_job(job_id: str, llm: LLMConfig) -> None:
         return
 
     _post_llm_deterministic_pass(job_id, work_dir)
+    if _reconcile_process_stop(job_id):
+        return
     _finalize_processing(job_id, total, "some chunks failed; update LLM config and retry failed chunks")
 
 
@@ -817,9 +843,15 @@ def merge_outputs(job_id: str, *, cleanup_debug_dir: bool | None = None) -> None
     )
     try:
         _merge_chunk_outputs(work_dir, total, out_path)
+        if _reconcile_merge_delete(job_id):
+            return
         _post_merge_paragraph_indent_pass(out_path, st.format)
+        if _reconcile_merge_delete(job_id):
+            return
         cur = GLOBAL_JOBS.get(job_id)
         if cur is None:
+            return
+        if _reconcile_merge_delete(job_id):
             return
         done_state = _workflow_event_state(cur, WorkflowEvent.MERGE_COMPLETE)
         GLOBAL_JOBS.update(

@@ -473,3 +473,77 @@ def test_retry_failed_and_resume_paused_branches(monkeypatch: pytest.MonkeyPatch
             assert getattr(st, "phase", None) == "merge"
         finally:
             GLOBAL_JOBS.delete(job6_id)
+
+
+def test_resume_paused_job_pause_after_post_pass_stays_paused(monkeypatch: pytest.MonkeyPatch) -> None:
+    llm = LLMConfig(base_url="http://example.com", model="m", max_concurrency=1)
+
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        job_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1).job_id
+        execution = GLOBAL_EXECUTIONS.begin(job_id, "process")
+        try:
+            GLOBAL_JOBS.update(
+                job_id,
+                state="queued",
+                phase="process",
+                work_dir=str(base / "work"),
+                output_path=str(base / "out.txt"),
+                cleanup_debug_dir=False,
+            )
+            GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
+
+            def fake_run(*_args: object, **_kwargs: object) -> str:
+                GLOBAL_JOBS.update_chunk(job_id, 0, state="done")
+                return "done"
+
+            def pause_during_post_pass(*_args: object, **_kwargs: object) -> None:
+                assert GLOBAL_EXECUTIONS.request_stop(job_id, "pause") is True
+
+            monkeypatch.setattr(runner, "_run_llm_for_indices", fake_run)
+            monkeypatch.setattr(runner, "_post_llm_deterministic_pass", pause_during_post_pass)
+
+            runner.resume_paused_job(job_id, llm)
+            st = GLOBAL_JOBS.get(job_id)
+            assert st is not None
+            assert st.state == "paused"
+            assert st.phase == "process"
+            assert st.wait_reason == "user_paused"
+        finally:
+            GLOBAL_EXECUTIONS.finish(execution.attempt_id)
+            GLOBAL_JOBS.delete(job_id)
+
+
+def test_merge_outputs_delete_requested_during_merge_stays_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        work_dir = base / "work"
+        out_path = base / "out.txt"
+
+        job_id = GLOBAL_JOBS.create("in.txt", "out.txt", total_chunks=1).job_id
+        execution = GLOBAL_EXECUTIONS.begin(job_id, "merge")
+        try:
+            GLOBAL_JOBS.update(
+                job_id,
+                state="queued",
+                phase="merge",
+                work_dir=str(work_dir),
+                output_path=str(out_path),
+                cleanup_debug_dir=False,
+            )
+            GLOBAL_JOBS.init_chunks(job_id, total_chunks=1)
+            GLOBAL_JOBS.update_chunk(job_id, 0, state="done")
+
+            def delete_during_merge(*_args: object, **_kwargs: object) -> None:
+                assert GLOBAL_EXECUTIONS.request_stop(job_id, "delete") is True
+
+            monkeypatch.setattr(runner, "_merge_chunk_outputs", delete_during_merge)
+
+            runner.merge_outputs(job_id, cleanup_debug_dir=False)
+            st = GLOBAL_JOBS.get(job_id)
+            assert st is not None
+            assert st.state == "cancelled"
+            assert st.phase == "merge"
+        finally:
+            GLOBAL_EXECUTIONS.finish(execution.attempt_id)
+            GLOBAL_JOBS.delete(job_id)

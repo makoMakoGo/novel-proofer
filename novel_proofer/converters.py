@@ -149,6 +149,7 @@ def _job_summary_to_out(st: JobStatus, execution: ExecutionSnapshot | None) -> J
 def _available_commands(st: JobStatus, execution: ExecutionSnapshot | None) -> list[str]:
     commands = [command.value for command in available_commands(workflow_context_for_job(st))]
     if execution is None:
+        # A durable queued/running record without an in-process execution can only be reset safely.
         if JobState(st.state) in {JobState.QUEUED, JobState.RUNNING}:
             return [command for command in commands if command == JobCommand.RESET.value]
         return commands

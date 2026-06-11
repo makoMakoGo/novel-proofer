@@ -67,12 +67,15 @@ def submit(
                         execution.job_id,
                         execution.attempt_id,
                     )
-        callbacks = GLOBAL_EXECUTIONS.finish(execution.attempt_id)
-        for cb in callbacks:
-            try:
-                cb()
-            except Exception:
-                logger.exception("background post-callback crashed: job_id=%s", execution.job_id)
+        except BaseException:
+            logger.exception("background job crashed: job_id=%s attempt_id=%s", execution.job_id, execution.attempt_id)
+        finally:
+            callbacks = GLOBAL_EXECUTIONS.finish(execution.attempt_id)
+            for cb in callbacks:
+                try:
+                    cb()
+                except Exception:
+                    logger.exception("background post-callback crashed: job_id=%s", execution.job_id)
 
     fut.add_done_callback(_done)
 
