@@ -23,7 +23,7 @@ jobs:
       UV_NO_PROGRESS: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Sync deps
