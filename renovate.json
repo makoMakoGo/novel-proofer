@@ -1,10 +1,4 @@
 {
-    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-    "extends": ["config:recommended"],
-    "minimumReleaseAge": "7 days",
-    "lockFileMaintenance": {"enabled": true, "schedule": ["before 5am on monday"]},
-    "packageRules": [
-        {"matchDatasources": ["pypi"], "minimumReleaseAge": "7 days"},
-        {"matchManagers": ["pep621", "uv"], "groupName": "python dependencies"},
-    ],
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "enabled": false
 }

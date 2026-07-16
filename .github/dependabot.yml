@@ -3,13 +3,12 @@ updates:
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
-      interval: "monthly"
-      day: "monday"
+      interval: "quarterly"
       time: "09:00"
       timezone: "Asia/Shanghai"
     cooldown:
-      default-days: 30
-    open-pull-requests-limit: 2
+      default-days: 60
+    open-pull-requests-limit: 1
     groups:
       python:
         patterns:
@@ -18,28 +17,18 @@ updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "monthly"
-      day: "monday"
-      time: "09:30"
-      timezone: "Asia/Shanghai"
-    cooldown:
-      default-days: 30
-    open-pull-requests-limit: 2
-    groups:
-      npm:
-        patterns:
-          - "*"
+      interval: "quarterly"
+    open-pull-requests-limit: 0
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
-      day: "monday"
+      interval: "semiannually"
       time: "10:00"
       timezone: "Asia/Shanghai"
     cooldown:
-      default-days: 30
-    open-pull-requests-limit: 2
+      default-days: 90
+    open-pull-requests-limit: 1
     groups:
       github-actions:
         patterns:
